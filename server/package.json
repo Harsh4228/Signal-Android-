@@ -1,0 +1,23 @@
+{
+  "name": "@meetme/server",
+  "version": "0.1.0",
+  "private": true,
+  "description": "MeetMe relay server - stores only public keys and encrypted envelopes until delivered",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "tsx src/index.ts",
+    "test": "tsx --test test/*.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@meetme/core": "*",
+    "tsx": "^4.20.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/ws": "^8.18.0",
+    "typescript": "^5.9.0"
+  }
+}
