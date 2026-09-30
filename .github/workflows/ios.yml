@@ -11,6 +11,8 @@ on:
 jobs:
   build:
     runs-on: macos-latest
+    env:
+      GOOGLE_SERVICE_INFO_PLIST: ${{ secrets.GOOGLE_SERVICE_INFO_PLIST }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -19,6 +21,9 @@ jobs:
       - run: npm ci
       - run: npm ci
         working-directory: apps/mobile
+      - name: Firebase config (push notifications, optional)
+        if: env.GOOGLE_SERVICE_INFO_PLIST != ''
+        run: echo "$GOOGLE_SERVICE_INFO_PLIST" > apps/mobile/ios/MeetMe/GoogleService-Info.plist
       - run: pod install
         working-directory: apps/mobile/ios
       - name: Build (simulator, unsigned)

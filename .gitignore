@@ -9,3 +9,6 @@ data/
 *.jks
 infra/backups/
 .tmp-att-*
+apps/mobile/android/app/google-services.json
+apps/mobile/ios/MeetMe/GoogleService-Info.plist
+infra/secrets/

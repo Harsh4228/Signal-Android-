@@ -22,6 +22,10 @@ export interface UserRow {
   spk_id: number;
   spk_pub: string;
   spk_sig: string;
+  /** Firebase Cloud Messaging token of the logged-in device, for content-free wake-up pushes. */
+  push_token: string | null;
+  /** SHA-256 of the user's sealed-sender delivery key (the key itself only goes to their contacts). */
+  access_key_hash: string | null;
 }
 
 export type Spk = { id: number; pub: string; sig: string };
@@ -40,6 +44,10 @@ export interface Db {
   /** Employee logs in on a device: new keys + device secret. Old device and undeliverable messages are dropped. */
   activate(username: string, a: { deviceHash: string; identityKey: string; spk: Spk }, opks: Opk[]): Promise<void>;
   setPassword(username: string, passHash: string, mustChange: boolean): Promise<void>;
+  setPushToken(username: string, token: string | null): Promise<void>;
+  setAccessKeyHash(username: string, hash: string | null): Promise<void>;
+  /** Small server-wide values (e.g. the sender-certificate key). Returns the stored value, creating it once. */
+  getOrCreateMeta(key: string, create: () => string): Promise<string>;
   deleteUser(username: string): Promise<void>;
   setSignedPreKey(username: string, spk: Spk): Promise<void>;
   addOneTimePreKeys(username: string, opks: Opk[]): Promise<void>;
@@ -83,6 +91,7 @@ export function openSqlite(file: string): Db {
       ts        INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS queue_recipient ON queue(recipient, id);
+    CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT NOT NULL);
   `);
 
   // ---- migrations (older databases) ----
@@ -93,6 +102,8 @@ export function openSqlite(file: string): Db {
     db.exec("UPDATE users SET device_hash = pass_hash WHERE identity_key != ''");
   }
   if (!cols.includes('must_change')) db.exec('ALTER TABLE users ADD COLUMN must_change INTEGER NOT NULL DEFAULT 0');
+  if (!cols.includes('push_token')) db.exec('ALTER TABLE users ADD COLUMN push_token TEXT');
+  if (!cols.includes('access_key_hash')) db.exec('ALTER TABLE users ADD COLUMN access_key_hash TEXT');
 
   const q = {
     getUser: db.prepare('SELECT * FROM users WHERE username = ?'),
@@ -102,9 +113,13 @@ export function openSqlite(file: string): Db {
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ),
     activate: db.prepare(
-      `UPDATE users SET device_hash = ?, identity_key = ?, spk_id = ?, spk_pub = ?, spk_sig = ? WHERE username = ?`,
+      `UPDATE users SET device_hash = ?, identity_key = ?, spk_id = ?, spk_pub = ?, spk_sig = ?, push_token = NULL, access_key_hash = NULL WHERE username = ?`,
     ),
     setPassword: db.prepare('UPDATE users SET pass_hash = ?, must_change = ? WHERE username = ?'),
+    setPush: db.prepare('UPDATE users SET push_token = ? WHERE username = ?'),
+    setAccessKey: db.prepare('UPDATE users SET access_key_hash = ? WHERE username = ?'),
+    getMeta: db.prepare('SELECT v FROM meta WHERE k = ?'),
+    insertMeta: db.prepare('INSERT OR IGNORE INTO meta (k, v) VALUES (?, ?)'),
     deleteUser: db.prepare('DELETE FROM users WHERE username = ?'),
     setSpk: db.prepare('UPDATE users SET spk_id = ?, spk_pub = ?, spk_sig = ? WHERE username = ?'),
     insertOpk: db.prepare('INSERT OR REPLACE INTO one_time_prekeys (username, id, pub) VALUES (?, ?, ?)'),
@@ -155,6 +170,16 @@ export function openSqlite(file: string): Db {
     },
     async setPassword(username, passHash, mustChange) {
       q.setPassword.run(passHash, mustChange ? 1 : 0, username);
+    },
+    async setPushToken(username, token) {
+      q.setPush.run(token, username);
+    },
+    async setAccessKeyHash(username, hash) {
+      q.setAccessKey.run(hash, username);
+    },
+    async getOrCreateMeta(key, create) {
+      q.insertMeta.run(key, create());
+      return (q.getMeta.get(key) as { v: string }).v;
     },
     async deleteUser(username) {
       q.deleteUser.run(username);

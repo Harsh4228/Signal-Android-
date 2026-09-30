@@ -36,9 +36,12 @@ Each app builds and deploys on its own. All three use the same `packages/core`, 
 | Screenshots | Android `FLAG_SECURE` (fully blocked); desktop `setContentProtection` (blocked); iOS: hidden in recordings and app switcher, screenshot blanked by `react-native-capture-protection`, and the other person is notified |
 | Disappearing messages | Per-chat timer, synced between both people |
 | Metadata padding | Messages padded to 160-byte blocks |
+| App lock | 6-digit PIN (PBKDF2-hashed, never stored) on desktop and mobile, plus fingerprint / Face ID on phones; auto-lock after idle / background time; wrong guesses throttled |
+| Push notifications | Content-free wake-ups through Firebase: only "New message" / "Incoming call", never the sender or text; sent only if a message is still waiting after a few seconds |
+| Sealed sender | After two people have exchanged a first message, their messages are posted **without logging in** inside a sealed envelope. The server stores them with no sender, so it only knows who receives, not who sent. Server-signed 24-hour sender certificates + a per-person delivery key (shared only inside encrypted messages) stop impersonation and anonymous spam |
 | Backups | Android backups and device transfer disabled; iOS keychain items not in iCloud |
 
-**Limits:** no app can stop someone photographing the screen with another camera. The server still sees *who* talks to *whom* and *when* (Signal hides the sender with "sealed sender"; that isn't implemented here yet). This code has **not** had an independent security audit. Get one before you trust it with life-or-death secrets.
+**Limits:** no app can stop someone photographing the screen with another camera. The server still sees who *receives* messages and when, and the IP address messages come from (use a VPN or Tor to hide that). The very first message to a new contact is not sealed, because the delivery key has not been exchanged yet. This code has **not** had an independent security audit. Get one before you trust it with life-or-death secrets.
 
 ## Run it
 
@@ -118,6 +121,18 @@ Server environment variables: `DATABASE_URL` (PostgreSQL; without it a SQLite fi
 
 Run the server tests against PostgreSQL too: `TEST_DATABASE_URL=postgres://user:pass@localhost:5432/db npm test -w @meetme/server`.
 
+## Push notifications (Firebase)
+
+Without Firebase everything works, but a closed app only gets messages when it is opened again. To wake phones:
+
+1. Create a project at https://console.firebase.google.com (free).
+2. **Android:** add an Android app with package name `app.meetme`, download `google-services.json` and put it in `apps/mobile/android/app/`.
+3. **iOS:** add an iOS app with bundle ID `app.meetme`, download `GoogleService-Info.plist` into `apps/mobile/ios/MeetMe/`. In Firebase > Project settings > Cloud Messaging, upload your APNs key (.p8) from the Apple Developer account.
+4. **Server:** Firebase > Project settings > Service accounts > *Generate new private key*. Copy the JSON file to the server as `infra/secrets/fcm-service-account.json` (already wired up in `docker-compose.yml`) and restart: `docker compose up -d`. The server log then shows `push: on`. Without Docker, set `FCM_SERVICE_ACCOUNT_FILE=/path/to/file.json`.
+5. For CI builds, add the two config files as repository secrets `GOOGLE_SERVICES_JSON` and `GOOGLE_SERVICE_INFO_PLIST` (paste the file contents).
+
+These files are in `.gitignore`: keep them out of the repository. What Google and Apple can see: that *some* MeetMe server woke this phone at a certain time. Never who wrote or what.
+
 ## Photos, PDFs and files
 
 Tap **📎** in a chat (or in the admin 📢 window) and choose Photo, PDF or File. Up to 25 MB.
@@ -152,9 +167,6 @@ $env:ADMIN_USERS='harsh'; npm run server
 Admins see **📢** in the app. It sends one announcement to every registered user. Each copy is end-to-end encrypted separately, so the server still can't read it. It shows up as **📢 Announcement** in each employee's chat with the admin, and employees reply to the admin privately. The badge is only shown for real admins, so other users can't fake announcements. Admins **cannot** read other people's chats; that's what end-to-end encryption guarantees.
 
 ## Roadmap ideas
-- Sealed sender (hide sender from server)
-- Push notifications (FCM/APNs wake-up with no content) for calls while the app is closed
 - Encrypted view-once images (in memory, never saved)
 - Group chats (Sender Keys)
 - Linked devices
-- App lock (PIN / biometrics)

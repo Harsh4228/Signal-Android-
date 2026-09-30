@@ -23,6 +23,9 @@ const SCHEMA = `
     spk_sig       TEXT NOT NULL,
     created_at    BIGINT NOT NULL
   );
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS push_token TEXT;
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS access_key_hash TEXT;
+  CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT NOT NULL);
   CREATE TABLE IF NOT EXISTS one_time_prekeys (
     username TEXT NOT NULL REFERENCES users(username) ON DELETE CASCADE,
     id       INTEGER NOT NULL,
@@ -110,7 +113,7 @@ export async function openPostgres(connectionString: string): Promise<{ db: Db; 
     activate: (username, a, opks) =>
       tx(async (c) => {
         await c.query(
-          'UPDATE users SET device_hash = $1, identity_key = $2, spk_id = $3, spk_pub = $4, spk_sig = $5 WHERE username = $6',
+          'UPDATE users SET device_hash = $1, identity_key = $2, spk_id = $3, spk_pub = $4, spk_sig = $5, push_token = NULL, access_key_hash = NULL WHERE username = $6',
           [a.deviceHash, a.identityKey, a.spk.id, a.spk.pub, a.spk.sig, username],
         );
         await c.query('DELETE FROM one_time_prekeys WHERE username = $1', [username]);
@@ -123,6 +126,17 @@ export async function openPostgres(connectionString: string): Promise<{ db: Db; 
         mustChange ? 1 : 0,
         username,
       ]);
+    },
+    async setPushToken(username, token) {
+      await pool.query('UPDATE users SET push_token = $1 WHERE username = $2', [token, username]);
+    },
+    async setAccessKeyHash(username, hash) {
+      await pool.query('UPDATE users SET access_key_hash = $1 WHERE username = $2', [hash, username]);
+    },
+    async getOrCreateMeta(key, create) {
+      // ON CONFLICT DO NOTHING: when several instances start together, the first value wins for all.
+      await pool.query('INSERT INTO meta (k, v) VALUES ($1, $2) ON CONFLICT (k) DO NOTHING', [key, create()]);
+      return (await one<{ v: string }>('SELECT v FROM meta WHERE k = $1', [key]))!.v;
     },
     async deleteUser(username) {
       await pool.query('DELETE FROM users WHERE username = $1', [username]);

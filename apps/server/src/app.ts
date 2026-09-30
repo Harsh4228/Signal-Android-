@@ -10,7 +10,13 @@ import {
   type AdminUser,
   type LoginRequest,
   type PublicConfig,
+  type PushKind,
+  type PushTokenRequest,
   fromBase64,
+  generateIdentityKeyPair,
+  isSealed,
+  issueCertificate,
+  toBase64,
   verifyPreKeySignature,
   type ClientFrame,
   type IceConfigResponse,
@@ -22,6 +28,7 @@ import {
 } from '@meetme/core';
 import { LocalBus, type Bus, type BusEvent } from './bus';
 import { isActive, openSqlite, type Db } from './db';
+import type { PushSender } from './push';
 
 export interface ServerConfig {
   /** SQLite file (used when no Postgres db is passed in). Attachments go next to it unless attachmentsDir is set. */
@@ -35,6 +42,8 @@ export interface ServerConfig {
   adminUsers: string[];
   /** Anyone may create an account. When false only admins self-register; employees get accounts from an admin. */
   openRegistration: boolean;
+  /** How long a message may wait unacknowledged before a wake-up push is sent (ms). */
+  pushDelayMs?: number;
 }
 
 const MAX_BODY = 64 * 1024;
@@ -45,6 +54,7 @@ const ATTACHMENT_TTL_MS = 14 * 24 * 3600 * 1000;
 const MAX_QUEUE = 5000;
 const QUEUE_TTL_MS = 30 * 24 * 3600 * 1000;
 const AUTH_TIMEOUT_MS = 5000;
+const SEALED_PATH = new RegExp('^/v1/sealed/([a-z0-9_.]{3,32})$');
 
 class HttpError extends Error {
   constructor(
@@ -143,9 +153,24 @@ class RateLimiter {
 
 // ---------------------------------------------------------------- server
 
-export function createMeetMeServer(config: ServerConfig, deps?: { db: Db; bus: Bus }) {
-  const db: Db = deps?.db ?? openSqlite(config.dbPath);
-  const bus: Bus = deps?.bus ?? new LocalBus();
+export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: Bus; push?: PushSender | null } = {}) {
+  const db: Db = deps.db ?? openSqlite(config.dbPath);
+  const bus: Bus = deps.bus ?? new LocalBus();
+  const push = deps.push ?? null;
+
+  // Sealed sender: the key that signs sender certificates. Kept in the database so every instance
+  // uses the same one (and clients keep trusting it across restarts).
+  const certKey = db
+    .getOrCreateMeta('sender_cert_key', () => {
+      const k = generateIdentityKeyPair();
+      return JSON.stringify([toBase64(k.priv), toBase64(k.pub)]);
+    })
+    .then((v) => {
+      const [priv, pub] = JSON.parse(v) as [string, string];
+      return { priv: fromBase64(priv), pub: fromBase64(pub) };
+    });
+  certKey.catch((e) => console.error('could not load the sender certificate key', e));
+  const sealedLimit = new RateLimiter(600, 60_000);
   const online = new Map<string, WebSocket>();
   const authCache = new Map<string, { digest: string; until: number }>();
   const registerLimit = new RateLimiter(10, 3600_000);
@@ -236,7 +261,7 @@ export function createMeetMeServer(config: ServerConfig, deps?: { db: Db; bus: B
 
     if (method === 'GET' && path === '/health') return send(200, { ok: true });
     if (method === 'GET' && path === '/v1/config') {
-      const pub: PublicConfig = { openRegistration: config.openRegistration };
+      const pub: PublicConfig = { openRegistration: config.openRegistration, certKey: toBase64((await certKey).pub) };
       return send(200, pub);
     }
 
@@ -287,6 +312,33 @@ export function createMeetMeServer(config: ServerConfig, deps?: { db: Db; bus: B
       return send(200, { ok: true });
     }
 
+    // Sealed sender: NO login, so the server never learns who is sending. Allowed only with the
+    // recipient's delivery key, which they share with their contacts inside encrypted messages.
+    let sm: RegExpMatchArray | null;
+    if (method === 'POST' && (sm = path.match(SEALED_PATH))) {
+      if (!sealedLimit.allow(clientIp(req))) throw new HttpError(429, 'slow down');
+      const to = sm[1]!;
+      const key = req.headers['x-delivery-key'];
+      const target = await db.getUser(to);
+      let ok = false;
+      if (typeof key === 'string' && target?.access_key_hash && isActive(target)) {
+        const given = createHash('sha256').update(Buffer.from(key, 'base64')).digest();
+        const stored = Buffer.from(target.access_key_hash, 'base64');
+        ok = stored.length === given.length && timingSafeEqual(given, stored);
+      }
+      // Same answer for "no such user" and "wrong key", so this can't be used to probe usernames.
+      if (!ok) throw new HttpError(401, 'unauthorized');
+      const body = await readBody(req, MAX_ENVELOPE);
+      if (!isSealed(body)) throw new HttpError(400, 'not a sealed message');
+      if ((await db.queueSize(to)) >= MAX_QUEUE) throw new HttpError(507, "Recipient's inbox is full");
+      const ts = Date.now();
+      const id = await db.enqueue(to, '', body, ts);
+      await dispatch(to, { id, sender: '', body, ts });
+      const hint = req.headers['x-push'];
+      if (hint === 'message' || hint === 'call') schedulePush(to, id, hint);
+      return send(200, { ts });
+    }
+
     // Everything below needs authentication.
     const me = await basicAuth(req);
 
@@ -319,6 +371,28 @@ export function createMeetMeServer(config: ServerConfig, deps?: { db: Db; bus: B
       return send(200, { exists: true, active: isActive(u) });
     }
     if (method === 'GET' && path === '/v1/turn') return send(200, iceConfig(me));
+    if (method === 'GET' && path === '/v1/certificate') {
+      const user = (await db.getUser(me))!;
+      return send(200, { certificate: issueCertificate(await certKey, me, user.identity_key) });
+    }
+    if (method === 'PUT' && path === '/v1/delivery-key') {
+      const body = (await readJson(req)) as { hash?: unknown };
+      b64Key(body.hash, 32, 'hash');
+      await db.setAccessKeyHash(me, body.hash as string);
+      return send(204);
+    }
+    if (path === '/v1/push' && (method === 'PUT' || method === 'DELETE')) {
+      let token: string | null = null;
+      if (method === 'PUT') {
+        const body = (await readJson(req)) as Partial<PushTokenRequest>;
+        if (typeof body.token !== "string" || body.token.length < 20 || body.token.length > 4096) {
+          throw new HttpError(400, 'invalid push token');
+        }
+        token = body.token;
+      }
+      await db.setPushToken(me, token);
+      return send(204);
+    }
     if (method === 'POST' && path === '/v1/attachments') {
       if (!uploadLimit.allow(me)) throw new HttpError(429, 'too many uploads');
       const b64 = (await readBody(req, MAX_ATTACHMENT_B64)).trim();
@@ -466,6 +540,37 @@ export function createMeetMeServer(config: ServerConfig, deps?: { db: Db; bus: B
     }
   });
 
+  // ---- wake-up pushes ----
+  // Only when a message is still waiting after a short delay (the recipient is really offline), at
+  // most one "New message" push per person every 20 s. Calls always push. Never any content.
+  const pushTimers = new Set<NodeJS.Timeout>();
+  const lastMessagePush = new Map<string, number>();
+  function schedulePush(to: string, envelopeId: number, kind: PushKind) {
+    if (!push) return;
+    const t = setTimeout(() => {
+      pushTimers.delete(t);
+      void (async () => {
+        if (online.has(to) || !(await db.envelope(envelopeId, to))) return; // delivered in the meantime
+        if (kind === 'message') {
+          const last = lastMessagePush.get(to) ?? 0;
+          if (Date.now() - last < 20_000) return;
+          lastMessagePush.set(to, Date.now());
+        }
+        const user = await db.getUser(to);
+        if (!user?.push_token) return;
+        if ((await push.send(user.push_token, kind)) === 'invalid') await db.setPushToken(to, null);
+      })().catch((e) => console.error('push failed', e));
+    }, config.pushDelayMs ?? (kind === 'call' ? 1500 : 3000));
+    pushTimers.add(t);
+  }
+
+  /** Hand a freshly queued envelope to the recipient's socket here, or to the instance that has it. */
+  async function dispatch(to: string, row: { id: number; sender: string; body: string; ts: number }) {
+    const socket = online.get(to);
+    if (socket) deliver(socket, row);
+    else await bus.publish({ type: 'envelope', to, id: row.id });
+  }
+
   async function deliverPending(username: string, ws: WebSocket) {
     for (const row of await db.pending(username)) deliver(ws, row);
   }
@@ -547,9 +652,8 @@ export function createMeetMeServer(config: ServerConfig, deps?: { db: Db; bus: B
           const ts = Date.now();
           const id = await db.enqueue(f.to, me, f.body, ts);
           frame(ws, { type: 'sent', ref, ts });
-          const socket = online.get(f.to);
-          if (socket) deliver(socket, { id, sender: me, body: f.body, ts });
-          else await bus.publish({ type: 'envelope', to: f.to, id });
+          await dispatch(f.to, { id, sender: me, body: f.body, ts });
+          if (f.push === 'message' || f.push === 'call') schedulePush(f.to, id, f.push);
           return;
         }
       }
@@ -576,6 +680,7 @@ export function createMeetMeServer(config: ServerConfig, deps?: { db: Db; bus: B
   }, 3600_000);
   server.on('close', () => {
     clearInterval(purge);
+    pushTimers.forEach(clearTimeout);
     wss.close();
     void db.close();
   });

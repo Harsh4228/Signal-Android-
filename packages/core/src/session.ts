@@ -86,9 +86,14 @@ export class SessionCipher {
     return { v: 1, t: 'msg', h, c };
   }
 
+  /**
+   * `expectedIdentity`: for sealed-sender messages, the identity key the sender proved it holds. The
+   * session used must belong to exactly that key, so a sealed message can't borrow someone else's name.
+   */
   async decrypt(
     peer: string,
     msg: WireMessage,
+    expectedIdentity?: Uint8Array,
   ): Promise<{ plaintext: string; identityStatus?: IdentityStatus }> {
     if (!msg || msg.v !== 1) throw new Error('unsupported message version');
     const header = fromBase64(msg.h);
@@ -100,6 +105,7 @@ export class SessionCipher {
       const ik = fromBase64(msg.ik);
       // Repeated prekey message for a session we already built?
       const idx = sessions.findIndex((s) => bytesEqual(s.baseKey, ek));
+      if (expectedIdentity && !bytesEqual(ik, expectedIdentity)) throw new Error('sender identity mismatch');
       if (idx >= 0) return { plaintext: await this.decryptWith(peer, sessions, idx, header, ciphertext) };
 
       const account = await this.store.getAccount();
@@ -135,6 +141,7 @@ export class SessionCipher {
     if (msg.t === 'msg') {
       let lastErr: unknown = new NoSessionError(peer);
       for (let i = 0; i < sessions.length; i++) {
+        if (expectedIdentity && !bytesEqual(sessions[i]!.theirIdentity, expectedIdentity)) continue;
         try {
           return { plaintext: await this.decryptWith(peer, sessions, i, header, ciphertext) };
         } catch (e) {

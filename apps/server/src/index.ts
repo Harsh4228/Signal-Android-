@@ -2,6 +2,7 @@ import { mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { createMeetMeServer } from './app';
 import { openPostgres } from './postgres';
+import { FcmSender } from './push';
 
 const list = (v: string | undefined) => (v ?? '').split(',').map((s) => s.trim()).filter(Boolean);
 
@@ -12,7 +13,9 @@ mkdirSync(dirname(dbPath), { recursive: true });
 const adminUsers = list(process.env.ADMIN_USERS).map((u) => u.toLowerCase());
 
 // PostgreSQL when DATABASE_URL is set (production), otherwise a local SQLite file.
-const deps = process.env.DATABASE_URL ? await openPostgres(process.env.DATABASE_URL) : undefined;
+const pg = process.env.DATABASE_URL ? await openPostgres(process.env.DATABASE_URL) : undefined;
+// Wake-up pushes (Android + iOS through Firebase Cloud Messaging) when a service account is configured.
+const push = FcmSender.fromEnv();
 
 const server = createMeetMeServer(
   {
@@ -26,13 +29,13 @@ const server = createMeetMeServer(
     // With an admin configured, only admins create accounts (unless OPEN_REGISTRATION=1).
     openRegistration: process.env.OPEN_REGISTRATION === '1' || adminUsers.length === 0,
   },
-  deps,
+  { ...pg, push },
 );
 
 const port = Number(process.env.PORT ?? 8080);
 const host = process.env.HOST ?? '0.0.0.0';
 server.listen(port, host, () => {
-  console.log(`MeetMe server listening on http://${host}:${port} (database: ${deps ? 'PostgreSQL' : 'SQLite'})`);
+  console.log(`MeetMe server listening on http://${host}:${port} (database: ${pg ? 'PostgreSQL' : 'SQLite'}, push: ${push ? 'on' : 'off'})`);
   console.log(
     process.env.ADMIN_USERS
       ? `Admins: ${process.env.ADMIN_USERS}`

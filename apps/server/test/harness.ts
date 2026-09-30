@@ -6,17 +6,18 @@ import { randomBytes } from 'node:crypto';
 import pg from 'pg';
 import { createMeetMeServer, type ServerConfig } from '../src/app';
 import { openPostgres } from '../src/postgres';
+import type { PushSender } from '../src/push';
 
 /**
  * Starts a test server on a random port. Uses SQLite by default; set TEST_DATABASE_URL to run the
  * same tests against PostgreSQL (each test file gets its own throw-away schema).
  */
-export async function startTestServer(cfg: Omit<ServerConfig, 'dbPath'>) {
+export async function startTestServer(cfg: Omit<ServerConfig, 'dbPath'>, extra: { push?: PushSender } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'meetme-'));
   const pgUrl = process.env.TEST_DATABASE_URL;
   let schema = '';
   let connectionString = '';
-  let deps: Parameters<typeof createMeetMeServer>[1];
+  let deps: Parameters<typeof createMeetMeServer>[1] = {};
 
   if (pgUrl) {
     schema = `test_${randomBytes(6).toString('hex')}`;
@@ -30,7 +31,7 @@ export async function startTestServer(cfg: Omit<ServerConfig, 'dbPath'>) {
     deps = await openPostgres(connectionString);
   }
 
-  const server = createMeetMeServer({ ...cfg, dbPath: join(dir, 'test.db'), attachmentsDir: join(dir, 'attachments') }, deps);
+  const server = createMeetMeServer({ ...cfg, dbPath: join(dir, 'test.db'), attachmentsDir: join(dir, 'attachments') }, { ...deps, ...extra });
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
   const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 
@@ -38,6 +39,21 @@ export async function startTestServer(cfg: Omit<ServerConfig, 'dbPath'>) {
     url,
     dir,
     backend: pgUrl ? 'postgres' : 'sqlite',
+    /** Every stored envelope (sender + body), read straight from the database. */
+    async queueRows(): Promise<{ sender: string; body: string }[]> {
+      if (pgUrl) {
+        const c = new pg.Client({ connectionString });
+        await c.connect();
+        const rows = (await c.query('SELECT sender, body FROM queue ORDER BY id')).rows as { sender: string; body: string }[];
+        await c.end();
+        return rows;
+      }
+      const { DatabaseSync } = await import('node:sqlite');
+      const raw = new DatabaseSync(join(dir, 'test.db'));
+      const rows = raw.prepare('SELECT sender, body FROM queue ORDER BY id').all() as { sender: string; body: string }[];
+      raw.close();
+      return rows;
+    },
     /** Every stored envelope body, read straight from the database. */
     async queueBodies(): Promise<string[]> {
       if (pgUrl) {

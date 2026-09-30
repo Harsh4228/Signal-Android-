@@ -42,6 +42,8 @@ export interface AdminUser {
 export interface PublicConfig {
   /** false = only admins can create accounts (employees log in with credentials from the admin) */
   openRegistration: boolean;
+  /** Sealed sender: base64 Ed25519 key that signs sender certificates. */
+  certKey?: string;
 }
 
 export interface MeResponse {
@@ -62,10 +64,25 @@ export interface IceConfigResponse {
   relayOnly: boolean;
 }
 
+/** What a wake-up push says. It never contains the sender or any message content. */
+export type PushKind = 'message' | 'call';
+
+/** PUT /v1/push: this device's Firebase Cloud Messaging token (Android and iOS). */
+export interface PushTokenRequest {
+  token: string;
+}
+
 // ---- WebSocket frames ----
 export type ClientFrame =
   | { type: 'auth'; username: string; password: string }
-  | { type: 'send'; ref: string; to: string; body: string }
+  | {
+      type: 'send';
+      ref: string;
+      to: string;
+      body: string;
+      /** Wake the recipient with a content-free push if they are offline. Absent = no push (receipts etc.). */
+      push?: PushKind;
+    }
   | { type: 'ack'; id: number }
   | { type: 'ping' };
 
@@ -84,6 +101,8 @@ export type Payload =
   | { k: 'receipt'; ids: string[]; status: 'delivered' | 'read' }
   | { k: 'timer'; expire: number }
   | { k: 'screenshot' }
+  /** Sealed sender: my delivery key, so you may send me messages without revealing yourself to the server. */
+  | { k: 'dk'; key: string }
   | {
       k: 'call';
       callId: string;

@@ -19,12 +19,15 @@ services:
       TRUST_PROXY: "1"
       DATABASE_URL: postgres://meetme:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in infra/.env}@db:5432/meetme
       ATTACHMENTS_DIR: /data/attachments
+      # Wake-up pushes: put the Firebase service account at infra/secrets/fcm-service-account.json
+      FCM_SERVICE_ACCOUNT_FILE: /run/meetme-secrets/fcm-service-account.json
       ADMIN_USERS: ${ADMIN_USERS}
       OPEN_REGISTRATION: ${OPEN_REGISTRATION:-0}
       TURN_URLS: turn:${DOMAIN}:3478?transport=udp,turn:${DOMAIN}:3478?transport=tcp
       TURN_SECRET: ${TURN_SECRET:?set TURN_SECRET in infra/.env}
     volumes:
       - meetme-data:/data
+      - ./secrets:/run/meetme-secrets:ro
     # Not published to the internet: only Caddy talks to it.
     expose:
       - '8080'

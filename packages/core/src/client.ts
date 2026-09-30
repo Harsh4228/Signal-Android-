@@ -11,6 +11,8 @@ import {
   type IceConfigResponse,
   type KeyBundleResponse,
   type Payload,
+  type PushKind,
+  type PushTokenRequest,
   type ServerFrame,
   type UploadKeysRequest,
 } from './api';
@@ -21,6 +23,15 @@ import type { PreKeyBundle } from './crypto/x3dh';
 import { Emitter } from './emitter';
 import { fromBase64, toBase64, utf8 } from './encoding';
 import { safetyNumber } from './fingerprint';
+import {
+  deliveryKeyHash,
+  isSealed,
+  newDeliveryKey,
+  sealMessage,
+  unsealMessage,
+  verifyCertificate,
+  type SenderCertificate,
+} from './sealed';
 import {
   createAccount,
   generateOneTimePreKeys,
@@ -174,6 +185,9 @@ export class MessengerClient extends Emitter<Events> {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private pingTimer: ReturnType<typeof setInterval> | null = null;
   private sweepTimer: ReturnType<typeof setInterval> | null = null;
+  /** Sealed sender: server key that signs certificates (trusted on first use) and my current certificate. */
+  private certKey: Uint8Array | null = null;
+  private certificate: SenderCertificate | null = null;
 
   constructor(storage: SecureStorage, opts: ClientOptions = {}) {
     super();
@@ -268,6 +282,15 @@ export class MessengerClient extends Emitter<Events> {
     await this.http('POST', '/v1/password', { oldPassword, newPassword });
   }
 
+  /**
+   * Register this device for wake-up pushes (Firebase Cloud Messaging token), or pass null to stop them.
+   * Pushes never carry message content or the sender: they only say "New message" / "Incoming call".
+   */
+  async setPushToken(token: string | null): Promise<void> {
+    if (token) await this.http('PUT', '/v1/push', { token } satisfies PushTokenRequest);
+    else await this.http('DELETE', '/v1/push');
+  }
+
   // ------------------------------------------------------------------ admin: employees
 
   async createEmployee(username: string, password: string): Promise<void> {
@@ -356,9 +379,17 @@ export class MessengerClient extends Emitter<Events> {
         this.admins = Array.isArray(f.admins) ? f.admins : [];
         this.emit('change');
         this.maintainKeys(f.preKeyCount).catch((e) => this.emit('error', `Key upload failed: ${e.message}`));
+        this.setupSealedSender().catch((e) => console.warn('sealed sender unavailable', e));
         break;
       case 'envelope':
-        await this.withLock(f.from, () => this.handleEnvelope(f.from, f.body, f.ts));
+        if (!f.from && isSealed(f.body)) {
+          const opened = await this.openSealed(f.body);
+          if (opened) {
+            await this.withLock(opened.from, () => this.handleEnvelope(opened.from, opened.body, f.ts, opened.identity));
+          }
+        } else {
+          await this.withLock(f.from, () => this.handleEnvelope(f.from, f.body, f.ts));
+        }
         if (this.ws?.readyState === 1) this.sendFrame({ type: 'ack', id: f.id });
         break;
       case 'sent': {
@@ -436,11 +467,11 @@ export class MessengerClient extends Emitter<Events> {
 
   // ------------------------------------------------------------------ receiving
 
-  private async handleEnvelope(from: string, body: string, ts: number) {
+  private async handleEnvelope(from: string, body: string, ts: number, expectedIdentity?: Uint8Array) {
     let payload: Payload;
     try {
       const wire = JSON.parse(body) as WireMessage;
-      const { plaintext, identityStatus } = await this.cipher.decrypt(from, wire);
+      const { plaintext, identityStatus } = await this.cipher.decrypt(from, wire, expectedIdentity);
       if (identityStatus === 'changed') this.onIdentityChanged(from);
       payload = JSON.parse(plaintext) as Payload;
     } catch (e) {
@@ -507,6 +538,13 @@ export class MessengerClient extends Emitter<Events> {
       case 'screenshot':
         this.addSystem(from, `${from} took a screenshot.`);
         break;
+      case 'dk':
+        if (typeof p.key === 'string' && p.key.length === 44) {
+          const keys = await this.store.getSetting<Record<string, string>>('peerDeliveryKeys', {});
+          keys[from] = p.key;
+          await this.store.setSetting('peerDeliveryKeys', keys);
+        }
+        break;
       case 'call':
         this.addContactLocal(from);
         this.emit('callSignal', from, p);
@@ -524,11 +562,120 @@ export class MessengerClient extends Emitter<Events> {
         const status = await this.cipher.initOutgoing(peer, parseBundle(bundle));
         if (status === 'changed') this.onIdentityChanged(peer);
       }
-      const wire = await this.cipher.encrypt(peer, pad(JSON.stringify(payload)));
-      const ref = newId();
-      if (msgId) this.pendingSends.set(ref, { peer, msgId });
-      this.sendFrame({ type: 'send', ref, to: peer, body: JSON.stringify(wire) });
+      // Before the first real message to someone, give them our delivery key (inside the encryption).
+      if (payload.k === 'text') await this.shareDeliveryKey(peer);
+      await this.sendWire(peer, payload, msgId);
     });
+  }
+
+  private async sendWire(peer: string, payload: Payload, msgId?: string): Promise<void> {
+    const wire = await this.cipher.encrypt(peer, pad(JSON.stringify(payload)));
+    const body = JSON.stringify(wire);
+    const push: PushKind | undefined =
+      payload.k === 'text' ? 'message' : payload.k === 'call' && payload.action === 'offer' ? 'call' : undefined;
+    if (await this.trySealedSend(peer, body, push)) {
+      if (msgId) this.setMsgStatus(peer, msgId, 'sent');
+      return;
+    }
+    const ref = newId();
+    if (msgId) this.pendingSends.set(ref, { peer, msgId });
+    this.sendFrame({ type: 'send', ref, to: peer, body, push });
+  }
+
+  // ------------------------------------------------------------------ sealed sender
+
+  /** Load the server's certificate key (trust on first use), register my delivery key, fetch a certificate. */
+  private async setupSealedSender(): Promise<void> {
+    const a = this.account;
+    if (!a) return;
+    const saved = await this.store.getSetting<string | null>('certKey', null);
+    if (saved) {
+      this.certKey = fromBase64(saved);
+    } else {
+      const cfg = await this.http<PublicConfig>('GET', '/v1/config');
+      if (!cfg.certKey) return; // older server without sealed sender
+      await this.store.setSetting('certKey', cfg.certKey);
+      this.certKey = fromBase64(cfg.certKey);
+    }
+    // One delivery key per device identity (a new login gets a new one).
+    const me = toBase64(a.identity.pub);
+    const dk = await this.store.getSetting<{ key: string; for: string; registered: boolean } | null>('deliveryKey', null);
+    if (!dk || dk.for !== me || !dk.registered) {
+      const key = dk?.for === me ? dk.key : newDeliveryKey();
+      await this.http('PUT', '/v1/delivery-key', { hash: deliveryKeyHash(key) });
+      await this.store.setSetting('deliveryKey', { key, for: me, registered: true });
+    }
+    await this.currentCertificate();
+  }
+
+  private async currentCertificate(): Promise<SenderCertificate | null> {
+    if (!this.certKey) return null;
+    if (this.certificate && this.certificate.exp - Date.now() > 3600_000) return this.certificate;
+    const { certificate } = await this.http<{ certificate: SenderCertificate }>('GET', '/v1/certificate');
+    if (!verifyCertificate(this.certKey, certificate) || certificate.u !== this.account?.username) {
+      throw new Error('server sent an invalid sender certificate');
+    }
+    this.certificate = certificate;
+    return certificate;
+  }
+
+  private async shareDeliveryKey(peer: string): Promise<void> {
+    const dk = await this.store.getSetting<{ key: string } | null>('deliveryKey', null);
+    if (!dk) return;
+    const shared = await this.store.getSetting<Record<string, string>>('deliveryKeyShared', {});
+    if (shared[peer] === dk.key) return;
+    await this.sendWire(peer, { k: 'dk', key: dk.key });
+    shared[peer] = dk.key;
+    await this.store.setSetting('deliveryKeyShared', shared);
+  }
+
+  /**
+   * Send without logging in, so the server can't tell who the sender is. Returns false when that's
+   * not possible yet (no delivery key from this contact, no certificate); the caller then sends normally.
+   */
+  private async trySealedSend(peer: string, body: string, push?: PushKind): Promise<boolean> {
+    const a = this.account;
+    if (!a) return false;
+    const keys = await this.store.getSetting<Record<string, string>>('peerDeliveryKeys', {});
+    const theirKey = keys[peer];
+    const theirIdentity = (await this.store.getIdentity(peer))?.key;
+    if (!theirKey || !theirIdentity) return false;
+    const cert = await this.currentCertificate().catch(() => null);
+    if (!cert) return false;
+    const headers: Record<string, string> = { 'content-type': 'text/plain', 'x-delivery-key': theirKey };
+    if (push) headers['x-push'] = push;
+    const res = await this.fetchImpl(`${a.serverUrl}/v1/sealed/${encodeURIComponent(peer)}`, {
+      method: 'POST',
+      headers,
+      body: sealMessage(a.identity, cert, theirIdentity, body),
+    });
+    if (res.ok) return true;
+    if (res.status === 401) {
+      // Their key changed (new phone): forget it and send normally until they share the new one.
+      delete keys[peer];
+      await this.store.setSetting('peerDeliveryKeys', keys);
+      return false;
+    }
+    throw new ApiError(res.status, (await res.text()) || res.statusText);
+  }
+
+  private async openSealed(body: string): Promise<{ from: string; body: string; identity: Uint8Array } | null> {
+    const a = this.account;
+    if (!a) return null;
+    if (!this.certKey) {
+      const saved = await this.store.getSetting<string | null>('certKey', null);
+      if (saved) this.certKey = fromBase64(saved);
+    }
+    try {
+      const opened = unsealMessage(a.identity, body);
+      if (!this.certKey || !verifyCertificate(this.certKey, opened.cert) || !USERNAME_RE.test(opened.cert.u)) {
+        throw new Error('sender certificate not valid');
+      }
+      return { from: opened.cert.u, body: opened.body, identity: opened.senderIdentityKey };
+    } catch (e) {
+      console.warn('sealed message rejected', e);
+      return null;
+    }
   }
 
   async sendText(peer: string, text: string, opts: { broadcast?: boolean } = {}): Promise<void> {
@@ -814,6 +961,7 @@ export class MessengerClient extends Emitter<Events> {
 
   /** Log out on this device: delete keys + in-memory chats. The account stays; log in again with ID + password. */
   async logout(): Promise<void> {
+    await this.setPushToken(null).catch(() => {}); // stop pushes to this device (best effort)
     await this.wipeLocal();
   }
 
