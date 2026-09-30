@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { Alert, ScrollView, Text, View } from 'react-native';
-import { CircleAlert, CircleCheck, LogOut, Trash2 } from 'lucide-react-native';
+import { ChevronRight, CircleAlert, CircleCheck, Lock, LogOut, Trash2 } from 'lucide-react-native';
 import { MIN_PASSWORD_LENGTH } from '@meetme/core';
-import { client, useClient } from '../messenger';
+import { appLock, client, useClient, useLock } from '../messenger';
 import { colors, s } from '../theme';
 import { Avatar, Banner, Button, Field, Header, Row, errorText } from '../ui';
 import type { Route } from '../App';
@@ -18,6 +18,7 @@ const SECURITY = [
 
 export function SettingsScreen({ navigate }: { navigate: (r: Route) => void }) {
   const c = useClient();
+  const lock = useLock();
   const [oldPw, setOldPw] = useState('');
   const [newPw, setNewPw] = useState('');
   const [newPw2, setNewPw2] = useState('');
@@ -44,7 +45,7 @@ export function SettingsScreen({ navigate }: { navigate: (r: Route) => void }) {
         text: 'Sign out',
         onPress: () => {
           navigate({ name: 'list' });
-          void client.logout();
+          void client.logout().then(() => appLock.load());
         },
       },
     ]);
@@ -57,7 +58,10 @@ export function SettingsScreen({ navigate }: { navigate: (r: Route) => void }) {
         style: 'destructive',
         onPress: () => {
           navigate({ name: 'list' });
-          void client.deleteAccount().catch(() => {});
+          void client
+            .deleteAccount()
+            .catch(() => {})
+            .then(() => appLock.load());
         },
       },
     ]);
@@ -74,6 +78,17 @@ export function SettingsScreen({ navigate }: { navigate: (r: Route) => void }) {
               {c.account?.serverUrl}
             </Text>
           </View>
+        </View>
+
+        <Text style={s.section}>Privacy</Text>
+        <View style={[s.card, { padding: 4 }]}>
+          <Row
+            icon={Lock}
+            title="App lock"
+            subtitle={lock.enabled ? 'On' : 'Off. Require a PIN to open MeetMe'}
+            onPress={() => navigate({ name: 'applock' })}
+            right={<ChevronRight size={18} color={colors.faint} />}
+          />
         </View>
 
         <Text style={s.section}>Change password</Text>

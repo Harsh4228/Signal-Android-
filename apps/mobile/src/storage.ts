@@ -28,7 +28,7 @@ export const keychainStorage: SecureStorage = {
     await Keychain.resetGenericPassword({ service: PREFIX + key });
   },
   async clear() {
-    const services = await Keychain.getAllGenericPasswordServices();
+    const services = await Keychain.getAllGenericPasswordServices({ skipUIAuth: true });
     await Promise.all(
       services.filter((s) => s.startsWith(PREFIX)).map((service) => Keychain.resetGenericPassword({ service })),
     );

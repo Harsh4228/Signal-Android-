@@ -1,4 +1,5 @@
 export * from './api';
+export * from './applock';
 export * from './attachments';
 export * from './call';
 export * from './client';

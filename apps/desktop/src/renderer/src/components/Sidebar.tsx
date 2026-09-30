@@ -1,13 +1,14 @@
 import { useState, type FormEvent } from 'react';
-import { Megaphone, MessageSquarePlus, Settings as SettingsIcon, UserPlus, Users } from 'lucide-react';
+import { Lock, Megaphone, MessageSquarePlus, Settings as SettingsIcon, UserPlus, Users } from 'lucide-react';
 import { MessengerClient } from '@meetme/core';
-import { client, useClient } from '../messenger';
+import { appLock, client, useClient, useLock } from '../messenger';
 import { Broadcast } from './Broadcast';
 import { Employees } from './Employees';
 import { Avatar, Logo, errorText, shortTime } from './ui';
 
 export function Sidebar({ onSettings, onError }: { onSettings: () => void; onError: (m: string) => void }) {
   const c = useClient();
+  const lock = useLock();
   const [adding, setAdding] = useState('');
   const [broadcasting, setBroadcasting] = useState(false);
   const [managing, setManaging] = useState(false);
@@ -44,6 +45,11 @@ export function Sidebar({ onSettings, onError }: { onSettings: () => void; onErr
           {c.isAdmin && (
             <button className="icon" title="Announcement to all employees" disabled={offline} onClick={() => setBroadcasting(true)}>
               <Megaphone size={19} />
+            </button>
+          )}
+          {lock.enabled && (
+            <button className="icon" title="Lock now" onClick={() => appLock.lock()}>
+              <Lock size={18} />
             </button>
           )}
           <button className="icon" title="Settings" onClick={onSettings}>

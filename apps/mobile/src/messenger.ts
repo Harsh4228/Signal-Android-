@@ -2,10 +2,13 @@ import { useEffect, useReducer } from 'react';
 import { PermissionsAndroid, Platform, type Permission } from 'react-native';
 import { mediaDevices, RTCPeerConnection } from 'react-native-webrtc';
 import InCallManager from 'react-native-incall-manager';
-import { CallManager, MessengerClient, type CallState } from '@meetme/core';
+import { AppLock, CallManager, MessengerClient, type CallState } from '@meetme/core';
 import { keychainStorage } from './storage';
 
 export const client = new MessengerClient(keychainStorage);
+
+/** PIN / biometric lock. Its settings live in the same Keychain / Keystore storage. */
+export const appLock = new AppLock(keychainStorage);
 
 async function ensureMediaPermissions(video: boolean) {
   if (Platform.OS !== 'android') return; // iOS asks automatically using Info.plist texts
@@ -49,4 +52,10 @@ export function useCall(): CallState {
   const [, bump] = useReducer((n: number) => n + 1, 0);
   useEffect(() => calls.on('change', bump), []);
   return calls.state;
+}
+
+export function useLock(): AppLock {
+  const [, bump] = useReducer((n: number) => n + 1, 0);
+  useEffect(() => appLock.on('change', bump), []);
+  return appLock;
 }

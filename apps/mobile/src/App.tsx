@@ -3,7 +3,7 @@ import { ActivityIndicator, AppState, BackHandler, StatusBar, Text, View } from 
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { CaptureEventType, CaptureProtection } from 'react-native-capture-protection';
 import { Info } from 'lucide-react-native';
-import { client, useCall, useClient } from './messenger';
+import { appLock, client, useCall, useClient, useLock } from './messenger';
 import { colors, s } from './theme';
 import { Logo } from './ui';
 import { RegisterScreen } from './screens/RegisterScreen';
@@ -15,6 +15,8 @@ import { CallScreen } from './screens/CallScreen';
 import { BroadcastScreen } from './screens/BroadcastScreen';
 import { MediaViewerHost } from './screens/AttachmentView';
 import { EmployeesScreen } from './screens/EmployeesScreen';
+import { LockScreen } from './screens/LockScreen';
+import { AppLockScreen } from './screens/AppLockScreen';
 
 export type Route =
   | { name: 'list' }
@@ -22,11 +24,13 @@ export type Route =
   | { name: 'info'; peer: string }
   | { name: 'settings' }
   | { name: 'broadcast' }
-  | { name: 'employees' };
+  | { name: 'employees' }
+  | { name: 'applock' };
 
 export default function App() {
   const c = useClient();
   const call = useCall();
+  const lock = useLock();
   const [ready, setReady] = useState(false);
   const [route, setRoute] = useState<Route>({ name: 'list' });
   const [toast, setToast] = useState<string | null>(null);
@@ -43,12 +47,14 @@ export default function App() {
       if (type === CaptureEventType.CAPTURED && client.activeChat) client.notifyScreenshot(client.activeChat);
     });
 
-    client.init().then((registered) => {
+    Promise.all([client.init(), appLock.load()]).then(([registered]) => {
       if (registered) client.connect();
       setReady(true);
     });
     const offErr = client.on('error', setToast);
     const appState = AppState.addEventListener('change', (st) => {
+      if (st === 'active') appLock.onForeground();
+      else if (st === 'background') appLock.onBackground();
       if (st === 'active' && client.account && client.status === 'offline') client.connect();
     });
     return () => {
@@ -101,6 +107,8 @@ export default function App() {
     screen = <EmployeesScreen navigate={setRoute} onToast={setToast} />;
   } else if (route.name === 'broadcast') {
     screen = <BroadcastScreen navigate={setRoute} onDone={setToast} />;
+  } else if (route.name === 'applock') {
+    screen = <AppLockScreen navigate={setRoute} onToast={setToast} />;
   } else if (route.name === 'settings') {
     screen = <SettingsScreen navigate={setRoute} />;
   } else {
@@ -114,6 +122,7 @@ export default function App() {
         {screen}
         <MediaViewerHost />
         {call.status !== 'idle' && <CallScreen />}
+        {ready && c.account && lock.locked && <LockScreen />}
         {toast && (
           <View
             style={{

@@ -1,7 +1,8 @@
 import { useState, type FormEvent } from 'react';
 import { CircleCheck, LogOut, Settings as SettingsIcon, Trash2, X } from 'lucide-react';
 import { MIN_PASSWORD_LENGTH } from '@meetme/core';
-import { client, useClient } from '../messenger';
+import { appLock, client, useClient } from '../messenger';
+import { AppLockSettings } from './AppLockSettings';
 import { Avatar, errorText } from './ui';
 
 const SECURITY = [
@@ -12,7 +13,7 @@ const SECURITY = [
   'Downloads, copying messages and drag and drop are disabled',
 ];
 
-export function Settings({ onClose }: { onClose: () => void }) {
+export function Settings({ onClose, onToast }: { onClose: () => void; onToast: (m: string) => void }) {
   const c = useClient();
   const [busy, setBusy] = useState(false);
   const [oldPw, setOldPw] = useState('');
@@ -40,6 +41,7 @@ export function Settings({ onClose }: { onClose: () => void }) {
       return;
     }
     await client.logout();
+    await appLock.load();
     onClose();
   }
 
@@ -49,6 +51,7 @@ export function Settings({ onClose }: { onClose: () => void }) {
     try {
       await client.deleteAccount();
     } finally {
+      await appLock.load();
       setBusy(false);
       onClose();
     }
@@ -76,6 +79,9 @@ export function Settings({ onClose }: { onClose: () => void }) {
             <div className="muted small">{c.account?.serverUrl}</div>
           </div>
         </div>
+
+        <div className="section-title">App lock</div>
+        <AppLockSettings onToast={onToast} />
 
         <div className="section-title">Change password</div>
         <form onSubmit={changePassword} className="stack">

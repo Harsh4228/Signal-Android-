@@ -1126,3 +1126,94 @@ a:hover {
     transform: rotate(360deg);
   }
 }
+
+/* ---------- app lock ---------- */
+.lockscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: var(--bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.lock-card {
+  width: 380px;
+  max-width: calc(100% - 32px);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  box-shadow: var(--shadow-md);
+  padding: 36px 32px 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 8px;
+}
+.lock-card h1 {
+  margin: 12px 0 0;
+  font-size: 20px;
+  font-weight: 600;
+}
+.lock-card p {
+  margin: 0 0 16px;
+}
+.lock-error {
+  min-height: 20px;
+  font-size: 13px;
+  color: var(--danger);
+  margin-top: 8px;
+  text-align: center;
+}
+.pin {
+  position: relative;
+  display: flex;
+  gap: 14px;
+  justify-content: center;
+  padding: 12px 18px;
+  border-radius: 12px;
+  cursor: text;
+}
+.pin:focus-within {
+  background: var(--surface-2);
+}
+.pin-input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  width: 100%;
+  border: none;
+  box-shadow: none;
+  cursor: text;
+}
+.pin-dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 1.5px solid var(--line-strong);
+  transition: background 0.1s;
+}
+.pin-dot.on {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.pin.error .pin-dot {
+  border-color: var(--danger);
+}
+.pin-modal {
+  text-align: center;
+}
+.pin-modal h3 {
+  margin: 8px 0 4px;
+  font-size: 17px;
+  font-weight: 600;
+}
+.field-label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-2);
+}
