@@ -4,11 +4,22 @@ Android · iOS (React Native) · Windows / macOS / Linux (Electron) · Node.js r
 
 ```
 meetme/
-├── packages/core/   Shared TypeScript: Signal protocol (X3DH + Double Ratchet), client, call manager
-├── server/          Node.js relay: public keys + encrypted envelopes only (SQLite, node:sqlite)
-├── desktop/         Electron + React app
-└── mobile/          React Native app (Android + iOS)
+├── apps/
+│   ├── server/      Node.js relay: public keys + encrypted envelopes only  → Docker image
+│   ├── mobile/      React Native, one codebase for Android + iOS           → .apk/.aab + iOS app
+│   └── desktop/     Electron + React (Windows / macOS / Linux)             → .exe / .dmg / .AppImage
+├── packages/
+│   └── core/        Shared TypeScript: Signal protocol (X3DH + Double Ratchet), client, call manager
+├── infra/           Production stack: docker-compose (server + Caddy HTTPS + coturn TURN)
+└── .github/workflows/
+    ├── ci.yml       every push: typecheck + tests
+    ├── server.yml   push to main: server image → ghcr.io
+    ├── android.yml  version tag: APK + AAB
+    ├── ios.yml      version tag: iOS build on a GitHub Mac
+    └── desktop.yml  version tag: Windows / macOS / Linux installers
 ```
+
+Each app builds and deploys on its own. All three use the same `packages/core`, so the encryption is written and tested once.
 
 ## Security design
 
@@ -48,8 +59,9 @@ npm run desktop        # opens the desktop app (dev mode)
 3. Start an emulator or plug in a phone with USB debugging enabled.
 
 ```powershell
-cd meetme\mobile
-npm install
+cd meetme
+npm install                 # shared core (once)
+npm run mobile:install
 npm run android
 ```
 
@@ -58,8 +70,8 @@ On the emulator the server address is `http://10.0.2.2:8080`. On a real phone us
 ### iOS (needs a Mac with Xcode)
 
 ```bash
-cd meetme/mobile && npm install
-cd ios && pod install && cd ..
+cd meetme && npm install && npm run mobile:install
+cd apps/mobile/ios && pod install && cd ../../..
 npm run ios
 ```
 
@@ -72,16 +84,34 @@ npm run dist:mac -w @meetme/desktop     # on a Mac
 
 ## Production deployment
 
-1. Run the server behind **HTTPS** (e.g. Caddy: `caddy reverse-proxy --from chat.example.com --to localhost:8080`) and set `TRUST_PROXY=1`. Clients then use `https://chat.example.com`.
-2. Add a TURN server (coturn) so calls work behind every NAT and your IP stays hidden:
+### Server (one Linux VPS with Docker)
+
+1. Point your domain's DNS **A record** (e.g. `chat.example.com`) at the VPS IP.
+2. Open firewall ports: `80`, `443` (TCP), `3478` (TCP + UDP), `49160-49400` (UDP, for calls).
+3. On the VPS:
+   ```bash
+   git clone https://github.com/Harsh4228/meetme.git && cd meetme/infra
+   cp .env.example .env        # set DOMAIN, ADMIN_USERS, TURN_SECRET (openssl rand -hex 32)
+   docker compose up -d --build
    ```
-   # /etc/turnserver.conf
-   use-auth-secret
-   static-auth-secret=<long random secret>
-   realm=chat.example.com
-   ```
-   Then start MeetMe with `TURN_URLS=turn:chat.example.com:3478?transport=udp,turns:chat.example.com:5349` and `TURN_SECRET=<same secret>`.
-3. Release builds on Android block plain `http://`, so use HTTPS.
+   Caddy gets a free HTTPS certificate automatically. Clients then use `https://chat.example.com`.
+4. Update later: `git pull && docker compose up -d --build`.
+5. Back up the `meetme-data` Docker volume (it holds accounts and public keys; messages are deleted once delivered).
+
+### App releases (built by GitHub Actions)
+
+Push a version tag and GitHub builds everything; download the files from the run's **Artifacts**:
+
+```powershell
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+- **Android:** for Play-Store-ready signing, create an upload key once (`keytool -genkeypair -v -keystore upload.jks -keyalg RSA -keysize 2048 -validity 10000 -alias upload`), **back it up safely**, and add the secrets listed at the top of `.github/workflows/android.yml`. Locally, put the `MEETME_UPLOAD_*` values in `%USERPROFILE%\.gradle\gradle.properties`, never in the repo.
+- **iOS:** the workflow checks it compiles on a GitHub Mac. Signed builds and TestFlight need an Apple Developer account.
+- **Desktop:** installers are unsigned until you buy code-signing certificates (Windows) or join the Apple Developer Program (macOS).
+
+Release builds on Android block plain `http://`, so use HTTPS.
 
 Server environment variables: `PORT` (8080), `HOST`, `DB_PATH` (`./data/meetme.db`), `STUN_URLS`, `TURN_URLS`, `TURN_SECRET`, `TRUST_PROXY`, `ADMIN_USERS`.
 

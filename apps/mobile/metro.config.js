@@ -2,12 +2,12 @@ const path = require('path');
 const { getDefaultConfig, mergeConfig } = require('@react-native/metro-config');
 
 /**
- * The shared encryption/messaging code lives in ../packages/core (TypeScript source),
+ * The shared encryption/messaging code lives in ../../packages/core (TypeScript source),
  * and its @noble/* crypto dependencies are installed in the monorepo root node_modules.
  *
  * @type {import('@react-native/metro-config').MetroConfig}
  */
-const root = path.resolve(__dirname, '..');
+const root = path.resolve(__dirname, '..', '..');
 const core = path.join(root, 'packages', 'core');
 
 const config = {

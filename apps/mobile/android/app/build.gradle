@@ -59,6 +59,11 @@ react {
  */
 def enableProguardInReleaseBuilds = false
 
+/** Release signing values come from gradle properties first, then environment variables. */
+def releaseSigningValue(String name) {
+    return project.findProperty(name) ?: System.getenv(name)
+}
+
 /**
  * The preferred build flavor of JavaScriptCore (JSC)
  *
@@ -94,15 +99,25 @@ android {
             keyAlias 'androiddebugkey'
             keyPassword 'android'
         }
+        // Your own upload key. Set these in ~/.gradle/gradle.properties or as environment variables
+        // (CI). Never commit the keystore or passwords to git.
+        if (releaseSigningValue('MEETME_UPLOAD_STORE_FILE')) {
+            release {
+                storeFile file(releaseSigningValue('MEETME_UPLOAD_STORE_FILE'))
+                storePassword releaseSigningValue('MEETME_UPLOAD_STORE_PASSWORD')
+                keyAlias releaseSigningValue('MEETME_UPLOAD_KEY_ALIAS')
+                keyPassword releaseSigningValue('MEETME_UPLOAD_KEY_PASSWORD')
+            }
+        }
     }
     buildTypes {
         debug {
             signingConfig signingConfigs.debug
         }
         release {
-            // Caution! In production, you need to generate your own keystore file.
-            // see https://reactnative.dev/docs/signed-apk-android.
-            signingConfig signingConfigs.debug
+            // Without MEETME_UPLOAD_* set, release builds fall back to the debug key: fine for local
+            // testing, but the Play Store will reject them.
+            signingConfig signingConfigs.findByName('release') ?: signingConfigs.debug
             minifyEnabled enableProguardInReleaseBuilds
             proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
         }

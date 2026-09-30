@@ -1,0 +1,11 @@
+.git
+**/node_modules
+apps/mobile
+apps/desktop/out
+apps/desktop/dist
+**/data
+*.db
+*.db-wal
+*.db-shm
+.env
+infra/.env

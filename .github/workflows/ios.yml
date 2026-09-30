@@ -1,0 +1,29 @@
+# Compiles the iOS app on a GitHub-hosted Mac, so you don't need your own Mac to check it builds.
+# This build is unsigned (simulator). Signed .ipa / TestFlight uploads need an Apple Developer
+# account ($99/year) and signing certificates added as secrets later.
+name: iOS
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm ci
+      - run: npm ci
+        working-directory: apps/mobile
+      - run: pod install
+        working-directory: apps/mobile/ios
+      - name: Build (simulator, unsigned)
+        working-directory: apps/mobile/ios
+        run: |
+          xcodebuild -workspace MeetMe.xcworkspace -scheme MeetMe \
+            -configuration Release -sdk iphonesimulator \
+            -derivedDataPath build CODE_SIGNING_ALLOWED=NO build

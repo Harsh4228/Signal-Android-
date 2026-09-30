@@ -1,0 +1,18 @@
+{$DOMAIN} {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options nosniff
+		Referrer-Policy no-referrer
+		-Server
+	}
+
+	# WebSockets (/v1/ws) are proxied automatically.
+	reverse_proxy server:8080
+
+	# Access logs off: no record of who connected when.
+	log {
+		output discard
+	}
+}

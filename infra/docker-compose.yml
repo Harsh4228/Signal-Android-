@@ -1,0 +1,71 @@
+# Production stack for one Linux server (VPS):
+#   caddy  - HTTPS (free Let's Encrypt certificate) in front of the MeetMe server
+#   server - MeetMe relay (only public keys + ciphertext)
+#   coturn - TURN relay so calls work behind any NAT and hide users' IP addresses
+#
+# Setup:  cp .env.example .env   (fill it in)   then   docker compose up -d --build
+services:
+  server:
+    build:
+      context: ..
+      dockerfile: apps/server/Dockerfile
+    restart: unless-stopped
+    environment:
+      TRUST_PROXY: '1'
+      ADMIN_USERS: ${ADMIN_USERS}
+      OPEN_REGISTRATION: ${OPEN_REGISTRATION:-0}
+      TURN_URLS: turn:${DOMAIN}:3478?transport=udp,turn:${DOMAIN}:3478?transport=tcp
+      TURN_SECRET: ${TURN_SECRET:?set TURN_SECRET in infra/.env}
+    volumes:
+      - meetme-data:/data
+    # Not published to the internet: only Caddy talks to it.
+    expose:
+      - '8080'
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - server
+    ports:
+      - '80:80'
+      - '443:443'
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN in infra/.env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+  coturn:
+    image: coturn/coturn:4.6
+    restart: unless-stopped
+    # TURN needs a large UDP port range; host networking is simplest and fastest.
+    network_mode: host
+    command:
+      - -n
+      - --log-file=stdout
+      - --listening-port=3478
+      - --min-port=49160
+      - --max-port=49400
+      - --use-auth-secret
+      - --static-auth-secret=${TURN_SECRET}
+      - --realm=${DOMAIN}
+      - --fingerprint
+      - --no-cli
+      - --no-multicast-peers
+      # Never relay into private networks (stops people using TURN to reach your internal machines).
+      - --denied-peer-ip=0.0.0.0-0.255.255.255
+      - --denied-peer-ip=10.0.0.0-10.255.255.255
+      - --denied-peer-ip=100.64.0.0-100.127.255.255
+      - --denied-peer-ip=127.0.0.0-127.255.255.255
+      - --denied-peer-ip=169.254.0.0-169.254.255.255
+      - --denied-peer-ip=172.16.0.0-172.31.255.255
+      - --denied-peer-ip=192.168.0.0-192.168.255.255
+      # On AWS / behind NAT, uncomment and set your public IP:
+      # - --external-ip=${PUBLIC_IP}
+
+volumes:
+  meetme-data:
+  caddy-data:
+  caddy-config:

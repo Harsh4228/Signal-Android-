@@ -2,7 +2,7 @@
   "extends": "@react-native/typescript-config",
   "compilerOptions": {
     "paths": {
-      "@meetme/core": ["../packages/core/src/index.ts"]
+      "@meetme/core": ["../../packages/core/src/index.ts"]
     }
   },
   "include": ["**/*.ts", "**/*.tsx"],

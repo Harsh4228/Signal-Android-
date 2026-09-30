@@ -5,14 +5,17 @@
   "description": "MeetMe - private end-to-end encrypted messenger (Android, iOS, Desktop)",
   "workspaces": [
     "packages/core",
-    "server",
-    "desktop"
+    "apps/server",
+    "apps/desktop"
   ],
   "scripts": {
     "test": "npm run test -w @meetme/core && npm run test -w @meetme/server",
     "typecheck": "npm run typecheck -w @meetme/core && npm run typecheck -w @meetme/server && npm run typecheck -w @meetme/desktop",
     "server": "npm run dev -w @meetme/server",
-    "desktop": "npm run dev -w @meetme/desktop"
+    "desktop": "npm run dev -w @meetme/desktop",
+    "mobile:install": "npm install --prefix apps/mobile",
+    "android": "npm run android --prefix apps/mobile",
+    "ios": "npm run ios --prefix apps/mobile"
   },
   "allowScripts": {
     "esbuild@0.28.2": true,
