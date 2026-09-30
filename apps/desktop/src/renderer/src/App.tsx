@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react';
+import { Info, LockKeyhole } from 'lucide-react';
 import { client, useCall, useClient } from './messenger';
 import { Register } from './components/Register';
 import { Sidebar } from './components/Sidebar';
 import { ChatView } from './components/ChatView';
 import { CallView } from './components/CallView';
 import { Settings } from './components/Settings';
+import { Logo } from './components/ui';
 
 export function App() {
   const c = useClient();
@@ -34,7 +36,12 @@ export function App() {
     if (call.status === 'idle' && call.endReason) setToast(call.endReason);
   }, [call.status, call.endReason]);
 
-  if (!ready) return <div className="splash">MeetMe</div>;
+  if (!ready)
+    return (
+      <div className="splash">
+        <Logo large />
+      </div>
+    );
   if (!c.account) return <Register onDone={() => client.connect()} />;
 
   return (
@@ -44,16 +51,19 @@ export function App() {
         <ChatView key={c.activeChat} peer={c.activeChat} onError={setToast} />
       ) : (
         <div className="empty">
-          <div className="lock">🔒</div>
-          <h2>MeetMe</h2>
-          <p>Messages and calls are end-to-end encrypted.</p>
-          <p className="muted">Nothing is saved to disk. Screenshots of this window are blocked.</p>
+          <div className="empty-icon">
+            <LockKeyhole size={28} />
+          </div>
+          <h2>Select a conversation</h2>
+          <p className="muted">Messages and calls are end-to-end encrypted.</p>
+          <p className="muted small">Nothing is saved to disk. Screenshots of this window are blocked.</p>
         </div>
       )}
       {call.status !== 'idle' && <CallView />}
       {showSettings && <Settings onClose={() => setShowSettings(false)} />}
       {toast && (
         <div className="toast" onClick={() => setToast(null)}>
+          <Info size={16} />
           {toast}
         </div>
       )}

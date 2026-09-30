@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, Menu, safeStorage, session, type IpcMainInvokeEvent } from 'electron';
+import { app, BrowserWindow, ipcMain, Menu, nativeTheme, safeStorage, session, type IpcMainInvokeEvent } from 'electron';
 import { createHash } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
@@ -112,13 +112,14 @@ app.on('web-contents-created', (_e, contents) => {
 // ---------------------------------------------------------------- window
 
 function createWindow() {
+  nativeTheme.themeSource = 'light';
   const win = new BrowserWindow({
     width: 1120,
     height: 740,
     minWidth: 780,
     minHeight: 520,
     title: 'MeetMe',
-    backgroundColor: '#0b141a',
+    backgroundColor: '#f4f5f7',
     autoHideMenuBar: true,
     show: false,
     webPreferences: {

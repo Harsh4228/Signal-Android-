@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
+import { Megaphone, Paperclip, Send, X } from 'lucide-react';
 import { formatBytes, type OutgoingFile } from '@meetme/core';
 import { client } from '../messenger';
+import { errorText } from './ui';
 
 export function Broadcast({ onClose, onDone }: { onClose: () => void; onDone: (m: string) => void }) {
   const [text, setText] = useState('');
@@ -27,11 +29,11 @@ export function Broadcast({ onClose, onDone }: { onClose: () => void; onDone: (m
       onDone(
         r.failed.length
           ? `Sent to ${r.sent}. Failed: ${r.failed.join(', ')}`
-          : `📢 Announcement sent to ${r.sent} employee${r.sent === 1 ? '' : 's'}`,
+          : `Announcement sent to ${r.sent} employee${r.sent === 1 ? '' : 's'}`,
       );
       onClose();
     } catch (e) {
-      onDone(e instanceof Error ? e.message : String(e));
+      onDone(errorText(e));
     } finally {
       setBusy(false);
     }
@@ -41,34 +43,41 @@ export function Broadcast({ onClose, onDone }: { onClose: () => void; onDone: (m
     <div className="modal-bg" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <header>
-          <b>📢 Announcement to all employees</b>
-          <button className="icon" onClick={onClose}>
-            ✕
+          <div className="title">
+            <span className="title-icon">
+              <Megaphone size={18} />
+            </span>
+            New announcement
+          </div>
+          <button className="icon" onClick={onClose} title="Close">
+            <X size={18} />
           </button>
         </header>
-        <p className="muted small">
+        <p className="intro">
           {count === null ? 'Loading employees…' : `Goes to ${count} employee${count === 1 ? '' : 's'}.`} Each copy is
           end-to-end encrypted separately. Replies come back to you as private chats.
         </p>
         <textarea
-          rows={5}
+          rows={6}
           value={text}
           onChange={(e) => setText(e.target.value)}
-          placeholder="Type the announcement…"
+          placeholder="Write your announcement…"
           autoFocus
         />
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 12 }}>
+        <div className="row" style={{ marginTop: 12 }}>
           <label className="file-btn">
-            📎 {file ? `${file.name} (${formatBytes(file.data.length)})` : 'Attach photo / PDF / file'}
+            <Paperclip size={16} />
+            <span>{file ? `${file.name} (${formatBytes(file.data.length)})` : 'Attach photo, PDF or file'}</span>
             <input type="file" hidden onChange={(e) => void onFile(e.target.files?.[0])} />
           </label>
           {file && (
             <button className="icon" title="Remove file" onClick={() => setFile(null)}>
-              ✕
+              <X size={16} />
             </button>
           )}
           <div className="grow" />
           <button className="primary" disabled={busy || (!text.trim() && !file) || !count} onClick={send}>
+            <Send size={16} />
             {busy ? 'Sending…' : 'Send to everyone'}
           </button>
         </div>

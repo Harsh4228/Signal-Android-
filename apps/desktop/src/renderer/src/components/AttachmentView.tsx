@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { File, FileText, Image, Loader2, Lock, TriangleAlert, X } from 'lucide-react';
 import { formatBytes, type Attachment } from '@meetme/core';
 import * as pdfjs from 'pdfjs-dist';
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
@@ -15,7 +16,14 @@ function useObjectUrl(a: Attachment): string | null {
   return url;
 }
 
-const ICON = { image: '🖼', pdf: '📄', file: '📎' } as const;
+function KindIcon({ kind }: { kind: Attachment['kind'] }) {
+  const Icon = kind === 'image' ? Image : kind === 'pdf' ? FileText : File;
+  return (
+    <span className={`att-icon ${kind}`}>
+      <Icon size={20} />
+    </span>
+  );
+}
 
 export function AttachmentView({ a }: { a: Attachment }) {
   const [open, setOpen] = useState(false);
@@ -24,10 +32,12 @@ export function AttachmentView({ a }: { a: Attachment }) {
   if (a.state === 'downloading' || a.state === 'uploading') {
     return (
       <div className="att-card">
-        <span className="att-icon">{ICON[a.kind]}</span>
+        <span className="att-icon">
+          <Loader2 size={20} className="spin" />
+        </span>
         <div className="grow">
           <div className="att-name">{a.name}</div>
-          <div className="muted small">{a.state === 'uploading' ? 'Encrypting & sending…' : 'Decrypting…'}</div>
+          <div className="muted small">{a.state === 'uploading' ? 'Encrypting and sending…' : 'Decrypting…'}</div>
         </div>
       </div>
     );
@@ -35,7 +45,9 @@ export function AttachmentView({ a }: { a: Attachment }) {
   if (a.state === 'failed' || !a.data) {
     return (
       <div className="att-card">
-        <span className="att-icon">⚠</span>
+        <span className="att-icon warn">
+          <TriangleAlert size={20} />
+        </span>
         <div className="grow">
           <div className="att-name">{a.name}</div>
           <div className="muted small">File unavailable (expired or failed)</div>
@@ -65,7 +77,7 @@ export function AttachmentView({ a }: { a: Attachment }) {
         onClick={() => openable && setOpen(true)}
         title={openable ? 'Open' : 'This file type cannot be opened inside MeetMe'}
       >
-        <span className="att-icon">{ICON[a.kind]}</span>
+        <KindIcon kind={a.kind} />
         <div className="grow">
           <div className="att-name">{a.name}</div>
           <div className="muted small">
@@ -92,9 +104,11 @@ function Viewer({ title, onClose, children }: { title: string; onClose: () => vo
     <div className="viewer" onClick={onClose}>
       <header onClick={(e) => e.stopPropagation()}>
         <span className="att-name">{title}</span>
-        <span className="muted small">🔒 View only · not saved to this device</span>
-        <button className="icon" onClick={onClose}>
-          ✕
+        <span className="hint">
+          <Lock size={12} /> View only · not saved to this device
+        </span>
+        <button className="icon" onClick={onClose} title="Close">
+          <X size={18} />
         </button>
       </header>
       <div className="viewer-body" onClick={(e) => e.stopPropagation()}>

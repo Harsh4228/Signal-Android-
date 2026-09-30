@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
+import { Lock, Mic, MicOff, Phone, PhoneOff, Video, VideoOff } from 'lucide-react';
 import { calls, useCall } from '../messenger';
+import { Avatar } from './ui';
 
-function Video({ stream, muted, className }: { stream: MediaStream | null; muted?: boolean; className?: string }) {
+function VideoEl({ stream, muted, className }: { stream: MediaStream | null; muted?: boolean; className?: string }) {
   const ref = useRef<HTMLVideoElement>(null);
   useEffect(() => {
     if (ref.current) ref.current.srcObject = stream;
@@ -24,6 +26,7 @@ function useDuration(startedAt: number | null) {
 export function CallView() {
   const call = useCall();
   const duration = useDuration(call.startedAt);
+  const hasVideo = call.video && !!call.remoteStream;
 
   const label =
     call.status === 'incoming'
@@ -35,49 +38,55 @@ export function CallView() {
           : duration;
 
   return (
-    <div className="call">
-      {call.video && call.remoteStream ? (
-        <Video stream={call.remoteStream} className="remote" />
+    <div className={`call ${hasVideo ? 'has-video' : ''}`}>
+      {hasVideo ? (
+        <VideoEl stream={call.remoteStream} className="remote" />
       ) : (
         <>
-          <div className="call-avatar">{call.peer?.[0]?.toUpperCase()}</div>
+          <Avatar name={call.peer ?? '?'} size="xl" />
           {/* audio-only calls still need an element to play the remote audio */}
-          {call.remoteStream && <Video stream={call.remoteStream} className="hidden" />}
+          {call.remoteStream && <VideoEl stream={call.remoteStream} className="hidden" />}
         </>
       )}
-      {call.video && call.localStream && <Video stream={call.localStream} muted className="local" />}
+      {call.video && call.localStream && <VideoEl stream={call.localStream} muted className="local" />}
 
       <div className="call-info">
         <div className="name">{call.peer}</div>
-        <div className="muted">🔒 {label}</div>
+        <div className="sub">
+          <Lock size={13} /> {label}
+        </div>
       </div>
 
       <div className="call-controls">
         {call.status === 'incoming' ? (
           <>
-            <button className="round danger" onClick={() => void calls.reject()} title="Decline">
-              ✕
+            <button className="round hangup" onClick={() => void calls.reject()} title="Decline">
+              <PhoneOff size={22} />
             </button>
             <button className="round accept" onClick={() => void calls.accept()} title="Accept">
-              ✆
+              {call.video ? <Video size={22} /> : <Phone size={22} />}
             </button>
           </>
         ) : (
           <>
-            <button className={`round ${call.muted ? 'on' : ''}`} onClick={() => calls.toggleMute()} title="Mute">
-              {call.muted ? '🔇' : '🎤'}
+            <button
+              className={`round ${call.muted ? 'on' : ''}`}
+              onClick={() => calls.toggleMute()}
+              title={call.muted ? 'Unmute' : 'Mute'}
+            >
+              {call.muted ? <MicOff size={22} /> : <Mic size={22} />}
             </button>
             {call.video && (
               <button
                 className={`round ${call.cameraOff ? 'on' : ''}`}
                 onClick={() => calls.toggleCamera()}
-                title="Camera"
+                title={call.cameraOff ? 'Turn camera on' : 'Turn camera off'}
               >
-                {call.cameraOff ? '🚫' : '📷'}
+                {call.cameraOff ? <VideoOff size={22} /> : <Video size={22} />}
               </button>
             )}
-            <button className="round danger" onClick={() => void calls.hangup()} title="Hang up">
-              ✕
+            <button className="round hangup" onClick={() => void calls.hangup()} title="End call">
+              <PhoneOff size={22} />
             </button>
           </>
         )}

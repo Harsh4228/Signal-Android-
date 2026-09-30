@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
+import { Check, Copy, KeyRound, RefreshCw, Trash2, UserPlus, Users, X } from 'lucide-react';
 import { generatePassword, USERNAME_RE, type AdminUser } from '@meetme/core';
 import { client } from '../messenger';
+import { Avatar, errorText } from './ui';
 
 type Share = { username: string; password: string; reset: boolean };
 
@@ -34,7 +36,7 @@ export function Employees({ onClose, onToast }: { onClose: () => void; onToast: 
       setPw(generatePassword());
       reload();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(errorText(err));
     } finally {
       setBusy(false);
     }
@@ -48,7 +50,7 @@ export function Employees({ onClose, onToast }: { onClose: () => void; onToast: 
       setShare({ username: u, password: temp, reset: true });
       reload();
     } catch (err) {
-      onToast(err instanceof Error ? err.message : String(err));
+      onToast(errorText(err));
     }
   }
 
@@ -59,7 +61,7 @@ export function Employees({ onClose, onToast }: { onClose: () => void; onToast: 
       onToast(`${u} removed`);
       reload();
     } catch (err) {
-      onToast(err instanceof Error ? err.message : String(err));
+      onToast(errorText(err));
     }
   }
 
@@ -72,38 +74,49 @@ export function Employees({ onClose, onToast }: { onClose: () => void; onToast: 
     <div className="modal-bg" onClick={onClose}>
       <div className="modal wide" onClick={(e) => e.stopPropagation()}>
         <header>
-          <b>👥 Employees</b>
-          <button className="icon" onClick={onClose}>
-            ✕
+          <div className="title">
+            <span className="title-icon">
+              <Users size={18} />
+            </span>
+            Employees
+          </div>
+          <button className="icon" onClick={onClose} title="Close">
+            <X size={18} />
           </button>
         </header>
 
         {share ? (
-          <div className="share">
-            <h4>{share.reset ? 'New temporary password' : 'Employee created'} - send this to {share.username}</h4>
+          <div className="share stack">
+            <div className="ok">
+              <Check size={16} />
+              {share.reset ? 'New temporary password created' : 'Employee account created'}. Send these details to{' '}
+              {share.username}.
+            </div>
             <textarea readOnly rows={5} value={shareText} onFocus={(e) => e.currentTarget.select()} />
-            <div className="row-end">
+            <p className="muted small" style={{ margin: 0 }}>
+              This password is only shown now. Send it privately (for example in person or by SMS).
+            </p>
+            <div className="row-end" style={{ marginTop: 4 }}>
               <button
                 onClick={() =>
                   navigator.clipboard.writeText(shareText).then(
-                    () => onToast('Copied'),
+                    () => onToast('Copied to clipboard'),
                     () => onToast('Select the text and press Ctrl+C'),
                   )
                 }
               >
-                Copy
+                <Copy size={16} /> Copy
               </button>
               <button className="primary" onClick={() => setShare(null)}>
                 Done
               </button>
             </div>
-            <p className="muted small">
-              This password is only shown now. Send it privately (e.g. in person or by SMS).
-            </p>
           </div>
         ) : (
-          <form onSubmit={create} className="add-emp">
-            <h4>Add employee</h4>
+          <form onSubmit={create}>
+            <div className="section-title" style={{ marginTop: 4 }}>
+              Add employee
+            </div>
             <div className="row">
               <input
                 value={id}
@@ -112,36 +125,43 @@ export function Employees({ onClose, onToast }: { onClose: () => void; onToast: 
                 autoFocus
               />
               <input value={pw} onChange={(e) => setPw(e.target.value)} placeholder="Temporary password" />
-              <button type="button" title="New random password" onClick={() => setPw(generatePassword())}>
-                🎲
+              <button type="button" className="icon" title="Generate new password" onClick={() => setPw(generatePassword())}>
+                <RefreshCw size={17} />
               </button>
               <button className="primary" disabled={busy || id.length < 3 || pw.length < 8}>
-                Create
+                <UserPlus size={16} /> Create
               </button>
             </div>
-            {error && <div className="error">{error}</div>}
+            {error && (
+              <div className="error" style={{ marginTop: 10 }}>
+                {error}
+              </div>
+            )}
           </form>
         )}
 
-        <h4>All accounts ({users?.length ?? '…'})</h4>
+        <div className="section-title">All accounts ({users?.length ?? '…'})</div>
         <ul className="emp-list">
           {users?.map((u) => (
             <li key={u.username}>
-              <div className="avatar">{u.username[0]!.toUpperCase()}</div>
+              <Avatar name={u.username} size="sm" />
               <div className="grow">
                 <div className="name">
-                  {u.username} {u.admin && <span className="admin-tag">ADMIN</span>}
+                  {u.username} {u.admin && <span className="tag admin">Admin</span>}
                 </div>
-                <div className="muted small">
-                  {u.active ? '● Active' : '○ Not logged in yet'}
+                <div className="state">
+                  <span className={`dot ${u.active ? 'on' : ''}`} />
+                  {u.active ? 'Active' : 'Not logged in yet'}
                   {u.mustChangePassword && u.active ? ' · password reset pending' : ''}
                 </div>
               </div>
               {u.username !== client.account?.username && (
                 <>
-                  <button onClick={() => void reset(u.username)}>Reset password</button>
+                  <button onClick={() => void reset(u.username)}>
+                    <KeyRound size={15} /> Reset password
+                  </button>
                   <button className="danger" onClick={() => void remove(u.username)}>
-                    Remove
+                    <Trash2 size={15} /> Remove
                   </button>
                 </>
               )}

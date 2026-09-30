@@ -704,8 +704,8 @@ export class MessengerClient extends Emitter<Events> {
   /** Short text for chat lists / notifications. */
   static preview(m: ChatMessage): string {
     if (m.attachment) {
-      const icon = m.attachment.kind === 'image' ? '📷 Photo' : m.attachment.kind === 'pdf' ? '📄 PDF' : '📎 File';
-      return m.text ? `${icon}: ${m.text}` : icon;
+      const label = m.attachment.kind === 'image' ? 'Photo' : m.attachment.kind === 'pdf' ? 'PDF' : 'File';
+      return m.text ? `${label}: ${m.text}` : label;
     }
     return m.text;
   }

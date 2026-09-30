@@ -23,9 +23,9 @@ const html = `<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'wasm-unsafe-eval' blob:; worker-src blob:; style-src 'unsafe-inline'; img-src data: blob:; connect-src blob: data:">
 <style>
-  html,body{margin:0;background:#0b141a;color:#8696a0;font:14px sans-serif;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+  html,body{margin:0;background:#f4f5f7;color:#667085;font:14px sans-serif;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
   #pages{display:flex;flex-direction:column;align-items:center;gap:10px;padding:10px 0}
-  canvas{background:#fff;box-shadow:0 2px 10px rgba(0,0,0,.5);max-width:96vw;height:auto}
+  canvas{background:#fff;box-shadow:0 4px 12px rgba(16,24,40,.12);border-radius:4px;max-width:96vw;height:auto}
   #msg{text-align:center;padding:40px 16px}
 </style>
 </head>

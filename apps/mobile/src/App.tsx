@@ -2,8 +2,10 @@ import { useEffect, useState } from 'react';
 import { ActivityIndicator, AppState, BackHandler, StatusBar, Text, View } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { CaptureEventType, CaptureProtection } from 'react-native-capture-protection';
+import { Info } from 'lucide-react-native';
 import { client, useCall, useClient } from './messenger';
 import { colors, s } from './theme';
+import { Logo } from './ui';
 import { RegisterScreen } from './screens/RegisterScreen';
 import { ChatListScreen } from './screens/ChatListScreen';
 import { ChatScreen } from './screens/ChatScreen';
@@ -33,8 +35,8 @@ export default function App() {
     // Block screenshots, screen recording and the app-switcher preview (iOS + Android).
     CaptureProtection.prevent({
       screenshot: true,
-      record: { text: 'Screen recording is blocked in MeetMe', backgroundColor: '#0b141a', textColor: '#e9edef' },
-      appSwitcher: { text: 'MeetMe', backgroundColor: '#0b141a', textColor: '#e9edef' },
+      record: { text: 'Screen recording is blocked in MeetMe', backgroundColor: '#ffffff', textColor: '#101828' },
+      appSwitcher: { text: 'MeetMe', backgroundColor: '#ffffff', textColor: '#101828' },
     }).catch(() => {});
     // iOS cannot fully stop a screenshot, so tell the other person if one happens.
     const sub = CaptureProtection.addListener((type) => {
@@ -84,7 +86,8 @@ export default function App() {
   let screen;
   if (!ready) {
     screen = (
-      <View style={s.center}>
+      <View style={[s.center, { backgroundColor: colors.surface, gap: 24 }]}>
+        <Logo size={64} />
         <ActivityIndicator color={colors.accent} />
       </View>
     );
@@ -106,8 +109,8 @@ export default function App() {
 
   return (
     <SafeAreaProvider>
-      <StatusBar barStyle="light-content" />
-      <SafeAreaView style={s.fill} edges={['top', 'bottom']}>
+      <StatusBar barStyle="dark-content" />
+      <SafeAreaView style={[s.fill, { backgroundColor: colors.surface }]} edges={['top', 'bottom']}>
         {screen}
         <MediaViewerHost />
         {call.status !== 'idle' && <CallScreen />}
@@ -115,16 +118,20 @@ export default function App() {
           <View
             style={{
               position: 'absolute',
-              bottom: 90,
+              bottom: 96,
               alignSelf: 'center',
-              backgroundColor: '#33434d',
+              backgroundColor: colors.text,
               paddingHorizontal: 16,
-              paddingVertical: 10,
-              borderRadius: 10,
-              maxWidth: '85%',
+              paddingVertical: 11,
+              borderRadius: 12,
+              maxWidth: '88%',
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 8,
             }}
           >
-            <Text style={s.text}>{toast}</Text>
+            <Info size={16} color="#fff" />
+            <Text style={{ color: '#fff', fontSize: 14, flexShrink: 1 }}>{toast}</Text>
           </View>
         )}
       </SafeAreaView>

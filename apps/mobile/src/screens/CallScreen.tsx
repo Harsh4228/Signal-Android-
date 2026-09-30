@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { RTCView } from 'react-native-webrtc';
+import { Lock, Mic, MicOff, Phone, PhoneOff, SwitchCamera, Video, VideoOff, type LucideIcon } from 'lucide-react-native';
 import { calls, useCall } from '../messenger';
 import { colors, s } from '../theme';
+import { Avatar } from '../ui';
 
 function useDuration(startedAt: number | null) {
   const [now, setNow] = useState(Date.now());
@@ -16,17 +18,33 @@ function useDuration(startedAt: number | null) {
   return `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
 }
 
-function Btn({ label, onPress, color }: { label: string; onPress: () => void; color?: string }) {
+function Btn({
+  icon: Icon,
+  label,
+  onPress,
+  kind = 'normal',
+}: {
+  icon: LucideIcon;
+  label: string;
+  onPress: () => void;
+  kind?: 'normal' | 'on' | 'hangup' | 'accept';
+}) {
+  const bg = kind === 'hangup' ? colors.danger : kind === 'accept' ? colors.online : kind === 'on' ? colors.text : colors.hover;
+  const fg = kind === 'normal' ? colors.text2 : '#fff';
   return (
-    <Pressable onPress={onPress} style={[styles.btn, color ? { backgroundColor: color } : null]}>
-      <Text style={{ fontSize: 24, color: colors.text }}>{label}</Text>
-    </Pressable>
+    <View style={{ alignItems: 'center', gap: 6 }}>
+      <Pressable onPress={onPress} accessibilityLabel={label} style={[styles.btn, { backgroundColor: bg }]}>
+        <Icon size={24} color={fg} strokeWidth={2} />
+      </Pressable>
+      <Text style={[s.muted, { fontSize: 12 }]}>{label}</Text>
+    </View>
   );
 }
 
 export function CallScreen() {
   const call = useCall();
   const duration = useDuration(call.startedAt);
+  const hasVideo = call.video && !!call.remoteStream;
   const label =
     call.status === 'incoming'
       ? `Incoming ${call.video ? 'video' : 'voice'} call`
@@ -37,37 +55,50 @@ export function CallScreen() {
           : duration;
 
   return (
-    <View style={[StyleSheet.absoluteFill, { backgroundColor: '#05090c' }]}>
-      {call.video && call.remoteStream ? (
-        <RTCView streamURL={call.remoteStream.toURL()} style={StyleSheet.absoluteFill} objectFit="cover" />
+    <View style={[StyleSheet.absoluteFill, { backgroundColor: colors.bg }]}>
+      {hasVideo ? (
+        <RTCView streamURL={call.remoteStream!.toURL()} style={StyleSheet.absoluteFill} objectFit="cover" />
       ) : (
-        <View style={s.center}>
-          <View style={[s.avatar, { width: 120, height: 120, borderRadius: 60 }]}>
-            <Text style={[s.avatarText, { fontSize: 48 }]}>{call.peer?.[0]?.toUpperCase()}</Text>
-          </View>
+        <View style={[s.center, { paddingBottom: 120 }]}>
+          <Avatar name={call.peer ?? '?'} size={120} />
         </View>
       )}
       {call.video && call.localStream && !call.cameraOff && (
         <RTCView streamURL={call.localStream.toURL()} style={styles.local} objectFit="cover" mirror zOrder={1} />
       )}
 
-      <View style={styles.info}>
-        <Text style={[s.text, { fontSize: 22, fontWeight: '700' }]}>{call.peer}</Text>
-        <Text style={s.muted}>🔒 {label}</Text>
+      <View style={[styles.info, hasVideo && styles.infoOnVideo]}>
+        <Text style={[s.h1, { fontSize: 22 }]}>{call.peer}</Text>
+        <View style={[s.row, { gap: 5, marginTop: 4 }]}>
+          <Lock size={13} color={colors.muted} />
+          <Text style={s.muted}>{label}</Text>
+        </View>
       </View>
 
       <View style={styles.controls}>
         {call.status === 'incoming' ? (
           <>
-            <Btn label="✕" color={colors.danger} onPress={() => void calls.reject()} />
-            <Btn label="✆" color={colors.ok} onPress={() => void calls.accept()} />
+            <Btn icon={PhoneOff} label="Decline" kind="hangup" onPress={() => void calls.reject()} />
+            <Btn icon={call.video ? Video : Phone} label="Accept" kind="accept" onPress={() => void calls.accept()} />
           </>
         ) : (
           <>
-            <Btn label={call.muted ? '🔇' : '🎤'} onPress={() => calls.toggleMute()} />
-            {call.video && <Btn label={call.cameraOff ? '🚫' : '📷'} onPress={() => calls.toggleCamera()} />}
-            {call.video && <Btn label="🔄" onPress={() => calls.switchCamera()} />}
-            <Btn label="✕" color={colors.danger} onPress={() => void calls.hangup()} />
+            <Btn
+              icon={call.muted ? MicOff : Mic}
+              label={call.muted ? 'Unmute' : 'Mute'}
+              kind={call.muted ? 'on' : 'normal'}
+              onPress={() => calls.toggleMute()}
+            />
+            {call.video && (
+              <Btn
+                icon={call.cameraOff ? VideoOff : Video}
+                label="Camera"
+                kind={call.cameraOff ? 'on' : 'normal'}
+                onPress={() => calls.toggleCamera()}
+              />
+            )}
+            {call.video && <Btn icon={SwitchCamera} label="Flip" onPress={() => calls.switchCamera()} />}
+            <Btn icon={PhoneOff} label="End" kind="hangup" onPress={() => void calls.hangup()} />
           </>
         )}
       </View>
@@ -79,27 +110,42 @@ const styles = StyleSheet.create({
   local: {
     position: 'absolute',
     right: 16,
-    bottom: 130,
-    width: 110,
-    height: 160,
-    borderRadius: 12,
+    top: 24,
+    width: 108,
+    height: 156,
+    borderRadius: 14,
     overflow: 'hidden',
+    borderWidth: 2,
+    borderColor: '#fff',
   },
-  info: { position: 'absolute', top: 40, left: 0, right: 0, alignItems: 'center' },
+  info: { position: 'absolute', top: '52%', left: 0, right: 0, alignItems: 'center' },
+  infoOnVideo: {
+    top: 24,
+    left: 16,
+    right: undefined,
+    alignItems: 'flex-start',
+    backgroundColor: 'rgba(255,255,255,0.92)',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 14,
+  },
   controls: {
     position: 'absolute',
-    bottom: 40,
-    left: 0,
-    right: 0,
+    bottom: 32,
+    left: 16,
+    right: 16,
     flexDirection: 'row',
-    justifyContent: 'center',
-    gap: 20,
+    justifyContent: 'space-evenly',
+    backgroundColor: colors.surface,
+    borderRadius: 24,
+    paddingVertical: 16,
+    borderWidth: 1,
+    borderColor: colors.line,
   },
   btn: {
-    width: 62,
-    height: 62,
-    borderRadius: 31,
-    backgroundColor: colors.panel2,
+    width: 60,
+    height: 60,
+    borderRadius: 30,
     alignItems: 'center',
     justifyContent: 'center',
   },

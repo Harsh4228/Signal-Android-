@@ -1,18 +1,40 @@
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
+import {
+  BadgeCheck,
+  Check,
+  CheckCheck,
+  CircleAlert,
+  Clock3,
+  File,
+  FileText,
+  Image,
+  Info,
+  Lock,
+  Megaphone,
+  Paperclip,
+  Phone,
+  SendHorizontal,
+  ShieldAlert,
+  Timer,
+  Video,
+} from 'lucide-react';
 import type { ChatMessage } from '@meetme/core';
 import { calls, client, useClient } from '../messenger';
 import { ChatInfo } from './ChatInfo';
 import { AttachmentView } from './AttachmentView';
+import { Avatar, errorText } from './ui';
 
 const time = (ts: number) => new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
-const TICKS: Record<NonNullable<ChatMessage['status']>, string> = {
-  sending: '🕓',
-  sent: '✓',
-  delivered: '✓✓',
-  read: '✓✓',
-  failed: '⚠',
-};
+function Tick({ status }: { status: NonNullable<ChatMessage['status']> }) {
+  const Icon =
+    status === 'sending' ? Clock3 : status === 'sent' ? Check : status === 'failed' ? CircleAlert : CheckCheck;
+  return (
+    <span className={`tick ${status}`} title={status}>
+      <Icon size={14} />
+    </span>
+  );
+}
 
 export function ChatView({ peer, onError }: { peer: string; onError: (m: string) => void }) {
   const c = useClient();
@@ -22,6 +44,7 @@ export function ChatView({ peer, onError }: { peer: string; onError: (m: string)
   const endRef = useRef<HTMLDivElement>(null);
   const messages = c.getMessages(peer);
   const timer = c.getDisappearingTimer(peer);
+  const online = c.status === 'online';
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ block: 'end' });
@@ -39,7 +62,7 @@ export function ChatView({ peer, onError }: { peer: string; onError: (m: string)
     try {
       await client.sendText(peer, t);
     } catch (err) {
-      onError(err instanceof Error ? err.message : String(err));
+      onError(errorText(err));
     }
   }
 
@@ -71,33 +94,48 @@ export function ChatView({ peer, onError }: { peer: string; onError: (m: string)
       const data = new Uint8Array(await f.arrayBuffer());
       await client.sendFile(peer, { name: f.name, mime: f.type || 'application/octet-stream', data }, caption);
     } catch (err) {
-      onError(err instanceof Error ? err.message : String(err));
+      onError(errorText(err));
     }
   }
 
   function call(video: boolean) {
-    calls.startCall(peer, video).catch((err) => onError(err instanceof Error ? err.message : String(err)));
+    calls.startCall(peer, video).catch((err) => onError(errorText(err)));
   }
 
   return (
     <section className="chat">
       <header>
-        <div className="avatar">{peer[0]!.toUpperCase()}</div>
+        <Avatar name={peer} />
         <div className="grow">
           <div className="name">
-            {peer} {verified && <span className="verified" title="Safety number verified">✔ verified</span>}
+            {peer}{' '}
+            {verified && (
+              <span className="tag verified" title="Safety number verified">
+                <BadgeCheck size={12} /> Verified
+              </span>
+            )}
           </div>
-          <div className="muted small">🔒 End-to-end encrypted{timer ? ' · ⏱ disappearing' : ''}</div>
+          <div className="sub">
+            <Lock size={12} /> End-to-end encrypted
+            {timer ? (
+              <>
+                {' · '}
+                <Timer size={12} /> Disappearing messages on
+              </>
+            ) : null}
+          </div>
         </div>
-        <button className="icon" title="Voice call" onClick={() => call(false)}>
-          📞
-        </button>
-        <button className="icon" title="Video call" onClick={() => call(true)}>
-          🎥
-        </button>
-        <button className="icon" title="Chat info" onClick={() => setShowInfo((s) => !s)}>
-          ⓘ
-        </button>
+        <div className="actions">
+          <button className="icon" title="Voice call" disabled={!online} onClick={() => call(false)}>
+            <Phone size={19} />
+          </button>
+          <button className="icon" title="Video call" disabled={!online} onClick={() => call(true)}>
+            <Video size={20} />
+          </button>
+          <button className={`icon ${showInfo ? 'active' : ''}`} title="Chat info" onClick={() => setShowInfo((s) => !s)}>
+            <Info size={19} />
+          </button>
+        </div>
       </header>
 
       <div className="body">
@@ -105,21 +143,26 @@ export function ChatView({ peer, onError }: { peer: string; onError: (m: string)
           {messages.map((m) =>
             m.system ? (
               <div key={m.id} className="system">
+                <ShieldAlert size={13} />
                 {m.text}
               </div>
             ) : (
               <div key={m.id} className={`bubble ${m.outgoing ? 'out' : 'in'}${m.broadcast ? ' announce' : ''}`}>
-                {m.broadcast && <div className="announce-label">📢 Announcement</div>}
+                {m.broadcast && (
+                  <div className="announce-label">
+                    <Megaphone size={13} /> Announcement
+                  </div>
+                )}
                 {m.attachment && <AttachmentView a={m.attachment} />}
                 {m.text && <div className="text">{m.text}</div>}
                 <div className="meta">
-                  {m.expiresAt && <span title="Disappearing">⏱</span>}
-                  {time(m.ts)}
-                  {m.outgoing && m.status && (
-                    <span className={`tick ${m.status}`} title={m.status}>
-                      {TICKS[m.status]}
+                  {m.expiresAt && (
+                    <span title="Disappearing message" className="tick">
+                      <Timer size={12} />
                     </span>
                   )}
+                  {time(m.ts)}
+                  {m.outgoing && m.status && <Tick status={m.status} />}
                 </div>
               </div>
             ),
@@ -131,40 +174,42 @@ export function ChatView({ peer, onError }: { peer: string; onError: (m: string)
 
       <form className="composer" onSubmit={send}>
         <input ref={fileInput} type="file" hidden onChange={(e) => void onFile(e.target.files)} />
-        <div className="attach">
-          <button
-            type="button"
-            className="icon"
-            title="Send photo, PDF or file"
-            disabled={c.status !== 'online'}
-            onClick={() => setMenu((m) => !m)}
-          >
-            📎
-          </button>
-          {menu && (
-            <div className="attach-menu" onMouseLeave={() => setMenu(false)}>
-              <button type="button" onClick={() => pick('image/*')}>
-                🖼 Photo
-              </button>
-              <button type="button" onClick={() => pick('application/pdf,.pdf')}>
-                📄 PDF
-              </button>
-              <button type="button" onClick={() => pick('')}>
-                📎 File
-              </button>
-            </div>
-          )}
+        <div className="field">
+          <div className="attach">
+            <button
+              type="button"
+              className="icon"
+              title="Attach photo, PDF or file"
+              disabled={!online}
+              onClick={() => setMenu((m) => !m)}
+            >
+              <Paperclip size={19} />
+            </button>
+            {menu && (
+              <div className="attach-menu" onMouseLeave={() => setMenu(false)}>
+                <button type="button" onClick={() => pick('image/*')}>
+                  <Image size={17} /> Photo
+                </button>
+                <button type="button" onClick={() => pick('application/pdf,.pdf')}>
+                  <FileText size={17} /> PDF document
+                </button>
+                <button type="button" onClick={() => pick('')}>
+                  <File size={17} /> Other file
+                </button>
+              </div>
+            )}
+          </div>
+          <textarea
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={onKey}
+            placeholder={online ? 'Write a message…' : 'Offline - reconnecting…'}
+            rows={1}
+            autoFocus
+          />
         </div>
-        <textarea
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={onKey}
-          placeholder={c.status === 'online' ? 'Message' : 'Offline - reconnecting…'}
-          rows={1}
-          autoFocus
-        />
-        <button className="primary round" disabled={!text.trim() || c.status !== 'online'} title="Send">
-          ➤
+        <button className="primary send" disabled={!text.trim() || !online} title="Send">
+          <SendHorizontal size={19} />
         </button>
       </form>
     </section>

@@ -1,16 +1,15 @@
 import { useState } from 'react';
-import { KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
+import { KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, View } from 'react-native';
+import { ArrowLeft, CircleAlert, KeyRound, LockKeyhole } from 'lucide-react-native';
 import { MIN_PASSWORD_LENGTH, MustChangePasswordError } from '@meetme/core';
 import { client } from '../messenger';
 import { colors, s } from '../theme';
-
-// Android emulator reaches the PC's localhost at 10.0.2.2
-const DEFAULT_SERVER = Platform.OS === 'android' ? 'http://10.0.2.2:8080' : 'http://localhost:8080';
+import { Banner, Button, Field, Logo, errorText } from '../ui';
 
 /** Employees log in with the ID + password from their admin. "Create account" is for the admin's first setup. */
 export function RegisterScreen({ onDone }: { onDone: () => void }) {
   const [mode, setMode] = useState<'login' | 'register'>('login');
-  const [server, setServer] = useState(DEFAULT_SERVER);
+  const [server, setServer] = useState('https://');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [mustChange, setMustChange] = useState(false);
@@ -32,7 +31,7 @@ export function RegisterScreen({ onDone }: { onDone: () => void }) {
       onDone();
     } catch (e) {
       if (e instanceof MustChangePasswordError) setMustChange(true);
-      else setError(e instanceof Error ? e.message : String(e));
+      else setError(errorText(e));
     } finally {
       setBusy(false);
     }
@@ -40,81 +39,67 @@ export function RegisterScreen({ onDone }: { onDone: () => void }) {
 
   const canSubmit =
     username.length >= 3 && (mode === 'register' || (password.length > 0 && (!mustChange || newPw.length > 0)));
-  const input = (props: React.ComponentProps<typeof TextInput>) => (
-    <TextInput
-      style={[s.input, props.editable === false && { opacity: 0.6 }]}
-      autoCapitalize="none"
-      autoCorrect={false}
-      placeholderTextColor={colors.muted}
-      {...props}
-    />
-  );
 
   return (
-    <KeyboardAvoidingView style={s.fill} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-      <ScrollView contentContainerStyle={[s.center, { flexGrow: 1 }]} keyboardShouldPersistTaps="handled">
-        <View style={{ width: '100%', maxWidth: 380, gap: 10 }}>
-          <Text style={{ fontSize: 56, textAlign: 'center' }}>🔒</Text>
-          <Text style={[s.h1, { textAlign: 'center' }]}>MeetMe</Text>
-          <Text style={[s.muted, { textAlign: 'center', marginBottom: 8 }]}>
-            Private, end-to-end encrypted messenger
-          </Text>
+    <KeyboardAvoidingView
+      style={{ flex: 1, backgroundColor: colors.surface }}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+    >
+      <ScrollView contentContainerStyle={{ flexGrow: 1, justifyContent: 'center', padding: 24 }} keyboardShouldPersistTaps="handled">
+        <View style={{ width: '100%', maxWidth: 420, alignSelf: 'center', gap: 16 }}>
+          <View style={{ alignItems: 'center', gap: 10, marginBottom: 12 }}>
+            <Logo size={60} />
+            <Text style={[s.h1, { marginTop: 8 }]}>{mode === 'login' ? 'Sign in to MeetMe' : 'Set up MeetMe'}</Text>
+            <Text style={[s.muted, { textAlign: 'center', fontSize: 14, lineHeight: 20 }]}>
+              {mode === 'login'
+                ? 'Use the ID and password you received from your administrator.'
+                : 'Create the first administrator account for your server.'}
+            </Text>
+          </View>
 
-          <Text style={s.muted}>Server</Text>
-          {input({ value: server, onChangeText: setServer, keyboardType: 'url' })}
-          <Text style={s.muted}>{mode === 'login' ? 'Your ID' : 'Username'}</Text>
-          {input({
-            value: username,
-            onChangeText: (t) => setUsername(t.toLowerCase()),
-            placeholder: 'a-z, 0-9, _ .',
-            editable: !mustChange,
-          })}
+          <Field label="Server address" value={server} onChangeText={setServer} keyboardType="url" placeholder="https://chat.yourcompany.com" />
+          <Field
+            label={mode === 'login' ? 'User ID' : 'Username'}
+            value={username}
+            onChangeText={(t) => setUsername(t.toLowerCase())}
+            placeholder="e.g. ravi.k"
+            editable={!mustChange}
+          />
           {mode === 'login' && (
-            <>
-              <Text style={s.muted}>Password</Text>
-              {input({ value: password, onChangeText: setPassword, secureTextEntry: true, editable: !mustChange })}
-            </>
+            <Field label="Password" value={password} onChangeText={setPassword} secureTextEntry editable={!mustChange} />
           )}
 
           {mustChange && (
             <>
-              <Text
-                style={{
-                  color: '#f5c46b',
-                  backgroundColor: 'rgba(245,165,36,0.12)',
-                  borderRadius: 8,
-                  padding: 10,
-                  marginTop: 6,
-                }}
-              >
-                First login: choose your own password. After this, not even your admin knows it.
-              </Text>
-              {input({ value: newPw, onChangeText: setNewPw, secureTextEntry: true, placeholder: 'New password' })}
-              {input({
-                value: newPw2,
-                onChangeText: setNewPw2,
-                secureTextEntry: true,
-                placeholder: 'Repeat new password',
-              })}
+              <Banner kind="warn" icon={KeyRound}>
+                First sign-in: choose your own password. After this, not even your administrator knows it.
+              </Banner>
+              <Field label="New password" value={newPw} onChangeText={setNewPw} secureTextEntry />
+              <Field label="Confirm new password" value={newPw2} onChangeText={setNewPw2} secureTextEntry />
             </>
           )}
 
-          {error && <Text style={{ color: colors.danger }}>{error}</Text>}
-          <Pressable
-            style={[s.button, s.primary, (busy || !canSubmit) && { opacity: 0.5 }]}
-            disabled={busy || !canSubmit}
-            onPress={submit}
-          >
-            <Text style={s.buttonText}>
-              {busy
-                ? 'Creating your keys…'
+          {error && (
+            <Banner kind="error" icon={CircleAlert}>
+              {error}
+            </Banner>
+          )}
+          <Button
+            variant="primary"
+            title={
+              busy
+                ? 'Creating your encryption keys…'
                 : mode === 'register'
-                  ? 'Create account'
+                  ? 'Create administrator account'
                   : mustChange
-                    ? 'Save password & log in'
-                    : 'Log in'}
-            </Text>
-          </Pressable>
+                    ? 'Save password and sign in'
+                    : 'Sign in'
+            }
+            busy={busy}
+            disabled={!canSubmit}
+            onPress={submit}
+            style={{ marginTop: 4 }}
+          />
 
           <Pressable
             onPress={() => {
@@ -122,14 +107,19 @@ export function RegisterScreen({ onDone }: { onDone: () => void }) {
               setMustChange(false);
               setError(null);
             }}
+            style={[s.row, { justifyContent: 'center', gap: 6, paddingVertical: 6 }]}
           >
-            <Text style={{ color: '#7da6ff', textAlign: 'center', marginTop: 10 }}>
-              {mode === 'login' ? 'Admin: create the first account' : '← Back to log in'}
+            {mode === 'register' && <ArrowLeft size={15} color={colors.accent} />}
+            <Text style={{ color: colors.accent, fontWeight: '600', fontSize: 14 }}>
+              {mode === 'login' ? 'Administrator? Set up a new server' : 'Back to sign in'}
             </Text>
           </Pressable>
-          <Text style={[s.muted, { textAlign: 'center', marginTop: 6 }]}>
-            Your keys are created on this phone and never leave it.
-          </Text>
+
+          <View style={[s.divider, { marginTop: 4 }]} />
+          <View style={[s.row, { gap: 8, justifyContent: 'center' }]}>
+            <LockKeyhole size={14} color={colors.muted} />
+            <Text style={[s.muted, { fontSize: 12.5 }]}>Your keys are created on this phone and never leave it.</Text>
+          </View>
         </View>
       </ScrollView>
     </KeyboardAvoidingView>

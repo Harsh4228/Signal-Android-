@@ -1,9 +1,20 @@
 import { useState } from 'react';
-import { Alert, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
+import { Alert, ScrollView, Text, View } from 'react-native';
+import { CircleAlert, CircleCheck, LogOut, Trash2 } from 'lucide-react-native';
 import { MIN_PASSWORD_LENGTH } from '@meetme/core';
 import { client, useClient } from '../messenger';
 import { colors, s } from '../theme';
+import { Avatar, Banner, Button, Field, Header, Row, errorText } from '../ui';
 import type { Route } from '../App';
+
+const SECURITY = [
+  'End-to-end encryption with the Signal protocol (X3DH + Double Ratchet)',
+  'Messages and files live in memory only and vanish when the app closes',
+  'Keys stored only in the iOS Keychain / Android Keystore, excluded from backups',
+  'Screenshots, screen recording and app-switcher previews are blocked',
+  'No storage permission: the app cannot save any file to your phone',
+  'Calls use WebRTC with keys exchanged over the encrypted channel',
+];
 
 export function SettingsScreen({ navigate }: { navigate: (r: Route) => void }) {
   const c = useClient();
@@ -22,15 +33,15 @@ export function SettingsScreen({ navigate }: { navigate: (r: Route) => void }) {
       setNewPw('');
       setNewPw2('');
     } catch (e) {
-      setPwMsg({ ok: false, text: e instanceof Error ? e.message : String(e) });
+      setPwMsg({ ok: false, text: errorText(e) });
     }
   }
 
   const logout = () =>
-    Alert.alert('Log out', 'Log out on this phone? Chats here are cleared. Log in again any time with your ID and password.', [
+    Alert.alert('Sign out', 'Sign out on this phone? Chats here are cleared. Sign in again any time with your ID and password.', [
       { text: 'Cancel', style: 'cancel' },
       {
-        text: 'Log out',
+        text: 'Sign out',
         onPress: () => {
           navigate({ name: 'list' });
           void client.logout();
@@ -51,62 +62,47 @@ export function SettingsScreen({ navigate }: { navigate: (r: Route) => void }) {
       },
     ]);
 
-  const pwInput = (value: string, onChangeText: (t: string) => void, placeholder: string) => (
-    <TextInput
-      style={[s.input, { marginBottom: 8 }]}
-      value={value}
-      onChangeText={onChangeText}
-      placeholder={placeholder}
-      placeholderTextColor={colors.muted}
-      secureTextEntry
-      autoCapitalize="none"
-    />
-  );
-
   return (
     <View style={s.fill}>
-      <View style={s.header}>
-        <Pressable style={s.iconBtn} onPress={() => navigate({ name: 'list' })}>
-          <Text style={s.icon}>‹</Text>
-        </Pressable>
-        <Text style={[s.text, { fontWeight: '700', fontSize: 17 }]}>Settings</Text>
-      </View>
-      <ScrollView contentContainerStyle={{ padding: 16 }} keyboardShouldPersistTaps="handled">
-        <Text style={s.text}>
-          Signed in as <Text style={{ fontWeight: '700' }}>{c.account?.username}</Text>
-        </Text>
-        <Text style={s.muted}>{c.account?.serverUrl}</Text>
+      <Header title="Settings" onBack={() => navigate({ name: 'list' })} />
+      <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40 }} keyboardShouldPersistTaps="handled">
+        <View style={[s.card, s.row, { padding: 16, gap: 14 }]}>
+          <Avatar name={c.account?.username ?? '?'} size={52} />
+          <View style={{ flex: 1 }}>
+            <Text style={[s.title, { fontSize: 18 }]}>{c.account?.username}</Text>
+            <Text style={s.muted} numberOfLines={1}>
+              {c.account?.serverUrl}
+            </Text>
+          </View>
+        </View>
 
-        <Text style={s.h4}>Change password</Text>
-        {pwInput(oldPw, setOldPw, 'Current password')}
-        {pwInput(newPw, setNewPw, 'New password')}
-        {pwInput(newPw2, setNewPw2, 'Repeat new password')}
-        {pwMsg && <Text style={{ color: pwMsg.ok ? colors.ok : colors.danger }}>{pwMsg.text}</Text>}
-        <Pressable style={[s.button, (!oldPw || !newPw) && { opacity: 0.5 }]} disabled={!oldPw || !newPw} onPress={changePassword}>
-          <Text style={s.buttonText}>Change password</Text>
-        </Pressable>
+        <Text style={s.section}>Change password</Text>
+        <View style={[s.card, { padding: 16, gap: 10 }]}>
+          <Field value={oldPw} onChangeText={setOldPw} placeholder="Current password" secureTextEntry />
+          <Field value={newPw} onChangeText={setNewPw} placeholder="New password" secureTextEntry />
+          <Field value={newPw2} onChangeText={setNewPw2} placeholder="Confirm new password" secureTextEntry />
+          {pwMsg && (
+            <Banner kind={pwMsg.ok ? 'ok' : 'error'} icon={pwMsg.ok ? CircleCheck : CircleAlert}>
+              {pwMsg.text}
+            </Banner>
+          )}
+          <Button title="Update password" disabled={!oldPw || !newPw} onPress={changePassword} />
+        </View>
 
-        <Text style={s.h4}>Security on this phone</Text>
-        {[
-          'End-to-end encryption: X3DH + Double Ratchet (Signal protocol)',
-          'Messages and files live in memory only and vanish when the app closes',
-          'Keys stored only in the iOS Keychain / Android Keystore, excluded from backups',
-          'Screenshots, screen recording and app-switcher previews are blocked',
-          'No storage permission: the app cannot save any file to your phone',
-          'Calls: WebRTC with keys exchanged over the encrypted channel',
-        ].map((t) => (
-          <Text key={t} style={[s.muted, { marginBottom: 6 }]}>
-            • {t}
-          </Text>
-        ))}
+        <Text style={s.section}>Security on this phone</Text>
+        <View style={[s.card, { padding: 16, gap: 12 }]}>
+          {SECURITY.map((t) => (
+            <View key={t} style={[s.row, { gap: 10, alignItems: 'flex-start' }]}>
+              <CircleCheck size={17} color={colors.ok} style={{ marginTop: 1 }} />
+              <Text style={[s.text, { flex: 1, fontSize: 14, color: colors.text2, lineHeight: 20 }]}>{t}</Text>
+            </View>
+          ))}
+        </View>
 
-        <View style={[s.row, { gap: 8, marginTop: 20 }]}>
-          <Pressable style={[s.button, { flex: 1 }]} onPress={logout}>
-            <Text style={s.buttonText}>Log out</Text>
-          </Pressable>
-          <Pressable style={[s.button, s.danger, { flex: 1 }]} onPress={wipe}>
-            <Text style={s.buttonText}>Delete account</Text>
-          </Pressable>
+        <Text style={s.section}>Account</Text>
+        <View style={[s.card, { padding: 4 }]}>
+          <Row icon={LogOut} title="Sign out" onPress={logout} />
+          <Row icon={Trash2} title="Delete account" subtitle="Wipes all keys from this phone" danger onPress={wipe} />
         </View>
       </ScrollView>
     </View>

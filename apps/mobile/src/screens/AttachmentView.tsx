@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { ActivityIndicator, BackHandler, Image, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
+import { File, FileText, Image as ImageIcon, Lock, TriangleAlert, X, type LucideIcon } from 'lucide-react-native';
 import { formatBytes, toBase64, type Attachment } from '@meetme/core';
 import { colors, s } from '../theme';
+import { IconButton } from '../ui';
 
-const ICON = { image: '🖼', pdf: '📄', file: '📎' } as const;
+const ICON: Record<Attachment['kind'], LucideIcon> = { image: ImageIcon, pdf: FileText, file: File };
 
 // ---------------------------------------------------------------------------------------------
 // Full-screen viewer. It is rendered INSIDE the main activity window (not a RN <Modal>, which on
@@ -32,16 +34,17 @@ export function MediaViewerHost() {
   if (!current) return null;
   const o = current;
   return (
-    <View style={[StyleSheet.absoluteFill, { backgroundColor: '#000' }]}>
+    <View style={[StyleSheet.absoluteFill, { backgroundColor: colors.bg }]}>
       <View style={s.header}>
-        <Pressable style={s.iconBtn} onPress={() => setOpen(null)}>
-          <Text style={s.icon}>✕</Text>
-        </Pressable>
+        <IconButton icon={X} label="Close" onPress={() => setOpen(null)} />
         <View style={{ flex: 1 }}>
-          <Text style={[s.text, { fontWeight: '600' }]} numberOfLines={1}>
+          <Text style={s.textStrong} numberOfLines={1}>
             {o.title}
           </Text>
-          <Text style={s.muted}>🔒 View only · not saved to this device</Text>
+          <View style={[s.row, { gap: 4 }]}>
+            <Lock size={11} color={colors.muted} />
+            <Text style={[s.muted, { fontSize: 12 }]}>View only · not saved to this device</Text>
+          </View>
         </View>
       </View>
       {o.kind === 'image' ? (
@@ -63,7 +66,8 @@ export function AttachmentView({ a }: { a: Attachment }) {
     const failed = a.state === 'failed' || (a.state === 'ready' && !b64);
     return (
       <Card
-        icon={failed ? '⚠' : ICON[a.kind]}
+        icon={failed ? TriangleAlert : ICON[a.kind]}
+        warn={failed}
         name={a.name}
         sub={failed ? 'File unavailable' : a.state === 'uploading' ? 'Encrypting & sending…' : 'Decrypting…'}
         busy={!failed}
@@ -82,7 +86,8 @@ export function AttachmentView({ a }: { a: Attachment }) {
   if (a.kind === 'pdf') {
     return (
       <Card
-        icon="📄"
+        icon={FileText}
+        pdf
         name={a.name}
         sub={`${formatBytes(a.size)} · Tap to view`}
         onPress={() => setOpen({ title: a.name, kind: 'pdf', mime: a.mime, b64 })}
@@ -90,30 +95,37 @@ export function AttachmentView({ a }: { a: Attachment }) {
     );
   }
 
-  return <Card icon="📎" name={a.name} sub={`${formatBytes(a.size)} · Preview not available`} />;
+  return <Card icon={File} name={a.name} sub={`${formatBytes(a.size)} · Preview not available`} />;
 }
 
 function Card({
-  icon,
+  icon: Icon,
   name,
   sub,
   busy,
+  pdf,
+  warn,
   onPress,
 }: {
-  icon: string;
+  icon: LucideIcon;
   name: string;
   sub: string;
   busy?: boolean;
+  pdf?: boolean;
+  warn?: boolean;
   onPress?: () => void;
 }) {
+  const [bg, fg] = warn ? [colors.warnSoft, colors.warn] : pdf ? ['#fef3f2', '#d92d20'] : [colors.accentSoft, colors.accent];
   return (
     <Pressable onPress={onPress} disabled={!onPress} style={styles.card}>
-      {busy ? <ActivityIndicator color={colors.text} /> : <Text style={{ fontSize: 26 }}>{icon}</Text>}
+      <View style={[styles.cardIcon, { backgroundColor: bg }]}>
+        {busy ? <ActivityIndicator size="small" color={fg} /> : <Icon size={20} color={fg} />}
+      </View>
       <View style={{ flexShrink: 1 }}>
-        <Text style={[s.text, { fontWeight: '600' }]} numberOfLines={1}>
+        <Text style={s.textStrong} numberOfLines={1}>
           {name}
         </Text>
-        <Text style={s.muted}>{sub}</Text>
+        <Text style={[s.muted, { fontSize: 12 }]}>{sub}</Text>
       </View>
     </Pressable>
   );
@@ -179,15 +191,24 @@ function PdfView({ b64 }: { b64: string }) {
 }
 
 const styles = StyleSheet.create({
-  thumb: { width: 220, height: 220, borderRadius: 10, marginBottom: 4, backgroundColor: '#000' },
+  thumb: { width: 230, height: 230, borderRadius: 12, marginBottom: 4, backgroundColor: colors.hover },
   card: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
-    backgroundColor: 'rgba(0,0,0,0.2)',
-    borderRadius: 8,
+    gap: 12,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.line,
+    borderRadius: 12,
     padding: 10,
     marginBottom: 4,
-    minWidth: 200,
+    minWidth: 220,
+  },
+  cardIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 });
