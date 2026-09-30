@@ -1,35 +1,21 @@
 import { test, after, before } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import type { AddressInfo } from 'node:net';
 import { MemoryStorage, MessengerClient, MustChangePasswordError, generatePassword } from '@meetme/core';
-import { createMeetMeServer } from '../src/app';
+import { startTestServer } from './harness';
 
 // A company server: sign-up closed, "admin" manages employee accounts.
-const dir = mkdtempSync(join(tmpdir(), 'meetme-emp-'));
-const server = createMeetMeServer({
-  dbPath: join(dir, 'test.db'),
-  stunUrls: [],
-  turnUrls: [],
-  trustProxy: false,
-  adminUsers: ['admin'],
-  openRegistration: false,
-});
+let srv: Awaited<ReturnType<typeof startTestServer>>;
 let url = '';
 const clients: MessengerClient[] = [];
 
 before(async () => {
-  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
-  url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  srv = await startTestServer({ stunUrls: [], turnUrls: [], trustProxy: false, adminUsers: ['admin'], openRegistration: false });
+  url = srv.url;
 });
 after(async () => {
   clients.forEach((c) => c.dispose());
   await new Promise((r) => setTimeout(r, 100));
-  server.closeAllConnections();
-  await new Promise((r) => server.close(r));
-  rmSync(dir, { recursive: true, force: true });
+  await srv.close();
 });
 
 async function waitFor(fn: () => boolean, what: string, ms = 5000) {

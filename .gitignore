@@ -7,3 +7,5 @@ data/
 *.db-shm
 .env
 *.jks
+infra/backups/
+.tmp-att-*

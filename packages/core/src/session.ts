@@ -1,5 +1,5 @@
 import { bytesEqual, fromBase64, toBase64, utf8, fromUtf8 } from './encoding';
-import { initReceiver, initSender, ratchetDecrypt, ratchetEncrypt } from './crypto/ratchet';
+import { DuplicateMessageError, initReceiver, initSender, ratchetDecrypt, ratchetEncrypt } from './crypto/ratchet';
 import { x3dhInitiate, x3dhRespond, type PreKeyBundle } from './crypto/x3dh';
 import type { ProtocolStore, SessionRecord } from './store';
 
@@ -138,6 +138,7 @@ export class SessionCipher {
         try {
           return { plaintext: await this.decryptWith(peer, sessions, i, header, ciphertext) };
         } catch (e) {
+          if (e instanceof DuplicateMessageError) throw e; // right session, message already seen
           lastErr = e;
         }
       }

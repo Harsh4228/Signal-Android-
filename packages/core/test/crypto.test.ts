@@ -16,6 +16,7 @@ import {
   initReceiver,
   ratchetEncrypt,
   ratchetDecrypt,
+  DuplicateMessageError,
   serializeState,
   deserializeState,
   bytesEqual,
@@ -240,4 +241,31 @@ test('safety number is identical on both sides and changes with keys', () => {
   assert.equal(n1, n2);
   assert.match(n1, /^(\d{5} ){11}\d{5}$/);
   assert.notEqual(n1, safetyNumber('alice', a.pub, 'bob', generateIdentityKeyPair().pub));
+});
+
+test('Double Ratchet: a re-delivered message is reported as a duplicate, even after later messages', () => {
+  let { A, B } = pair();
+  const m1 = send(A, 'one');
+  A = m1.state;
+  B = ratchetDecrypt(B, m1.msg.h, m1.msg.c).state;
+  assert.throws(() => ratchetDecrypt(B, m1.msg.h, m1.msg.c), DuplicateMessageError);
+  // B replies, A answers on a new ratchet step: the old message is still recognised as a duplicate.
+  const r = send(B, 'reply');
+  B = r.state;
+  A = ratchetDecrypt(A, r.msg.h, r.msg.c).state;
+  const m2 = send(A, 'two');
+  A = m2.state;
+  B = ratchetDecrypt(B, m2.msg.h, m2.msg.c).state;
+  assert.throws(() => ratchetDecrypt(B, m1.msg.h, m1.msg.c), DuplicateMessageError);
+  // Survives serialization.
+  const B2 = deserializeState(serializeState(B));
+  assert.throws(() => ratchetDecrypt(B2, m1.msg.h, m1.msg.c), DuplicateMessageError);
+  // Tampering is still an error, not a "duplicate".
+  const m3 = send(A, 'three');
+  const bad = m3.msg.c.slice();
+  bad[5]! ^= 1;
+  assert.throws(
+    () => ratchetDecrypt(B, m3.msg.h, bad),
+    (e: unknown) => !(e instanceof DuplicateMessageError),
+  );
 });

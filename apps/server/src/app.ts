@@ -20,10 +20,13 @@ import {
   type ServerFrame,
   type UploadKeysRequest,
 } from '@meetme/core';
-import { isActive, openDb, type Db } from './db';
+import { LocalBus, type Bus, type BusEvent } from './bus';
+import { isActive, openSqlite, type Db } from './db';
 
 export interface ServerConfig {
+  /** SQLite file (used when no Postgres db is passed in). Attachments go next to it unless attachmentsDir is set. */
   dbPath: string;
+  attachmentsDir?: string;
   stunUrls: string[];
   turnUrls: string[];
   turnSecret?: string;
@@ -140,8 +143,9 @@ class RateLimiter {
 
 // ---------------------------------------------------------------- server
 
-export function createMeetMeServer(config: ServerConfig) {
-  const db: Db = openDb(config.dbPath);
+export function createMeetMeServer(config: ServerConfig, deps?: { db: Db; bus: Bus }) {
+  const db: Db = deps?.db ?? openSqlite(config.dbPath);
+  const bus: Bus = deps?.bus ?? new LocalBus();
   const online = new Map<string, WebSocket>();
   const authCache = new Map<string, { digest: string; until: number }>();
   const registerLimit = new RateLimiter(10, 3600_000);
@@ -154,7 +158,7 @@ export function createMeetMeServer(config: ServerConfig) {
     req.socket.remoteAddress ||
     'unknown';
 
-  function authenticate(username: unknown, password: unknown, ip: string): string {
+  async function authenticate(username: unknown, password: unknown, ip: string): Promise<string> {
     if (typeof username !== 'string' || typeof password !== 'string' || !USERNAME_RE.test(username)) {
       throw new HttpError(401, 'unauthorized');
     }
@@ -162,7 +166,7 @@ export function createMeetMeServer(config: ServerConfig) {
     const digest = createHash('sha256').update(password).digest('base64');
     const cached = authCache.get(username);
     if (cached && cached.until > Date.now() && cached.digest === digest) return username;
-    const user = db.getUser(username);
+    const user = await db.getUser(username);
     // API calls are authenticated with the DEVICE secret, never with the human login password.
     if (!user || !user.device_hash || !verifyPassword(password, user.device_hash)) {
       authFailLimit.allow(ip);
@@ -172,7 +176,7 @@ export function createMeetMeServer(config: ServerConfig) {
     return username;
   }
 
-  function basicAuth(req: http.IncomingMessage): string {
+  function basicAuth(req: http.IncomingMessage): Promise<string> {
     const h = req.headers.authorization ?? '';
     if (!h.startsWith('Basic ')) throw new HttpError(401, 'unauthorized');
     const decoded = Buffer.from(h.slice(6), 'base64').toString('utf8');
@@ -201,7 +205,7 @@ export function createMeetMeServer(config: ServerConfig) {
   }
 
   // Attachments: ciphertext only (the key is inside the end-to-end encrypted message).
-  const attachmentsDir = join(dirname(config.dbPath), 'attachments');
+  const attachmentsDir = config.attachmentsDir ?? join(dirname(config.dbPath), 'attachments');
   mkdirSync(attachmentsDir, { recursive: true });
   const attachmentFile = (id: string) => join(attachmentsDir, `${id}.bin`);
   const uploadLimit = new RateLimiter(120, 3600_000);
@@ -240,7 +244,7 @@ export function createMeetMeServer(config: ServerConfig) {
       const ip = clientIp(req);
       if (authFailLimit.isBlocked(ip)) throw new HttpError(429, 'Too many attempts, try again later');
       const body = (await readJson(req)) as Partial<LoginRequest>;
-      const user = typeof body.username === 'string' ? db.getUser(body.username) : undefined;
+      const user = typeof body.username === 'string' ? await db.getUser(body.username) : undefined;
       if (!user || typeof body.password !== 'string' || !verifyPassword(body.password, user.pass_hash)) {
         authFailLimit.allow(ip);
         throw new HttpError(401, 'Wrong ID or password');
@@ -257,10 +261,9 @@ export function createMeetMeServer(config: ServerConfig) {
       const identityKey = b64Key(body.identityKey, 32, 'identityKey');
       const spk = checkSpk(identityKey, body.signedPreKey);
       const opks = checkOpks(body.oneTimePreKeys ?? []);
-      db.activate(user.username, { deviceHash: hashPassword(body.deviceSecret), identityKey, spk }, opks);
-      if (newHash) db.setPassword(user.username, newHash, false);
-      authCache.delete(user.username);
-      online.get(user.username)?.close(4004, 'logged in on another device');
+      await db.activate(user.username, { deviceHash: hashPassword(body.deviceSecret), identityKey, spk }, opks);
+      if (newHash) await db.setPassword(user.username, newHash, false);
+      await kick(user.username, 4004, 'logged in on another device');
       return send(200, { ok: true });
     }
 
@@ -279,23 +282,23 @@ export function createMeetMeServer(config: ServerConfig) {
       const identityKey = b64Key(body.identityKey, 32, 'identityKey');
       const spk = checkSpk(identityKey, body.signedPreKey);
       const opks = checkOpks(body.oneTimePreKeys ?? []);
-      if (db.getUser(body.username)) throw new HttpError(409, 'username taken');
-      db.createUser({ username: body.username, deviceHash: hashPassword(body.password), identityKey, spk }, opks);
+      if (await db.getUser(body.username)) throw new HttpError(409, 'username taken');
+      await db.createUser({ username: body.username, deviceHash: hashPassword(body.password), identityKey, spk }, opks);
       return send(200, { ok: true });
     }
 
     // Everything below needs authentication.
-    const me = basicAuth(req);
+    const me = await basicAuth(req);
 
     let m: RegExpMatchArray | null;
     if (method === 'GET' && path === '/v1/keys/count') {
-      return send(200, { count: db.countOneTimePreKeys(me) });
+      return send(200, { count: await db.countOneTimePreKeys(me) });
     }
     if (method === 'GET' && (m = path.match(/^\/v1\/keys\/([a-z0-9_.]{3,32})$/))) {
-      const user = db.getUser(m[1]!);
+      const user = await db.getUser(m[1]!);
       if (!user) throw new HttpError(404, 'user not found');
       if (!isActive(user)) throw new HttpError(409, `${user.username} has not logged in yet`);
-      const opk = db.takeOneTimePreKey(user.username);
+      const opk = await db.takeOneTimePreKey(user.username);
       const bundle: KeyBundleResponse = {
         identityKey: user.identity_key,
         signedPreKey: { id: user.spk_id, pub: user.spk_pub, sig: user.spk_sig },
@@ -305,13 +308,13 @@ export function createMeetMeServer(config: ServerConfig) {
     }
     if (method === 'PUT' && path === '/v1/keys') {
       const body = (await readJson(req)) as UploadKeysRequest;
-      const user = db.getUser(me)!;
-      if (body.signedPreKey) db.setSignedPreKey(me, checkSpk(user.identity_key, body.signedPreKey));
-      if (body.oneTimePreKeys) db.addOneTimePreKeys(me, checkOpks(body.oneTimePreKeys));
+      const user = (await await db.getUser(me))!;
+      if (body.signedPreKey) await db.setSignedPreKey(me, checkSpk(user.identity_key, body.signedPreKey));
+      if (body.oneTimePreKeys) await db.addOneTimePreKeys(me, checkOpks(body.oneTimePreKeys));
       return send(204);
     }
     if (method === 'GET' && (m = path.match(/^\/v1\/users\/([a-z0-9_.]{3,32})$/))) {
-      const u = db.getUser(m[1]!);
+      const u = await db.getUser(m[1]!);
       if (!u) throw new HttpError(404, 'user not found');
       return send(200, { exists: true, active: isActive(u) });
     }
@@ -342,13 +345,13 @@ export function createMeetMeServer(config: ServerConfig) {
     }
     if (method === 'POST' && path === '/v1/password') {
       const body = (await readJson(req)) as { oldPassword?: unknown; newPassword?: unknown };
-      const user = db.getUser(me)!;
+      const user = (await await db.getUser(me))!;
       if (typeof body.oldPassword !== 'string' || !verifyPassword(body.oldPassword, user.pass_hash)) {
         authFailLimit.allow(clientIp(req));
         throw new HttpError(401, 'Current password is wrong');
       }
       checkNewPassword(body.newPassword, body.oldPassword);
-      db.setPassword(me, hashPassword(body.newPassword as string), false);
+      await db.setPassword(me, hashPassword(body.newPassword as string), false);
       return send(204);
     }
 
@@ -357,7 +360,7 @@ export function createMeetMeServer(config: ServerConfig) {
       if (!config.adminUsers.includes(me)) throw new HttpError(403, 'admin only');
 
       if (method === 'GET' && path === '/v1/admin/users') {
-        const users: AdminUser[] = db.listUsers().map((u) => ({
+        const users: AdminUser[] = (await db.listUsers()).map((u) => ({
           username: u.username,
           active: isActive(u),
           admin: config.adminUsers.includes(u.username),
@@ -371,32 +374,30 @@ export function createMeetMeServer(config: ServerConfig) {
           throw new HttpError(400, 'ID must be 3-32 characters: a-z, 0-9, _ or .');
         }
         checkNewPassword(body.password);
-        if (db.getUser(body.username)) throw new HttpError(409, 'That ID already exists');
-        db.createPendingUser(body.username, hashPassword(body.password as string));
+        if (await db.getUser(body.username)) throw new HttpError(409, 'That ID already exists');
+        await db.createPendingUser(body.username, hashPassword(body.password as string));
         return send(200, { ok: true });
       }
       if ((m = path.match(/^\/v1\/admin\/users\/([a-z0-9_.]{3,32})(\/password)?$/))) {
-        const target = db.getUser(m[1]!);
+        const target = await db.getUser(m[1]!);
         if (!target) throw new HttpError(404, 'user not found');
         if (method === 'POST' && m[2]) {
           const body = (await readJson(req)) as { password?: unknown };
           checkNewPassword(body.password);
-          db.setPassword(target.username, hashPassword(body.password as string), true);
+          await db.setPassword(target.username, hashPassword(body.password as string), true);
           return send(204);
         }
         if (method === 'DELETE' && !m[2]) {
           if (target.username === me) throw new HttpError(400, "You can't remove yourself");
-          db.deleteUser(target.username);
-          authCache.delete(target.username);
-          online.get(target.username)?.close(4001, 'account removed by admin');
+          await db.deleteUser(target.username);
+          await kick(target.username, 4001, 'account removed by admin');
           return send(204);
         }
       }
     }
     if (method === 'DELETE' && path === '/v1/account') {
-      db.deleteUser(me);
-      authCache.delete(me);
-      online.get(me)?.close(4001, 'account deleted');
+      await db.deleteUser(me);
+      await kick(me, 4001, 'account deleted');
       return send(204);
     }
     throw new HttpError(404, 'not found');
@@ -425,10 +426,48 @@ export function createMeetMeServer(config: ServerConfig) {
 
   const frame = (ws: WebSocket, f: ServerFrame) => ws.readyState === ws.OPEN && ws.send(JSON.stringify(f));
 
-  function deliverPending(username: string, ws: WebSocket) {
-    for (const row of db.pending(username)) {
-      frame(ws, { type: 'envelope', id: row.id, from: row.sender, body: row.body, ts: row.ts });
+  /** Envelope ids already sent on each socket, so the same envelope is never delivered twice. */
+  const delivered = new WeakMap<WebSocket, Set<number>>();
+  function deliver(ws: WebSocket, row: { id: number; sender: string; body: string; ts: number }) {
+    let seen = delivered.get(ws);
+    if (!seen) delivered.set(ws, (seen = new Set()));
+    if (seen.has(row.id)) return;
+    seen.add(row.id);
+    frame(ws, { type: 'envelope', id: row.id, from: row.sender, body: row.body, ts: row.ts });
+  }
+
+  /** Close a user's socket and forget cached credentials, on this and every other server instance. */
+  async function kick(user: string, code: number, reason: string) {
+    authCache.delete(user);
+    online.get(user)?.close(code, reason);
+    await bus.publish({ type: 'kick', user, code, reason }).catch((e) => console.error('bus publish failed', e));
+  }
+
+  const remoteDeliveries = new Map<string, Promise<void>>();
+  bus.onEvent((e: BusEvent) => {
+    if (e.type === 'kick') {
+      authCache.delete(e.user);
+      online.get(e.user)?.close(e.code, e.reason);
+    } else if (e.type === 'connected') {
+      online.get(e.user)?.close(4004, 'connected elsewhere');
+    } else if (e.type === 'envelope') {
+      if (!online.has(e.to)) return;
+      // One queue per recipient: notifications arrive in order, and so must the envelopes.
+      const prev = remoteDeliveries.get(e.to) ?? Promise.resolve();
+      const next = prev
+        .then(async () => {
+          const ws = online.get(e.to);
+          const row = ws && (await db.envelope(e.id, e.to));
+          if (ws && row) deliver(ws, row);
+        })
+        .catch((err) => console.error('envelope fetch failed', err));
+      remoteDeliveries.set(e.to, next);
+      void next.then(() => remoteDeliveries.get(e.to) === next && remoteDeliveries.delete(e.to));
     }
+  });
+
+  async function deliverPending(username: string, ws: WebSocket) {
+    for (const row of await db.pending(username)) deliver(ws, row);
   }
 
   function onSocket(ws: WebSocket, ip: string) {
@@ -442,17 +481,30 @@ export function createMeetMeServer(config: ServerConfig) {
       ws.ping();
     }, 30_000);
 
+    // Frames are handled strictly one after another, so messages keep their order even though
+    // every database call is asynchronous.
+    let chain: Promise<unknown> = Promise.resolve();
     ws.on('message', (raw) => {
+      chain = chain
+        .then(() => onFrame(raw.toString()))
+        .catch((e) => {
+          console.error('frame failed', e);
+          ws.close(1011, 'server error');
+        });
+    });
+
+    async function onFrame(raw: string): Promise<unknown> {
       let f: ClientFrame;
       try {
-        f = JSON.parse(raw.toString());
+        f = JSON.parse(raw);
       } catch {
         return ws.close(4002, 'bad frame');
       }
+      if (ws.readyState !== ws.OPEN) return;
       if (!me) {
         if (f.type !== 'auth') return ws.close(4000, 'auth required');
         try {
-          me = authenticate(f.username, f.password, ip);
+          me = await authenticate(f.username, f.password, ip);
         } catch (e) {
           // 'rate' is temporary; 'auth' means this device's secret is no longer valid (logged in elsewhere / removed).
           const rate = e instanceof HttpError && e.status === 429;
@@ -464,41 +516,44 @@ export function createMeetMeServer(config: ServerConfig) {
           return ws.close(4003, 'auth failed');
         }
         clearTimeout(authTimer);
+        const preKeyCount = await db.countOneTimePreKeys(me);
+        frame(ws, { type: 'ready', preKeyCount, isAdmin: config.adminUsers.includes(me), admins: config.adminUsers });
+        // Queued envelopes first, THEN register as online (new messages are delivered directly from then
+        // on), then check the queue once more for anything that arrived in between. deliver() skips repeats.
+        await deliverPending(me, ws);
         online.get(me)?.close(4004, 'connected elsewhere');
         online.set(me, ws);
-        frame(ws, {
-          type: 'ready',
-          preKeyCount: db.countOneTimePreKeys(me),
-          isAdmin: config.adminUsers.includes(me),
-          admins: config.adminUsers,
-        });
-        deliverPending(me, ws);
+        await bus.publish({ type: 'connected', user: me });
+        await deliverPending(me, ws);
         return;
       }
       switch (f.type) {
         case 'ping':
           return frame(ws, { type: 'pong' });
         case 'ack':
-          if (Number.isInteger(f.id)) db.ack(f.id, me);
+          if (!Number.isInteger(f.id)) return;
+          delivered.get(ws)?.delete(f.id);
+          await db.ack(f.id, me);
           return;
         case 'send': {
           const ref = typeof f.ref === 'string' ? f.ref.slice(0, 64) : '';
           const fail = (code: string, message: string) => frame(ws, { type: 'error', ref, code, message });
           if (!sendLimit.allow(me)) return fail('rate', 'Sending too fast');
-          const target = typeof f.to === 'string' && USERNAME_RE.test(f.to) ? db.getUser(f.to) : undefined;
+          const target = typeof f.to === 'string' && USERNAME_RE.test(f.to) ? await db.getUser(f.to) : undefined;
           if (!target) return fail('unknown_user', 'User not found');
           if (!isActive(target)) return fail('not_active', `${target.username} has not logged in yet`);
           if (typeof f.body !== 'string' || f.body.length > MAX_ENVELOPE) return fail('too_large', 'Message too large');
-          if (db.queueSize(f.to) >= MAX_QUEUE) return fail('queue_full', "Recipient's inbox is full");
+          if ((await db.queueSize(f.to)) >= MAX_QUEUE) return fail('queue_full', "Recipient's inbox is full");
           const ts = Date.now();
-          const id = db.enqueue(f.to, me, f.body, ts);
+          const id = await db.enqueue(f.to, me, f.body, ts);
           frame(ws, { type: 'sent', ref, ts });
           const socket = online.get(f.to);
-          if (socket) frame(socket, { type: 'envelope', id, from: me, body: f.body, ts });
+          if (socket) deliver(socket, { id, sender: me, body: f.body, ts });
+          else await bus.publish({ type: 'envelope', to: f.to, id });
           return;
         }
       }
-    });
+    }
 
     ws.on('close', () => {
       clearTimeout(authTimer);
@@ -516,13 +571,13 @@ export function createMeetMeServer(config: ServerConfig) {
     }
   }
   const purge = setInterval(() => {
-    db.purgeOlderThan(Date.now() - QUEUE_TTL_MS);
+    void db.purgeOlderThan(Date.now() - QUEUE_TTL_MS).catch((e) => console.error('purge failed', e));
     void purgeAttachments();
   }, 3600_000);
   server.on('close', () => {
     clearInterval(purge);
     wss.close();
-    db.db.close();
+    void db.close();
   });
 
   return server;

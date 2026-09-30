@@ -9,6 +9,16 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: meetme
+          POSTGRES_PASSWORD: meetme
+          POSTGRES_DB: meetme_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U meetme" --health-interval 5s --health-timeout 5s --health-retries 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -17,7 +27,12 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run typecheck
-      - run: npm test
+      - name: Tests (SQLite)
+        run: npm test
+      - name: Tests (PostgreSQL, incl. two server instances)
+        run: npm test -w @meetme/server
+        env:
+          TEST_DATABASE_URL: postgres://meetme:meetme@localhost:5432/meetme_test
 
   mobile-typecheck:
     runs-on: ubuntu-latest

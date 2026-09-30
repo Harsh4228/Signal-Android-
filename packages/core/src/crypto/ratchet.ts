@@ -8,6 +8,15 @@ import { aeadDecrypt, aeadEncrypt, dh, generateKeyPair, hkdfSha256, hmacSha256, 
  */
 
 const MAX_SKIP = 1000; // max messages skipped in a single chain
+const MAX_OLD_DHR = 5;
+
+/** The message was already decrypted before. Callers should ignore it silently. */
+export class DuplicateMessageError extends Error {
+  constructor() {
+    super('duplicate message');
+    this.name = 'DuplicateMessageError';
+  }
+}
 const MAX_STORED_SKIPPED = 2000; // total skipped keys kept across chains
 const RK_INFO = 'MeetMe-Ratchet-v1';
 export const HEADER_LEN = 40;
@@ -24,6 +33,8 @@ export interface RatchetState {
   /** key = base64(dhPub) + ':' + n */
   skipped: Map<string, Uint8Array>;
   AD: Uint8Array;
+  /** Recent receiving ratchet keys we moved past; a message on one of them with no skipped key is a duplicate. */
+  oldDHr?: Uint8Array[];
 }
 
 export interface Header {
@@ -105,6 +116,7 @@ function skipMessageKeys(s: RatchetState, until: number): void {
 }
 
 function dhRatchet(s: RatchetState, header: Header): void {
+  if (s.DHr) s.oldDHr = [s.DHr, ...(s.oldDHr ?? [])].slice(0, MAX_OLD_DHR);
   s.PN = s.Ns;
   s.Ns = 0;
   s.Nr = 0;
@@ -130,6 +142,10 @@ export function ratchetDecrypt(
     s.skipped.delete(skippedKey);
     return { state: s, plaintext };
   }
+
+  // Already decrypted (the server re-sent it because our acknowledgement was lost): its key is gone.
+  if (s.DHr && bytesEqual(header.dh, s.DHr) && header.n < s.Nr) throw new DuplicateMessageError();
+  if (s.oldDHr?.some((k) => bytesEqual(k, header.dh))) throw new DuplicateMessageError();
 
   if (!s.DHr || !bytesEqual(header.dh, s.DHr)) {
     skipMessageKeys(s, header.pn);
@@ -157,6 +173,7 @@ export interface SerializedRatchetState {
   PN: number;
   skipped: [string, string][];
   AD: string;
+  oldDHr?: string[];
 }
 
 const b = (x: Uint8Array | null) => (x ? toBase64(x) : null);
@@ -174,6 +191,7 @@ export function serializeState(s: RatchetState): SerializedRatchetState {
     PN: s.PN,
     skipped: [...s.skipped].map(([k, v]) => [k, toBase64(v)]),
     AD: toBase64(s.AD),
+    oldDHr: s.oldDHr?.map(toBase64),
   };
 }
 
@@ -189,5 +207,6 @@ export function deserializeState(j: SerializedRatchetState): RatchetState {
     PN: j.PN,
     skipped: new Map(j.skipped.map(([k, v]) => [k, fromBase64(v)])),
     AD: fromBase64(j.AD),
+    oldDHr: j.oldDHr?.map(fromBase64),
   };
 }

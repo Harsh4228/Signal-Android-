@@ -1,34 +1,28 @@
 import { test, after, before } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { AddressInfo } from 'node:net';
 import { MemoryStorage, MessengerClient, type CallSignal } from '@meetme/core';
-import { createMeetMeServer } from '../src/app';
+import { startTestServer } from './harness';
 
-const dir = mkdtempSync(join(tmpdir(), 'meetme-'));
-const server = createMeetMeServer({
-  dbPath: join(dir, 'test.db'),
-  stunUrls: ['stun:stun.example.org'],
-  turnUrls: [],
-  trustProxy: false,
-  adminUsers: ['boss'],
-  openRegistration: true,
-});
+let srv: Awaited<ReturnType<typeof startTestServer>>;
 let url = '';
+let dir = '';
 const clients: MessengerClient[] = [];
 
 before(async () => {
-  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
-  url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  srv = await startTestServer({
+    stunUrls: ['stun:stun.example.org'],
+    turnUrls: [],
+    trustProxy: false,
+    adminUsers: ['boss'],
+    openRegistration: true,
+  });
+  ({ url, dir } = srv);
 });
 after(async () => {
   clients.forEach((c) => c.dispose());
   await new Promise((r) => setTimeout(r, 100));
-  server.closeAllConnections();
-  await new Promise((r) => server.close(r));
-  rmSync(dir, { recursive: true, force: true });
+  await srv.close();
 });
 
 async function waitFor(fn: () => boolean, what: string, ms = 5000) {
@@ -79,12 +73,8 @@ test('register, message, reply, receipts, offline delivery, timers, call signali
   await waitFor(() => texts(bob, 'alice').includes('while you were away'), 'queued delivery');
 
   // --- the server never sees plaintext ---
-  const { DatabaseSync } = await import('node:sqlite');
-  const raw = new DatabaseSync(join(dir, 'test.db'));
   await alice.sendText('bob', 'TOP SECRET');
-  const rows = raw.prepare('SELECT body FROM queue').all() as { body: string }[];
-  assert.ok(rows.every((r) => !r.body.includes('TOP SECRET')));
-  raw.close();
+  assert.ok((await srv.queueBodies()).every((b) => !b.includes('TOP SECRET')));
   await waitFor(() => texts(bob, 'alice').includes('TOP SECRET'), 'secret delivered');
 
   // --- disappearing messages sync to the other side ---

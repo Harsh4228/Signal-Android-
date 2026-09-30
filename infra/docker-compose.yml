@@ -1,6 +1,8 @@
 # Production stack for one Linux server (VPS):
 #   caddy  - HTTPS (free Let's Encrypt certificate) in front of the MeetMe server
 #   server - MeetMe relay (only public keys + ciphertext)
+#   db     - PostgreSQL (accounts, public keys, queued ciphertext)
+#   backup - nightly pg_dump of the database, kept 14 days
 #   coturn - TURN relay so calls work behind any NAT and hide users' IP addresses
 #
 # Setup:  cp .env.example .env   (fill it in)   then   docker compose up -d --build
@@ -10,8 +12,13 @@ services:
       context: ..
       dockerfile: apps/server/Dockerfile
     restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
     environment:
-      TRUST_PROXY: '1'
+      TRUST_PROXY: "1"
+      DATABASE_URL: postgres://meetme:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in infra/.env}@db:5432/meetme
+      ATTACHMENTS_DIR: /data/attachments
       ADMIN_USERS: ${ADMIN_USERS}
       OPEN_REGISTRATION: ${OPEN_REGISTRATION:-0}
       TURN_URLS: turn:${DOMAIN}:3478?transport=udp,turn:${DOMAIN}:3478?transport=tcp
@@ -21,6 +28,41 @@ services:
     # Not published to the internet: only Caddy talks to it.
     expose:
       - '8080'
+
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: meetme
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: meetme
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U meetme -d meetme"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    # Only reachable from the other containers, never from the internet.
+
+  backup:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - ./backups:/backups
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        while true; do
+          pg_dump -h db -U meetme -d meetme -Fc -f /backups/meetme-$$(date +%F).dump && echo "backup ok"
+          find /backups -name "meetme-*.dump" -mtime +14 -delete
+          sleep 86400
+        done
 
   caddy:
     image: caddy:2-alpine
@@ -67,5 +109,6 @@ services:
 
 volumes:
   meetme-data:
+  pg-data:
   caddy-data:
   caddy-config:

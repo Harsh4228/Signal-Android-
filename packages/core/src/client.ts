@@ -16,6 +16,7 @@ import {
 } from './api';
 import { attachmentKind, decryptAttachment, encryptAttachment, safeFileName, type AttachmentKind } from './attachments';
 import { randomBytes } from './crypto/primitives';
+import { DuplicateMessageError } from './crypto/ratchet';
 import type { PreKeyBundle } from './crypto/x3dh';
 import { Emitter } from './emitter';
 import { fromBase64, toBase64, utf8 } from './encoding';
@@ -443,6 +444,7 @@ export class MessengerClient extends Emitter<Events> {
       if (identityStatus === 'changed') this.onIdentityChanged(from);
       payload = JSON.parse(plaintext) as Payload;
     } catch (e) {
+      if (e instanceof DuplicateMessageError) return; // re-delivery of a message we already have
       console.warn('decrypt failed', e);
       this.addContactLocal(from);
       this.addSystem(from, 'A message from this contact could not be decrypted. Try "Reset session".');

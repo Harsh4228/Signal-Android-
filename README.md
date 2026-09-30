@@ -5,7 +5,7 @@ Android · iOS (React Native) · Windows / macOS / Linux (Electron) · Node.js r
 ```
 meetme/
 ├── apps/
-│   ├── server/      Node.js relay: public keys + encrypted envelopes only  → Docker image
+│   ├── server/      Node.js relay (PostgreSQL or SQLite): public keys + ciphertext → Docker image
 │   ├── mobile/      React Native, one codebase for Android + iOS           → .apk/.aab + iOS app
 │   └── desktop/     Electron + React (Windows / macOS / Linux)             → .exe / .dmg / .AppImage
 ├── packages/
@@ -91,12 +91,13 @@ npm run dist:mac -w @meetme/desktop     # on a Mac
 3. On the VPS:
    ```bash
    git clone https://github.com/Harsh4228/meetme.git && cd meetme/infra
-   cp .env.example .env        # set DOMAIN, ADMIN_USERS, TURN_SECRET (openssl rand -hex 32)
+   cp .env.example .env        # set DOMAIN, ADMIN_USERS, TURN_SECRET, POSTGRES_PASSWORD (openssl rand -hex 32)
    docker compose up -d --build
    ```
    Caddy gets a free HTTPS certificate automatically. Clients then use `https://chat.example.com`.
 4. Update later: `git pull && docker compose up -d --build`.
-5. Back up the `meetme-data` Docker volume (it holds accounts and public keys; messages are deleted once delivered).
+5. Backups: the `backup` container writes a PostgreSQL dump to `infra/backups/` every night and keeps 14 days. Copy that folder off the server regularly. Restore with `docker compose exec -T db pg_restore -U meetme -d meetme --clean < backups/meetme-DATE.dump`.
+6. More users: run several `server` containers against the same database (`docker compose up -d --scale server=3`). They pass messages to each other through PostgreSQL, so no Redis is needed. Put attachments on shared storage when the servers run on different machines.
 
 ### App releases (built by GitHub Actions)
 
@@ -113,7 +114,9 @@ git push origin v1.0.0
 
 Release builds on Android block plain `http://`, so use HTTPS.
 
-Server environment variables: `PORT` (8080), `HOST`, `DB_PATH` (`./data/meetme.db`), `STUN_URLS`, `TURN_URLS`, `TURN_SECRET`, `TRUST_PROXY`, `ADMIN_USERS`.
+Server environment variables: `DATABASE_URL` (PostgreSQL; without it a SQLite file at `DB_PATH` is used), `PORT` (8080), `HOST`, `DB_PATH` (`./data/meetme.db`), `ATTACHMENTS_DIR`, `STUN_URLS`, `TURN_URLS`, `TURN_SECRET`, `TRUST_PROXY`, `ADMIN_USERS`, `OPEN_REGISTRATION`, `PG_POOL_SIZE`.
+
+Run the server tests against PostgreSQL too: `TEST_DATABASE_URL=postgres://user:pass@localhost:5432/db npm test -w @meetme/server`.
 
 ## Photos, PDFs and files
 
