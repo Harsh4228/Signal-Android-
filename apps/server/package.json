@@ -2,7 +2,7 @@
   "name": "@meetme/server",
   "version": "0.1.0",
   "private": true,
-  "description": "MeetMe relay server - stores only public keys and encrypted envelopes until delivered",
+  "description": "CellMate relay server - stores only public keys and encrypted envelopes until delivered",
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",

@@ -8,7 +8,9 @@ export type BusEvent =
   /** Close this user's socket and forget cached credentials (new login, removed, deleted). */
   | { type: 'kick'; user: string; code: number; reason: string }
   /** The user connected to another instance; close any older socket here. */
-  | { type: 'connected'; user: string };
+  | { type: 'connected'; user: string }
+  /** Tell these users (null = everyone) to reload their groups / the org policy. */
+  | { type: 'refresh'; users: string[] | null; what: 'groups' | 'policy' };
 
 export interface Bus {
   publish(e: BusEvent): Promise<void>;

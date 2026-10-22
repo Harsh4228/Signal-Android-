@@ -7,6 +7,7 @@ import { ChatView } from './components/ChatView';
 import { CallView } from './components/CallView';
 import { Settings } from './components/Settings';
 import { LockScreen } from './components/LockScreen';
+import { NoticePopup } from './components/Notices';
 import { Logo } from './components/ui';
 
 /**
@@ -90,7 +91,7 @@ export function App() {
           </div>
           <h2>Select a conversation</h2>
           <p className="muted">Messages and calls are end-to-end encrypted.</p>
-          <p className="muted small">Nothing is saved to disk. Screenshots of this window are blocked.</p>
+          <p className="muted small">Messages are never saved to disk; photos and documents are kept encrypted. Screenshots of this window are blocked.</p>
         </div>
       )}
       {call.status !== 'idle' && <CallView />}
@@ -101,6 +102,7 @@ export function App() {
           {toast}
         </div>
       )}
+      {!lock.locked && call.status === 'idle' && <NoticePopup />}
       {lock.locked && <LockScreen />}
     </div>
   );

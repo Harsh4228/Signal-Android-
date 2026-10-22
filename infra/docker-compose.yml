@@ -1,6 +1,6 @@
 # Production stack for one Linux server (VPS):
-#   caddy  - HTTPS (free Let's Encrypt certificate) in front of the MeetMe server
-#   server - MeetMe relay (only public keys + ciphertext)
+#   caddy  - HTTPS (free Let's Encrypt certificate) in front of the CellMate server
+#   server - CellMate relay (only public keys + ciphertext)
 #   db     - PostgreSQL (accounts, public keys, queued ciphertext)
 #   backup - nightly pg_dump of the database, kept 14 days
 #   coturn - TURN relay so calls work behind any NAT and hide users' IP addresses

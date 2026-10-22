@@ -35,7 +35,7 @@ const server = createMeetMeServer(
 const port = Number(process.env.PORT ?? 8080);
 const host = process.env.HOST ?? '0.0.0.0';
 server.listen(port, host, () => {
-  console.log(`MeetMe server listening on http://${host}:${port} (database: ${pg ? 'PostgreSQL' : 'SQLite'}, push: ${push ? 'on' : 'off'})`);
+  console.log(`CellMate server listening on http://${host}:${port} (database: ${pg ? 'PostgreSQL' : 'SQLite'}, push: ${push ? 'on' : 'off'})`);
   console.log(
     process.env.ADMIN_USERS
       ? `Admins: ${process.env.ADMIN_USERS}`

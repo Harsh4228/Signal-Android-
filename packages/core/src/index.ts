@@ -6,6 +6,7 @@ export * from './client';
 export * from './encoding';
 export * from './fingerprint';
 export * from './keys';
+export * from './media';
 export * from './sealed';
 export * from './session';
 export * from './store';

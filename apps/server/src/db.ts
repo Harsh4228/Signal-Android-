@@ -26,13 +26,92 @@ export interface UserRow {
   push_token: string | null;
   /** SHA-256 of the user's sealed-sender delivery key (the key itself only goes to their contacts). */
   access_key_hash: string | null;
+  /** 1 = suspended by an admin. */
+  banned: number;
+  /** Refreshed while connected (any server instance); NULL once disconnected. */
+  online_at: number | null;
+  last_seen: number | null;
+  created_at: number;
+  /** Set by an admin, e.g. ["Sales", "Support"]; used to filter users and to address announcements. */
+  departments: string[];
+  /** 1 = may save received files and share them on (set by an admin; admins always may). */
+  can_share: number;
+  /** When the profile photo last changed (ms); null = no photo. The image itself is in the avatars table. */
+  avatar_ver: number | null;
+  /** Work contact details the admin entered ('' = none); shown to colleagues under the name. */
+  phone: string;
+  email: string;
+  /** Full name the admin entered ('' = show the ID). */
+  display_name: string;
+  /** One-time QR invite (hash of the secret) and until when it works; null = none. */
+  invite_hash: string | null;
+  invite_expires: number | null;
 }
+
+export type AvatarRow = { mime: string; data: string; ver: number };
 
 export type Spk = { id: number; pub: string; sig: string };
 export type Opk = { id: number; pub: string };
 export type Envelope = { id: number; sender: string; body: string; ts: number };
+/** senders: who may send messages in the group (admins always may); null = every member. */
+export type GroupRow = {
+  id: string;
+  name: string;
+  created_by: string;
+  created_at: number;
+  members: string[];
+  senders: string[] | null;
+};
+export type AuditRow = { id: number; ts: number; actor: string; action: string; target: string; detail: string };
+/**
+ * A product in someone's catalog (like WhatsApp Business: every user has their own). photo_ver = when the photo
+ * last changed (null = no photo); the image is stored separately.
+ */
+export type ProductRow = {
+  id: string;
+  owner: string;
+  name: string;
+  price: string;
+  description: string;
+  photo_ver: number | null;
+  updated_at: number;
+};
+export type ProductPhoto = { mime: string; data: string };
+
+/** A users row as stored: departments is a JSON array in a TEXT column (both backends). */
+export type RawUser = Omit<UserRow, 'departments'> & { departments: string | null };
+
+/** Stored group senders: a JSON list, or NULL for "every member". */
+export function parseSenders(v: string | null | undefined): string[] | null {
+  if (v === null || v === undefined) return null;
+  try {
+    const list = JSON.parse(v) as unknown;
+    return Array.isArray(list) ? list.filter((u): u is string => typeof u === 'string') : null;
+  } catch {
+    return null;
+  }
+}
+
+export function parseDepartments(v: string | null): string[] {
+  try {
+    const list = JSON.parse(v ?? '[]') as unknown;
+    return Array.isArray(list) ? list.filter((d): d is string => typeof d === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+const toUser = (r: RawUser): UserRow => ({ ...r, departments: parseDepartments(r.departments) });
+
+export const toProduct = (r: ProductRow): ProductRow => ({
+  ...r,
+  photo_ver: r.photo_ver === null ? null : Number(r.photo_ver),
+  updated_at: Number(r.updated_at),
+});
 
 export const isActive = (u: UserRow) => !!u.device_hash && !!u.identity_key;
+/** Connected right now (on any instance); the heartbeat refreshes online_at every 30 s. */
+export const isOnlineRow = (u: UserRow, now = Date.now()) => !!u.online_at && now - Number(u.online_at) < 75_000;
 
 export interface Db {
   getUser(username: string): Promise<UserRow | undefined>;
@@ -40,7 +119,20 @@ export interface Db {
   /** Self-registration (open servers / the admin's own first account): device secret only. */
   createUser(u: { username: string; deviceHash: string; identityKey: string; spk: Spk }, opks: Opk[]): Promise<void>;
   /** Admin creates an employee: login password only, no keys until the employee logs in. */
-  createPendingUser(username: string, passHash: string): Promise<void>;
+  createPendingUser(
+    username: string,
+    passHash: string,
+    extra?: { departments?: string[]; canShare?: boolean; phone?: string; email?: string; name?: string },
+  ): Promise<void>;
+  setDepartments(username: string, departments: string[]): Promise<void>;
+  setContactInfo(username: string, phone: string, email: string): Promise<void>;
+  setDisplayName(username: string, name: string): Promise<void>;
+  /** A new one-time QR invite (replaces any old one), or null to clear it. */
+  setInvite(username: string, invite: { hash: string; expires: number } | null): Promise<void>;
+  setCanShare(username: string, canShare: boolean): Promise<void>;
+  /** Profile photo (base64), or null to remove it. Kept out of the users table so user lists stay small. */
+  setAvatar(username: string, avatar: AvatarRow | null): Promise<void>;
+  getAvatar(username: string): Promise<AvatarRow | undefined>;
   /** Employee logs in on a device: new keys + device secret. Old device and undeliverable messages are dropped. */
   activate(username: string, a: { deviceHash: string; identityKey: string; spk: Spk }, opks: Opk[]): Promise<void>;
   setPassword(username: string, passHash: string, mustChange: boolean): Promise<void>;
@@ -60,6 +152,32 @@ export interface Db {
   ack(id: number, recipient: string): Promise<void>;
   queueSize(recipient: string): Promise<number>;
   purgeOlderThan(ts: number): Promise<void>;
+  setBanned(username: string, banned: boolean): Promise<void>;
+  /** Sign the user's device out for good: forget its secret, push token and delivery key. */
+  clearDevice(username: string): Promise<void>;
+  /** onlineAt = null marks the user disconnected. */
+  setPresence(username: string, onlineAt: number | null, lastSeen: number): Promise<void>;
+  getMeta(key: string): Promise<string | undefined>;
+  setMeta(key: string, value: string): Promise<void>;
+  // ---- groups (names + members only; never message content) ----
+  listGroups(): Promise<GroupRow[]>;
+  groupsOf(username: string): Promise<GroupRow[]>;
+  getGroup(id: string): Promise<GroupRow | undefined>;
+  createGroup(g: { id: string; name: string; createdBy: string; members: string[]; senders: string[] | null }): Promise<void>;
+  updateGroup(id: string, changes: { name?: string; members?: string[]; senders?: string[] | null }): Promise<void>;
+  deleteGroup(id: string): Promise<void>;
+  // ---- catalogs: every user has their own ----
+  listProducts(owner: string): Promise<ProductRow[]>;
+  /** Products without an owner (made before catalogs were per user) go to `owner`. */
+  adoptOrphanProducts(owner: string): Promise<void>;
+  getProduct(id: string): Promise<ProductRow | undefined>;
+  /** Insert or update. photo: new image, null = remove it, undefined = keep the current one. */
+  putProduct(p: Omit<ProductRow, 'photo_ver'>, photo?: (ProductPhoto & { ver: number }) | null): Promise<void>;
+  deleteProduct(id: string): Promise<void>;
+  getProductPhoto(id: string): Promise<ProductPhoto | undefined>;
+  // ---- audit log of admin actions ----
+  addAudit(e: Omit<AuditRow, 'id'>): Promise<void>;
+  listAudit(limit: number): Promise<AuditRow[]>;
   close(): Promise<void>;
 }
 
@@ -92,6 +210,45 @@ export function openSqlite(file: string): Db {
     );
     CREATE INDEX IF NOT EXISTS queue_recipient ON queue(recipient, id);
     CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS avatars (
+      username TEXT PRIMARY KEY REFERENCES users(username) ON DELETE CASCADE,
+      mime     TEXT NOT NULL,
+      data     TEXT NOT NULL,
+      ver      INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS chat_groups (
+      id         TEXT PRIMARY KEY,
+      name       TEXT NOT NULL,
+      created_by TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS chat_group_members (
+      group_id TEXT NOT NULL REFERENCES chat_groups(id) ON DELETE CASCADE,
+      username TEXT NOT NULL REFERENCES users(username) ON DELETE CASCADE,
+      PRIMARY KEY (group_id, username)
+    );
+    CREATE INDEX IF NOT EXISTS chat_group_members_user ON chat_group_members(username);
+    CREATE TABLE IF NOT EXISTS products (
+      id          TEXT PRIMARY KEY,
+      name        TEXT NOT NULL,
+      price       TEXT NOT NULL DEFAULT '',
+      description TEXT NOT NULL DEFAULT '',
+      photo_ver   INTEGER,
+      updated_at  INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS product_photos (
+      id   TEXT PRIMARY KEY REFERENCES products(id) ON DELETE CASCADE,
+      mime TEXT NOT NULL,
+      data TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS audit_log (
+      id     INTEGER PRIMARY KEY AUTOINCREMENT,
+      ts     INTEGER NOT NULL,
+      actor  TEXT NOT NULL,
+      action TEXT NOT NULL,
+      target TEXT NOT NULL,
+      detail TEXT NOT NULL
+    );
   `);
 
   // ---- migrations (older databases) ----
@@ -104,6 +261,31 @@ export function openSqlite(file: string): Db {
   if (!cols.includes('must_change')) db.exec('ALTER TABLE users ADD COLUMN must_change INTEGER NOT NULL DEFAULT 0');
   if (!cols.includes('push_token')) db.exec('ALTER TABLE users ADD COLUMN push_token TEXT');
   if (!cols.includes('access_key_hash')) db.exec('ALTER TABLE users ADD COLUMN access_key_hash TEXT');
+  if (!cols.includes('banned')) db.exec('ALTER TABLE users ADD COLUMN banned INTEGER NOT NULL DEFAULT 0');
+  if (!cols.includes('online_at')) db.exec('ALTER TABLE users ADD COLUMN online_at INTEGER');
+  if (!cols.includes('last_seen')) db.exec('ALTER TABLE users ADD COLUMN last_seen INTEGER');
+  if (!cols.includes('department')) db.exec('ALTER TABLE users ADD COLUMN department TEXT'); // older single value
+  if (!cols.includes('departments')) {
+    db.exec("ALTER TABLE users ADD COLUMN departments TEXT NOT NULL DEFAULT '[]'");
+    // one department per user before; it becomes a list of one
+    db.exec("UPDATE users SET departments = json_array(department) WHERE department IS NOT NULL AND department != ''");
+  }
+  if (!cols.includes('can_share')) db.exec('ALTER TABLE users ADD COLUMN can_share INTEGER NOT NULL DEFAULT 0');
+  if (!cols.includes('avatar_ver')) db.exec('ALTER TABLE users ADD COLUMN avatar_ver INTEGER');
+  if (!cols.includes('phone')) db.exec("ALTER TABLE users ADD COLUMN phone TEXT NOT NULL DEFAULT ''");
+  if (!cols.includes('email')) db.exec("ALTER TABLE users ADD COLUMN email TEXT NOT NULL DEFAULT ''");
+  if (!cols.includes('display_name')) db.exec("ALTER TABLE users ADD COLUMN display_name TEXT NOT NULL DEFAULT ''");
+  if (!cols.includes('invite_hash')) db.exec('ALTER TABLE users ADD COLUMN invite_hash TEXT');
+  if (!cols.includes('invite_expires')) db.exec('ALTER TABLE users ADD COLUMN invite_expires INTEGER');
+  const productCols = (db.prepare('PRAGMA table_info(products)').all() as { name: string }[]).map((c) => c.name);
+  if (!productCols.includes('owner')) {
+    db.exec("ALTER TABLE products ADD COLUMN owner TEXT NOT NULL DEFAULT ''");
+  }
+  db.exec('CREATE INDEX IF NOT EXISTS products_owner ON products(owner)');
+  const groupCols = (db.prepare('PRAGMA table_info(chat_groups)').all() as { name: string }[]).map((c) => c.name);
+  if (!groupCols.includes('senders')) db.exec('ALTER TABLE chat_groups ADD COLUMN senders TEXT'); // JSON list, NULL = everyone
+  // A crash leaves users "online"; the 75 s freshness check hides that, this just tidies up.
+  db.exec('UPDATE users SET online_at = NULL');
 
   const q = {
     getUser: db.prepare('SELECT * FROM users WHERE username = ?'),
@@ -134,6 +316,66 @@ export function openSqlite(file: string): Db {
     ack: db.prepare('DELETE FROM queue WHERE id = ? AND recipient = ?'),
     queueSize: db.prepare('SELECT COUNT(*) AS n FROM queue WHERE recipient = ?'),
     purgeOld: db.prepare('DELETE FROM queue WHERE ts < ?'),
+    setBanned: db.prepare('UPDATE users SET banned = ? WHERE username = ?'),
+    clearDevice: db.prepare('UPDATE users SET device_hash = NULL, push_token = NULL, access_key_hash = NULL WHERE username = ?'),
+    setDepartments: db.prepare('UPDATE users SET departments = ? WHERE username = ?'),
+    setCanShare: db.prepare('UPDATE users SET can_share = ? WHERE username = ?'),
+    setContactInfo: db.prepare('UPDATE users SET phone = ?, email = ? WHERE username = ?'),
+    setDisplayName: db.prepare('UPDATE users SET display_name = ? WHERE username = ?'),
+    setInvite: db.prepare('UPDATE users SET invite_hash = ?, invite_expires = ? WHERE username = ?'),
+    putAvatar: db.prepare(
+      'INSERT INTO avatars (username, mime, data, ver) VALUES (?, ?, ?, ?) ON CONFLICT(username) DO UPDATE SET mime = excluded.mime, data = excluded.data, ver = excluded.ver',
+    ),
+    deleteAvatar: db.prepare('DELETE FROM avatars WHERE username = ?'),
+    getAvatar: db.prepare('SELECT mime, data, ver FROM avatars WHERE username = ?'),
+    setAvatarVer: db.prepare('UPDATE users SET avatar_ver = ? WHERE username = ?'),
+    setPresence: db.prepare('UPDATE users SET online_at = ?, last_seen = ? WHERE username = ?'),
+    setMeta: db.prepare('INSERT INTO meta (k, v) VALUES (?, ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v'),
+    listGroups: db.prepare('SELECT * FROM chat_groups ORDER BY name COLLATE NOCASE'),
+    groupsOf: db.prepare(
+      `SELECT g.* FROM chat_groups g JOIN chat_group_members m ON m.group_id = g.id
+       WHERE m.username = ? ORDER BY g.name COLLATE NOCASE`,
+    ),
+    getGroup: db.prepare('SELECT * FROM chat_groups WHERE id = ?'),
+    members: db.prepare('SELECT username FROM chat_group_members WHERE group_id = ? ORDER BY username'),
+    insertGroup: db.prepare('INSERT INTO chat_groups (id, name, created_by, created_at) VALUES (?, ?, ?, ?)'),
+    renameGroup: db.prepare('UPDATE chat_groups SET name = ? WHERE id = ?'),
+    setSenders: db.prepare('UPDATE chat_groups SET senders = ? WHERE id = ?'),
+    deleteGroup: db.prepare('DELETE FROM chat_groups WHERE id = ?'),
+    clearMembers: db.prepare('DELETE FROM chat_group_members WHERE group_id = ?'),
+    // Users deleted meanwhile are skipped instead of failing the whole change.
+    addMember: db.prepare(
+      'INSERT OR IGNORE INTO chat_group_members (group_id, username) SELECT ?, username FROM users WHERE username = ?',
+    ),
+    listProducts: db.prepare('SELECT * FROM products WHERE owner = ? ORDER BY name COLLATE NOCASE'),
+    adoptOrphans: db.prepare("UPDATE products SET owner = ? WHERE owner = ''"),
+    deleteProductsOf: db.prepare('DELETE FROM products WHERE owner = ?'),
+    getProduct: db.prepare('SELECT * FROM products WHERE id = ?'),
+    putProduct: db.prepare(
+      `INSERT INTO products (id, owner, name, price, description, updated_at) VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET name = excluded.name, price = excluded.price, description = excluded.description,
+       updated_at = excluded.updated_at`,
+    ),
+    setProductPhotoVer: db.prepare('UPDATE products SET photo_ver = ? WHERE id = ?'),
+    putProductPhoto: db.prepare(
+      'INSERT INTO product_photos (id, mime, data) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET mime = excluded.mime, data = excluded.data',
+    ),
+    deleteProductPhoto: db.prepare('DELETE FROM product_photos WHERE id = ?'),
+    getProductPhoto: db.prepare('SELECT mime, data FROM product_photos WHERE id = ?'),
+    deleteProduct: db.prepare('DELETE FROM products WHERE id = ?'),
+    addAudit: db.prepare('INSERT INTO audit_log (ts, actor, action, target, detail) VALUES (?, ?, ?, ?, ?)'),
+    listAudit: db.prepare('SELECT * FROM audit_log ORDER BY id DESC LIMIT ?'),
+  };
+
+  type GroupBase = Omit<GroupRow, 'members' | 'senders'> & { senders: string | null };
+  const withMembers = (g: GroupBase): GroupRow => ({
+    ...g,
+    members: (q.members.all(g.id) as { username: string }[]).map((r) => r.username),
+    senders: parseSenders(g.senders),
+  });
+  const setMembers = (id: string, members: string[]) => {
+    q.clearMembers.run(id);
+    for (const u of members) q.addMember.run(id, u);
   };
 
   const tx = (fn: () => void) => {
@@ -149,16 +391,51 @@ export function openSqlite(file: string): Db {
 
   // node:sqlite is synchronous; the async wrappers give both backends the same interface.
   return {
-    getUser: async (username) => q.getUser.get(username) as UserRow | undefined,
-    listUsers: async () => q.listUsers.all() as unknown as UserRow[],
+    getUser: async (username) => {
+      const r = q.getUser.get(username) as RawUser | undefined;
+      return r && toUser(r);
+    },
+    listUsers: async () => (q.listUsers.all() as unknown as RawUser[]).map(toUser),
     async createUser(u, opks) {
       tx(() => {
         q.insertUser.run(u.username, u.deviceHash, u.deviceHash, 0, u.identityKey, u.spk.id, u.spk.pub, u.spk.sig, Date.now());
         for (const k of opks) q.insertOpk.run(u.username, k.id, k.pub);
       });
     },
-    async createPendingUser(username, passHash) {
-      q.insertUser.run(username, passHash, null, 1, '', 0, '', '', Date.now());
+    async setAvatar(username, avatar) {
+      tx(() => {
+        if (avatar) q.putAvatar.run(username, avatar.mime, avatar.data, avatar.ver);
+        else q.deleteAvatar.run(username);
+        q.setAvatarVer.run(avatar?.ver ?? null, username);
+      });
+    },
+    async getAvatar(username) {
+      const r = q.getAvatar.get(username) as AvatarRow | undefined;
+      return r && { ...r, ver: Number(r.ver) };
+    },
+    async createPendingUser(username, passHash, { departments = [], canShare = false, phone = '', email = '', name = '' } = {}) {
+      tx(() => {
+        q.insertUser.run(username, passHash, null, 1, '', 0, '', '', Date.now());
+        if (departments.length) q.setDepartments.run(JSON.stringify(departments), username);
+        if (canShare) q.setCanShare.run(1, username);
+        if (phone || email) q.setContactInfo.run(phone, email, username);
+        if (name) q.setDisplayName.run(name, username);
+      });
+    },
+    async setDisplayName(username, name) {
+      q.setDisplayName.run(name, username);
+    },
+    async setInvite(username, invite) {
+      q.setInvite.run(invite?.hash ?? null, invite?.expires ?? null, username);
+    },
+    async setDepartments(username, departments) {
+      q.setDepartments.run(JSON.stringify(departments), username);
+    },
+    async setContactInfo(username, phone, email) {
+      q.setContactInfo.run(phone, email, username);
+    },
+    async setCanShare(username, canShare) {
+      q.setCanShare.run(canShare ? 1 : 0, username);
     },
     async activate(username, a, opks) {
       tx(() => {
@@ -182,7 +459,10 @@ export function openSqlite(file: string): Db {
       return (q.getMeta.get(key) as { v: string }).v;
     },
     async deleteUser(username) {
-      q.deleteUser.run(username);
+      tx(() => {
+        q.deleteProductsOf.run(username); // their catalog goes with them
+        q.deleteUser.run(username);
+      });
     },
     async setSignedPreKey(username, spk) {
       q.setSpk.run(spk.id, spk.pub, spk.sig, username);
@@ -208,6 +488,66 @@ export function openSqlite(file: string): Db {
     async purgeOlderThan(ts) {
       q.purgeOld.run(ts);
     },
+    async setBanned(username, banned) {
+      q.setBanned.run(banned ? 1 : 0, username);
+    },
+    async clearDevice(username) {
+      q.clearDevice.run(username);
+    },
+    async setPresence(username, onlineAt, lastSeen) {
+      q.setPresence.run(onlineAt, lastSeen, username);
+    },
+    getMeta: async (key) => (q.getMeta.get(key) as { v: string } | undefined)?.v,
+    async setMeta(key, value) {
+      q.setMeta.run(key, value);
+    },
+    listGroups: async () => (q.listGroups.all() as unknown as GroupBase[]).map(withMembers),
+    groupsOf: async (username) => (q.groupsOf.all(username) as unknown as GroupBase[]).map(withMembers),
+    async getGroup(id) {
+      const g = q.getGroup.get(id) as GroupBase | undefined;
+      return g && withMembers(g);
+    },
+    async createGroup(g) {
+      tx(() => {
+        q.insertGroup.run(g.id, g.name, g.createdBy, Date.now());
+        setMembers(g.id, g.members);
+        q.setSenders.run(g.senders && JSON.stringify(g.senders), g.id);
+      });
+    },
+    async updateGroup(id, changes) {
+      tx(() => {
+        if (changes.name !== undefined) q.renameGroup.run(changes.name, id);
+        if (changes.members) setMembers(id, changes.members);
+        if (changes.senders !== undefined) q.setSenders.run(changes.senders && JSON.stringify(changes.senders), id);
+      });
+    },
+    async deleteGroup(id) {
+      q.deleteGroup.run(id);
+    },
+    listProducts: async (owner) => (q.listProducts.all(owner) as unknown as ProductRow[]).map(toProduct),
+    async adoptOrphanProducts(owner) {
+      q.adoptOrphans.run(owner);
+    },
+    async getProduct(id) {
+      const r = q.getProduct.get(id) as ProductRow | undefined;
+      return r && toProduct(r);
+    },
+    async putProduct(p, photo) {
+      tx(() => {
+        q.putProduct.run(p.id, p.owner, p.name, p.price, p.description, p.updated_at);
+        if (photo) q.putProductPhoto.run(p.id, photo.mime, photo.data);
+        else if (photo === null) q.deleteProductPhoto.run(p.id);
+        if (photo !== undefined) q.setProductPhotoVer.run(photo?.ver ?? null, p.id);
+      });
+    },
+    async deleteProduct(id) {
+      q.deleteProduct.run(id);
+    },
+    getProductPhoto: async (id) => q.getProductPhoto.get(id) as ProductPhoto | undefined,
+    async addAudit(e) {
+      q.addAudit.run(e.ts, e.actor, e.action, e.target, e.detail);
+    },
+    listAudit: async (limit) => q.listAudit.all(limit) as unknown as AuditRow[],
     async close() {
       db.close();
     },

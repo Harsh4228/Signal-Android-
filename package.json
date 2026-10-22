@@ -2,7 +2,7 @@
   "name": "meetme",
   "private": true,
   "version": "0.1.0",
-  "description": "MeetMe - private end-to-end encrypted messenger (Android, iOS, Desktop)",
+  "description": "CellMate - private end-to-end encrypted messenger (Android, iOS, Desktop)",
   "workspaces": [
     "packages/core",
     "apps/server",
@@ -13,6 +13,7 @@
     "typecheck": "npm run typecheck -w @meetme/core && npm run typecheck -w @meetme/server && npm run typecheck -w @meetme/desktop",
     "server": "npm run dev -w @meetme/server",
     "desktop": "npm run dev -w @meetme/desktop",
+    "web": "npm run web -w @meetme/desktop",
     "mobile:install": "npm install --prefix apps/mobile",
     "android": "npm run android --prefix apps/mobile",
     "ios": "npm run ios --prefix apps/mobile"

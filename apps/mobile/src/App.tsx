@@ -6,6 +6,7 @@ import { Info } from 'lucide-react-native';
 import { appLock, client, useCall, useClient, useLock } from './messenger';
 import { colors, s } from './theme';
 import { Logo } from './ui';
+import { registerPush } from './push';
 import { RegisterScreen } from './screens/RegisterScreen';
 import { ChatListScreen } from './screens/ChatListScreen';
 import { ChatScreen } from './screens/ChatScreen';
@@ -14,17 +15,29 @@ import { SettingsScreen } from './screens/SettingsScreen';
 import { CallScreen } from './screens/CallScreen';
 import { BroadcastScreen } from './screens/BroadcastScreen';
 import { MediaViewerHost } from './screens/AttachmentView';
-import { EmployeesScreen } from './screens/EmployeesScreen';
+import { AdminScreen } from './screens/AdminScreen';
 import { LockScreen } from './screens/LockScreen';
 import { AppLockScreen } from './screens/AppLockScreen';
+import { NewNoticeScreen, NoticePopup, NoticesScreen } from './screens/NoticesScreen';
+import { MediaScreen } from './screens/MediaScreen';
+import { StatusComposeScreen, StatusScreen, StatusViewerScreen } from './screens/StatusScreen';
+import { CatalogScreen, StarredScreen } from './screens/ChatExtras';
 
 export type Route =
   | { name: 'list' }
   | { name: 'chat'; peer: string }
   | { name: 'info'; peer: string }
+  | { name: 'media'; peer: string }
   | { name: 'settings' }
   | { name: 'broadcast' }
-  | { name: 'employees' }
+  | { name: 'admin' }
+  | { name: 'starred' }
+  | { name: 'catalog' }
+  | { name: 'status' }
+  | { name: 'status-new'; mode: 'text' | 'photo' }
+  | { name: 'status-view'; user: string; start: number }
+  | { name: 'notices' }
+  | { name: 'notice-new' }
   | { name: 'applock' };
 
 export default function App() {
@@ -39,8 +52,8 @@ export default function App() {
     // Block screenshots, screen recording and the app-switcher preview (iOS + Android).
     CaptureProtection.prevent({
       screenshot: true,
-      record: { text: 'Screen recording is blocked in MeetMe', backgroundColor: '#ffffff', textColor: '#101828' },
-      appSwitcher: { text: 'MeetMe', backgroundColor: '#ffffff', textColor: '#101828' },
+      record: { text: 'Screen recording is blocked in CellMate', backgroundColor: '#ffffff', textColor: '#101828' },
+      appSwitcher: { text: 'CellMate', backgroundColor: '#ffffff', textColor: '#101828' },
     }).catch(() => {});
     // iOS cannot fully stop a screenshot, so tell the other person if one happens.
     const sub = CaptureProtection.addListener((type) => {
@@ -64,6 +77,11 @@ export default function App() {
     };
   }, []);
 
+  // Once signed in and connected, register this phone for content-free wake-up pushes.
+  useEffect(() => {
+    if (c.account && c.status === 'online') void registerPush(client);
+  }, [c.account, c.status]);
+
   useEffect(() => {
     if (!toast) return;
     const t = setTimeout(() => setToast(null), 3500);
@@ -82,6 +100,9 @@ export default function App() {
   useEffect(() => {
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
       if (route.name === 'info') setRoute({ name: 'chat', peer: route.peer });
+      else if (route.name === 'media') setRoute({ name: 'info', peer: route.peer });
+      else if (route.name === 'notice-new') setRoute({ name: 'notices' });
+      else if (route.name === 'status-new' || route.name === 'status-view') setRoute({ name: 'status' });
       else if (route.name !== 'list') setRoute({ name: 'list' });
       else return false;
       return true;
@@ -103,10 +124,26 @@ export default function App() {
     screen = <ChatScreen peer={route.peer} navigate={setRoute} onError={setToast} />;
   } else if (route.name === 'info') {
     screen = <ChatInfoScreen peer={route.peer} navigate={setRoute} onError={setToast} />;
-  } else if (route.name === 'employees') {
-    screen = <EmployeesScreen navigate={setRoute} onToast={setToast} />;
+  } else if (route.name === 'media') {
+    screen = <MediaScreen chatKey={route.peer} navigate={setRoute} onError={setToast} />;
+  } else if (route.name === 'admin') {
+    screen = <AdminScreen navigate={setRoute} onToast={setToast} />;
   } else if (route.name === 'broadcast') {
     screen = <BroadcastScreen navigate={setRoute} onDone={setToast} />;
+  } else if (route.name === 'starred') {
+    screen = <StarredScreen navigate={setRoute} />;
+  } else if (route.name === 'catalog') {
+    screen = <CatalogScreen onClose={() => setRoute({ name: 'list' })} onToast={setToast} />;
+  } else if (route.name === 'status') {
+    screen = <StatusScreen navigate={setRoute} />;
+  } else if (route.name === 'status-new') {
+    screen = <StatusComposeScreen mode={route.mode} navigate={setRoute} onToast={setToast} />;
+  } else if (route.name === 'status-view') {
+    screen = <StatusViewerScreen user={route.user} start={route.start} navigate={setRoute} onToast={setToast} />;
+  } else if (route.name === 'notices') {
+    screen = <NoticesScreen navigate={setRoute} />;
+  } else if (route.name === 'notice-new') {
+    screen = <NewNoticeScreen navigate={setRoute} onDone={setToast} />;
   } else if (route.name === 'applock') {
     screen = <AppLockScreen navigate={setRoute} onToast={setToast} />;
   } else if (route.name === 'settings') {
@@ -120,8 +157,9 @@ export default function App() {
       <StatusBar barStyle="dark-content" />
       <SafeAreaView style={[s.fill, { backgroundColor: colors.surface }]} edges={['top', 'bottom']}>
         {screen}
-        <MediaViewerHost />
+        <MediaViewerHost onToast={setToast} />
         {call.status !== 'idle' && <CallScreen />}
+        {ready && c.account && !lock.locked && call.status === 'idle' && <NoticePopup />}
         {ready && c.account && lock.locked && <LockScreen />}
         {toast && (
           <View

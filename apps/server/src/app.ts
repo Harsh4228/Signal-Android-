@@ -4,10 +4,37 @@ import http from 'node:http';
 import { dirname, join } from 'node:path';
 import { WebSocketServer, type WebSocket } from 'ws';
 import {
+  DEFAULT_POLICY,
+  GROUP_ID_RE,
   MAX_ATTACHMENT_BYTES,
+  MAX_GROUP_MEMBERS,
+  MAX_DEPARTMENT,
+  MAX_DEPARTMENTS,
+  MAX_AVATAR_BYTES,
+  AVATAR_MIMES,
+  MAX_GROUP_NAME,
+  MAX_EMAIL,
+  MAX_NAME,
+  MAX_PHONE,
+  INVITE_TTL_MS,
+  EMAIL_RE,
+  PHONE_RE,
+  MAX_PRODUCT_DESC,
+  MAX_PRODUCT_NAME,
+  MAX_PRODUCT_PRICE,
   MIN_PASSWORD_LENGTH,
   USERNAME_RE,
+  type AdminStats,
   type AdminUser,
+  type AvatarResponse,
+  type AuditEntry,
+  type GroupInfo,
+  type Policy,
+  type Presence,
+  type Product,
+  type UserProfile,
+  type InviteResponse,
+  type JoinRequest,
   type LoginRequest,
   type PublicConfig,
   type PushKind,
@@ -27,7 +54,7 @@ import {
   type UploadKeysRequest,
 } from '@meetme/core';
 import { LocalBus, type Bus, type BusEvent } from './bus';
-import { isActive, openSqlite, type Db } from './db';
+import { isActive, isOnlineRow, openSqlite, type Db, type GroupRow, type ProductPhoto, type ProductRow, type UserRow } from './db';
 import type { PushSender } from './push';
 
 export interface ServerConfig {
@@ -100,11 +127,59 @@ function checkOpks(list: unknown) {
   });
 }
 
+const BANNED_MESSAGE = 'Your account is suspended. Contact your admin.';
+
+const toGroupInfo = (g: GroupRow): GroupInfo => ({
+  id: g.id,
+  name: g.name,
+  members: g.members,
+  senders: g.senders,
+  createdBy: g.created_by,
+  createdAt: Number(g.created_at),
+});
+
+function checkGroupName(v: unknown): string {
+  const name = typeof v === 'string' ? v.trim().replace(/\s+/g, ' ') : '';
+  if (!name || name.length > MAX_GROUP_NAME) throw new HttpError(400, `Group name: 1-${MAX_GROUP_NAME} characters`);
+  return name;
+}
+
+function checkDepartmentName(v: unknown): string {
+  const name = typeof v === 'string' ? v.trim().replace(/\s+/g, ' ') : '';
+  if (!name || name.length > MAX_DEPARTMENT) throw new HttpError(400, `Department name: 1-${MAX_DEPARTMENT} characters`);
+  return name;
+}
+
+const sameName = (a: string, b: string) => a.localeCompare(b, undefined, { sensitivity: 'base' }) === 0;
+const sortNames = (list: string[]) => list.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+
+/** Who may send: null/undefined = every member; otherwise a list, kept to people in the group. */
+function checkSenders(v: unknown, members: string[]): string[] | null {
+  if (v === undefined || v === null) return null;
+  if (!Array.isArray(v)) throw new HttpError(400, 'senders must be a list of IDs or null');
+  return [...new Set(v.map((u) => String(u).trim().toLowerCase()))].filter((u) => members.includes(u));
+}
+
+function checkMemberList(v: unknown): string[] {
+  if (!Array.isArray(v) || v.length > MAX_GROUP_MEMBERS) throw new HttpError(400, `Members: up to ${MAX_GROUP_MEMBERS}`);
+  const list = [...new Set(v.map((u) => String(u).trim().toLowerCase()))];
+  for (const u of list) if (!USERNAME_RE.test(u)) throw new HttpError(400, `Invalid ID: ${u}`);
+  return list.sort();
+}
+
 function checkNewPassword(pw: unknown, old?: string) {
   if (typeof pw !== 'string' || pw.length < MIN_PASSWORD_LENGTH || pw.length > 128) {
     throw new HttpError(400, `Password must be at least ${MIN_PASSWORD_LENGTH} characters`);
   }
   if (old !== undefined && pw === old) throw new HttpError(400, 'Choose a password different from the old one');
+}
+
+/** Checks the file really starts like the image type it claims (no SVG/HTML posing as a photo). */
+function looksLikeImage(b: Buffer, mime: string): boolean {
+  if (mime === 'image/jpeg') return b.length > 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff;
+  if (mime === 'image/png') return b.length > 8 && b.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+  if (mime === 'image/webp') return b.length > 12 && b.toString('ascii', 0, 4) === 'RIFF' && b.toString('ascii', 8, 12) === 'WEBP';
+  return false;
 }
 
 // ---------------------------------------------------------------- password hashing
@@ -197,8 +272,188 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
       authFailLimit.allow(ip);
       throw new HttpError(401, 'unauthorized');
     }
+    // Banning kicks the user, which also clears this cache, so a ban takes effect at once.
+    if (user.banned) throw new HttpError(403, BANNED_MESSAGE);
     authCache.set(username, { digest, until: Date.now() + 10 * 60_000 });
     return username;
+  }
+
+  let closing = false;
+  /** Online / last seen bookkeeping; skipped while shutting down (the database is closing). */
+  const setPresence = (u: string, onlineAt: number | null) => {
+    if (!closing) void db.setPresence(u, onlineAt, Date.now()).catch((e) => console.error('presence failed', e));
+  };
+
+  const isOnline = (u: UserRow) => online.has(u.username) || isOnlineRow(u);
+
+  async function notifyGroupsOf(user: string) {
+    const groups = await db.groupsOf(user);
+    if (groups.length) await notify([...new Set(groups.flatMap((g) => g.members))], 'groups');
+  }
+
+  async function existingMembers(list: string[]): Promise<string[]> {
+    const known = new Set((await db.listUsers()).map((u) => u.username));
+    const missing = list.filter((u) => !known.has(u));
+    if (missing.length) throw new HttpError(400, `Unknown ID: ${missing.join(', ')}`);
+    return list;
+  }
+
+  /**
+   * Saving files out of the app was removed: everyone may share files to other chats, nobody may take them
+   * outside. Always false, so app versions that still read this flag hide their Save / Share-outside buttons.
+   * (The admin endpoint that set it still works for those older apps, but no longer changes anything.)
+   */
+  const canShare = (_u: UserRow) => false;
+
+  /** The admin's department list, plus any name still on a user (so nothing in use goes missing). */
+  async function getDepartments(): Promise<string[]> {
+    let stored: string[] = [];
+    try {
+      const v = JSON.parse((await db.getMeta('departments')) ?? '[]') as unknown;
+      if (Array.isArray(v)) stored = v.filter((d): d is string => typeof d === 'string');
+    } catch {
+      // unreadable value: start from the names in use
+    }
+    for (const u of await db.listUsers()) {
+      for (const d of u.departments) if (!stored.some((s) => sameName(s, d))) stored.push(d);
+    }
+    return sortNames(stored);
+  }
+  const saveDepartments = (list: string[]) => db.setMeta('departments', JSON.stringify(sortNames(list)));
+
+  /** A user's departments: missing or [] = none; each must be on the department list. Returns them A-Z, once each. */
+  async function checkDepartments(v: unknown): Promise<string[]> {
+    if (v === undefined || v === null) return [];
+    if (!Array.isArray(v) || v.length > MAX_DEPARTMENTS) throw new HttpError(400, 'departments must be a list of names');
+    const list = await getDepartments();
+    const out: string[] = [];
+    for (const item of v) {
+      const name = checkDepartmentName(item);
+      const known = list.find((d) => sameName(d, name));
+      if (!known) throw new HttpError(400, `Unknown department "${name}". Add it under Departments first.`);
+      if (!out.includes(known)) out.push(known);
+    }
+    return sortNames(out);
+  }
+
+  /** Rename (to = name) or remove (to = null) a department on everyone who has it. */
+  async function replaceDepartment(from: string, to: string | null) {
+    for (const u of await db.listUsers()) {
+      if (!u.departments.includes(from)) continue;
+      const next = u.departments.filter((d) => d !== from);
+      if (to && !next.includes(to)) next.push(to);
+      await db.setDepartments(u.username, sortNames(next));
+    }
+  }
+
+  // A server without admins has nobody to switch protections on or off, so there users keep full control
+  // of their own history; with an admin, history is protected until the admin allows clearing it.
+  const defaultPolicy: Policy = { ...DEFAULT_POLICY, allowClearHistory: config.adminUsers.length === 0 };
+
+  async function getPolicy(): Promise<Policy> {
+    try {
+      return { ...defaultPolicy, ...(JSON.parse((await db.getMeta('policy')) ?? '{}') as Partial<Policy>) };
+    } catch {
+      return defaultPolicy;
+    }
+  }
+
+  /** A user's full name ('' = none, the ID is shown). */
+  function checkName(v: unknown): string {
+    if (v === undefined || v === null) return '';
+    if (typeof v !== 'string' || v.trim().length > MAX_NAME || /[\u0000-\u001f\u007f‪-‮⁦-⁩]/.test(v)) {
+      throw new HttpError(400, `Name: at most ${MAX_NAME} characters`);
+    }
+    return v.trim().replace(/\s+/g, ' ');
+  }
+
+  /** A profile photo: { mime, data (base64) }, JPEG / PNG / WebP up to 2 MB, and really an image. */
+  function checkPhoto(v: unknown): { mime: string; data: string } {
+    const p = (v ?? {}) as { mime?: unknown; data?: unknown };
+    if (typeof p.mime !== 'string' || !(AVATAR_MIMES as readonly string[]).includes(p.mime)) {
+      throw new HttpError(400, 'Photo must be JPEG, PNG or WebP');
+    }
+    if (typeof p.data !== 'string' || !/^[A-Za-z0-9+/]+={0,2}$/.test(p.data)) throw new HttpError(400, 'invalid photo');
+    const bytes = Buffer.from(p.data, 'base64');
+    if (bytes.length > MAX_AVATAR_BYTES) throw new HttpError(413, 'Photo too large (max 2 MB)');
+    if (!looksLikeImage(bytes, p.mime)) throw new HttpError(400, 'That file is not a valid photo');
+    return { mime: p.mime, data: p.data };
+  }
+
+  /** A fresh one-time QR invite for a user; the secret is only returned here (the database keeps a hash). */
+  async function newInvite(username: string): Promise<InviteResponse> {
+    const token = randomBytes(32).toString('base64url');
+    const expires = Date.now() + INVITE_TTL_MS;
+    await db.setInvite(username, { hash: hashPassword(token), expires });
+    return { username, token, expires };
+  }
+
+  /** Optional work mobile number and email for a user ('' = none). */
+  function checkContactInfo(phone: unknown, email: unknown): { phone: string; email: string } {
+    const p = phone === undefined || phone === null ? '' : typeof phone === 'string' ? phone.trim() : null;
+    const e = email === undefined || email === null ? '' : typeof email === 'string' ? email.trim().toLowerCase() : null;
+    if (p === null || (p && (p.length > MAX_PHONE || !PHONE_RE.test(p)))) {
+      throw new HttpError(400, 'Mobile number: digits only, optionally starting with + (6-20 characters)');
+    }
+    if (e === null || (e && (e.length > MAX_EMAIL || !EMAIL_RE.test(e)))) throw new HttpError(400, 'That email address is not valid');
+    return { phone: p, email: e };
+  }
+
+  const MAX_PRODUCTS = 500;
+
+  // Products from before catalogs were per user (an admin made them) become the first admin's catalog.
+  if (config.adminUsers[0]) void db.adoptOrphanProducts(config.adminUsers[0]).catch((e) => console.error('catalog migration failed', e));
+
+  const toProductInfo = (p: ProductRow): Product => ({
+    id: p.id,
+    owner: p.owner,
+    name: p.name,
+    price: p.price,
+    description: p.description,
+    photo: p.photo_ver,
+    updatedAt: p.updated_at,
+  });
+
+  /** Checks an admin's product form. `creating`: the name is required; otherwise missing fields keep `old`. */
+  function parseProductInput(raw: unknown, creating: boolean, old?: ProductRow) {
+    const body = (raw ?? {}) as Record<string, unknown>;
+    const text = (key: string, max: number, current: string): string => {
+      const v = body[key];
+      if (v === undefined) return current;
+      if (typeof v !== 'string' || v.trim().length > max) throw new HttpError(400, `${key}: at most ${max} characters`);
+      return v.trim();
+    };
+    const name = text('name', MAX_PRODUCT_NAME, old?.name ?? '');
+    if (!name || (creating && body.name === undefined)) throw new HttpError(400, 'The product needs a name');
+    const fields = {
+      name,
+      price: text('price', MAX_PRODUCT_PRICE, old?.price ?? ''),
+      description: text('description', MAX_PRODUCT_DESC, old?.description ?? ''),
+    };
+    let photo: (ProductPhoto & { ver: number }) | null | undefined;
+    if (body.photo === null) photo = null;
+    else if (body.photo !== undefined) {
+      const p = body.photo as { mime?: unknown; data?: unknown };
+      if (typeof p.mime !== 'string' || !(AVATAR_MIMES as readonly string[]).includes(p.mime)) {
+        throw new HttpError(400, 'Photo must be JPEG, PNG or WebP');
+      }
+      if (typeof p.data !== 'string' || !/^[A-Za-z0-9+/]+={0,2}$/.test(p.data)) throw new HttpError(400, 'invalid photo');
+      const bytes = Buffer.from(p.data, 'base64');
+      if (bytes.length > MAX_AVATAR_BYTES) throw new HttpError(413, 'Photo too large (max 2 MB)');
+      if (!looksLikeImage(bytes, p.mime)) throw new HttpError(400, 'That file is not a valid photo');
+      photo = { mime: p.mime, data: p.data, ver: Date.now() };
+    }
+    return { fields, photo };
+  }
+
+  async function audit(actor: string, action: string, target: string, detail = '') {
+    await db.addAudit({ ts: Date.now(), actor, action, target, detail }).catch((e) => console.error('audit failed', e));
+  }
+
+  /** Ask connected users (null = everyone) to reload groups / policy, on every server instance. */
+  async function notify(users: string[] | null, what: 'groups' | 'policy') {
+    for (const [u, ws] of online) if (!users || users.includes(u)) frame(ws, { type: 'refresh', what });
+    await bus.publish({ type: 'refresh', users, what }).catch((e) => console.error('bus publish failed', e));
   }
 
   function basicAuth(req: http.IncomingMessage): Promise<string> {
@@ -220,8 +475,8 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
     return Buffer.concat(chunks).toString('utf8');
   }
 
-  async function readJson(req: http.IncomingMessage): Promise<unknown> {
-    const text = await readBody(req, MAX_BODY);
+  async function readJson(req: http.IncomingMessage, limit = MAX_BODY): Promise<unknown> {
+    const text = await readBody(req, limit);
     try {
       return JSON.parse(text);
     } catch {
@@ -274,6 +529,7 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
         authFailLimit.allow(ip);
         throw new HttpError(401, 'Wrong ID or password');
       }
+      if (user.banned) throw new HttpError(403, BANNED_MESSAGE);
       let newHash: string | null = null;
       if (user.must_change) {
         if (body.newPassword === undefined) throw new HttpError(403, 'must_change');
@@ -289,6 +545,42 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
       await db.activate(user.username, { deviceHash: hashPassword(body.deviceSecret), identityKey, spk }, opks);
       if (newHash) await db.setPassword(user.username, newHash, false);
       await kick(user.username, 4004, 'logged in on another device');
+      await notifyGroupsOf(user.username); // new keys: group members start fresh sessions
+      return send(200, { ok: true });
+    }
+
+    // Accept a QR invite: the admin made the account (name, photo, mobile, email); the person only chooses
+    // their own password here, and this device's keys are registered. The invite works once.
+    if (method === 'POST' && path === '/v1/join') {
+      const ip = clientIp(req);
+      if (authFailLimit.isBlocked(ip)) throw new HttpError(429, 'Too many attempts, try again later');
+      const body = (await readJson(req)) as Partial<JoinRequest>;
+      const user = typeof body.username === 'string' ? await db.getUser(body.username) : undefined;
+      const valid =
+        !!user?.invite_hash &&
+        Number(user.invite_expires) > Date.now() &&
+        typeof body.token === 'string' &&
+        body.token.length >= 32 &&
+        body.token.length <= 128 &&
+        verifyPassword(body.token, user.invite_hash);
+      if (!valid) {
+        authFailLimit.allow(ip);
+        throw new HttpError(401, 'This QR code is not valid any more. Ask your admin for a new one.');
+      }
+      if (user!.banned) throw new HttpError(403, BANNED_MESSAGE);
+      checkNewPassword(body.newPassword);
+      if (typeof body.deviceSecret !== 'string' || body.deviceSecret.length < 32 || body.deviceSecret.length > 128) {
+        throw new HttpError(400, 'invalid device secret');
+      }
+      const identityKey = b64Key(body.identityKey, 32, 'identityKey');
+      const spk = checkSpk(identityKey, body.signedPreKey);
+      const opks = checkOpks(body.oneTimePreKeys ?? []);
+      await db.activate(user!.username, { deviceHash: hashPassword(body.deviceSecret), identityKey, spk }, opks);
+      await db.setPassword(user!.username, hashPassword(body.newPassword as string), false);
+      await db.setInvite(user!.username, null);
+      await kick(user!.username, 4004, 'logged in on another device');
+      await notifyGroupsOf(user!.username);
+      await audit(user!.username, 'user.join', user!.username, 'joined with a QR invite');
       return send(200, { ok: true });
     }
 
@@ -321,7 +613,7 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
       const key = req.headers['x-delivery-key'];
       const target = await db.getUser(to);
       let ok = false;
-      if (typeof key === 'string' && target?.access_key_hash && isActive(target)) {
+      if (typeof key === 'string' && target?.access_key_hash && isActive(target) && !target.banned) {
         const given = createHash('sha256').update(Buffer.from(key, 'base64')).digest();
         const stored = Buffer.from(target.access_key_hash, 'base64');
         ok = stored.length === given.length && timingSafeEqual(given, stored);
@@ -350,6 +642,7 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
       const user = await db.getUser(m[1]!);
       if (!user) throw new HttpError(404, 'user not found');
       if (!isActive(user)) throw new HttpError(409, `${user.username} has not logged in yet`);
+      if (user.banned) throw new HttpError(409, `${user.username} is suspended`);
       const opk = await db.takeOneTimePreKey(user.username);
       const bundle: KeyBundleResponse = {
         identityKey: user.identity_key,
@@ -365,10 +658,30 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
       if (body.oneTimePreKeys) await db.addOneTimePreKeys(me, checkOpks(body.oneTimePreKeys));
       return send(204);
     }
+    // Username search for "start a chat": prefix match over people you can actually message.
+    if (method === 'GET' && path === '/v1/users') {
+      const q = (url.searchParams.get('q') ?? '').trim().toLowerCase();
+      if (!/^[a-z0-9_.]{1,32}$/.test(q)) return send(200, { users: [] });
+      const users = (await db.listUsers())
+        .filter((u) => u.username !== me && u.username.startsWith(q) && isActive(u) && !u.banned)
+        .slice(0, 20)
+        .map((u) => u.username);
+      return send(200, { users });
+    }
     if (method === 'GET' && (m = path.match(/^\/v1\/users\/([a-z0-9_.]{3,32})$/))) {
       const u = await db.getUser(m[1]!);
       if (!u) throw new HttpError(404, 'user not found');
-      return send(200, { exists: true, active: isActive(u) });
+      // The company directory: department and the work contact details the admin entered.
+      const profile: UserProfile & { exists: true } = {
+        exists: true,
+        username: u.username,
+        name: u.display_name,
+        active: isActive(u),
+        departments: u.departments,
+        phone: u.phone,
+        email: u.email,
+      };
+      return send(200, profile);
     }
     if (method === 'GET' && path === '/v1/turn') return send(200, iceConfig(me));
     if (method === 'GET' && path === '/v1/certificate') {
@@ -414,8 +727,103 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
       return res.end(bytes.toString('base64'));
     }
     if (method === 'GET' && path === '/v1/me') {
-      const me_: MeResponse = { username: me, isAdmin: config.adminUsers.includes(me), admins: config.adminUsers };
+      const user = (await db.getUser(me))!;
+      const me_: MeResponse = {
+        username: me,
+        isAdmin: config.adminUsers.includes(me),
+        admins: config.adminUsers,
+        policy: await getPolicy(),
+        canShare: canShare(user),
+        avatar: user.avatar_ver,
+        phone: user.phone,
+        email: user.email,
+        name: user.display_name,
+      };
       return send(200, me_);
+    }
+    // Profiles are made by the admin and locked: only admins may change their own details (employees ask the
+    // admin). On a server without admins people manage their own.
+    const profileLocked = config.adminUsers.length > 0 && !config.adminUsers.includes(me);
+    if (method === 'PUT' && path === '/v1/me/contact') {
+      if (profileLocked) throw new HttpError(403, 'Only your admin can change your profile');
+      const body = (await readJson(req)) as { phone?: unknown; email?: unknown };
+      const { phone, email } = checkContactInfo(body.phone, body.email);
+      await db.setContactInfo(me, phone, email);
+      return send(204);
+    }
+    // Online / last seen for a few usernames (the chat list); unknown names are left out.
+    // ---- profile photos: everyone signed in may see them (they are not end-to-end encrypted) ----
+    if (path === '/v1/avatar' && method === 'PUT') {
+      if (profileLocked) throw new HttpError(403, 'Only your admin can change your profile photo');
+      if (!uploadLimit.allow(me)) throw new HttpError(429, 'too many uploads');
+      const photo = checkPhoto(await readJson(req, Math.ceil((MAX_AVATAR_BYTES * 4) / 3) + 1024));
+      const ver = Date.now();
+      await db.setAvatar(me, { ...photo, ver });
+      return send(200, { ver });
+    }
+    if (path === '/v1/avatar' && method === 'DELETE') {
+      if (profileLocked) throw new HttpError(403, 'Only your admin can change your profile photo');
+      await db.setAvatar(me, null);
+      return send(204);
+    }
+    if (method === 'GET' && (m = path.match(/^\/v1\/avatars\/([a-z0-9_.]{3,32})$/))) {
+      const a = await db.getAvatar(m[1]!);
+      if (!a) throw new HttpError(404, 'no photo');
+      const out: AvatarResponse = a;
+      return send(200, out);
+    }
+    // ---- catalogs (like WhatsApp Business): everyone has their own and changes only that; colleagues may
+    // browse a person's catalog from their profile ----
+    if (method === 'GET' && path === '/v1/catalog') {
+      const owner = url.searchParams.get('owner') ?? me;
+      if (!USERNAME_RE.test(owner)) throw new HttpError(400, 'invalid owner');
+      return send(200, { products: (await db.listProducts(owner)).map(toProductInfo) });
+    }
+    if (method === 'GET' && (m = path.match(/^\/v1\/catalog\/([0-9a-f]{16})\/photo$/))) {
+      const photo = await db.getProductPhoto(m[1]!);
+      if (!photo) throw new HttpError(404, 'no photo');
+      return send(200, photo);
+    }
+    if (method === 'POST' && path === '/v1/catalog') {
+      if (!uploadLimit.allow(me)) throw new HttpError(429, 'too many uploads');
+      if ((await db.listProducts(me)).length >= MAX_PRODUCTS) throw new HttpError(400, `A catalog can have at most ${MAX_PRODUCTS} products`);
+      const input = parseProductInput(await readJson(req, Math.ceil((MAX_AVATAR_BYTES * 4) / 3) + 8192), true);
+      const id = randomBytes(8).toString('hex');
+      await db.putProduct({ id, owner: me, ...input.fields, updated_at: Date.now() }, input.photo ?? undefined);
+      return send(200, toProductInfo((await db.getProduct(id))!));
+    }
+    if ((m = path.match(/^\/v1\/catalog\/([0-9a-f]{16})$/)) && (method === 'PUT' || method === 'DELETE')) {
+      const product = await db.getProduct(m[1]!);
+      if (!product) throw new HttpError(404, 'product not found');
+      // Only the owner changes their catalog; an admin may also remove a product (moderation).
+      const isAdmin = config.adminUsers.includes(me);
+      if (product.owner !== me && !(method === 'DELETE' && isAdmin)) throw new HttpError(403, 'Not your product');
+      if (method === 'PUT') {
+        if (!uploadLimit.allow(me)) throw new HttpError(429, 'too many uploads');
+        const input = parseProductInput(await readJson(req, Math.ceil((MAX_AVATAR_BYTES * 4) / 3) + 8192), false, product);
+        await db.putProduct({ id: product.id, owner: product.owner, ...input.fields, updated_at: Date.now() }, input.photo);
+        return send(200, toProductInfo((await db.getProduct(product.id))!));
+      }
+      await db.deleteProduct(product.id);
+      if (product.owner !== me) await audit(me, 'catalog.delete', product.name, `from ${product.owner}'s catalog`);
+      return send(204);
+    }
+    if (method === 'GET' && path === '/v1/presence') {
+      const names = [...new Set((url.searchParams.get('u') ?? '').split(',').filter((u) => USERNAME_RE.test(u)))];
+      if (names.length > 200) throw new HttpError(400, 'too many users');
+      const out: Record<string, Presence> = {};
+      for (const u of await Promise.all(names.map((n) => db.getUser(n)))) {
+        if (u) {
+          out[u.username] = { online: isOnline(u), lastSeen: u.last_seen === null ? null : Number(u.last_seen), avatar: u.avatar_ver };
+        }
+      }
+      return send(200, out);
+    }
+    if (method === 'GET' && path === '/v1/groups') {
+      // Members can only exchange messages with people who have logged in and are not suspended.
+      const reachable = new Set((await db.listUsers()).filter((u) => isActive(u) && !u.banned).map((u) => u.username));
+      const groups = (await db.groupsOf(me)).map((g) => ({ ...toGroupInfo(g), members: g.members.filter((u) => reachable.has(u)) }));
+      return send(200, { groups });
     }
     if (method === 'POST' && path === '/v1/password') {
       const body = (await readJson(req)) as { oldPassword?: unknown; newPassword?: unknown };
@@ -439,39 +847,281 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
           active: isActive(u),
           admin: config.adminUsers.includes(u.username),
           mustChangePassword: !!u.must_change,
+          banned: !!u.banned,
+          online: isOnline(u),
+          lastSeen: u.last_seen === null ? null : Number(u.last_seen),
+          createdAt: Number(u.created_at),
+          departments: u.departments,
+          canShare: canShare(u),
+          avatar: u.avatar_ver,
+          phone: u.phone,
+          email: u.email,
+          name: u.display_name,
+          inviteExpires: u.invite_hash && Number(u.invite_expires) > Date.now() ? Number(u.invite_expires) : null,
         }));
         return send(200, { users });
       }
       if (method === 'POST' && path === '/v1/admin/users') {
-        const body = (await readJson(req)) as { username?: unknown; password?: unknown };
+        const body = (await readJson(req, Math.ceil((MAX_AVATAR_BYTES * 4) / 3) + 8192)) as {
+          username?: unknown;
+          password?: unknown;
+          departments?: unknown;
+          canShare?: unknown;
+          phone?: unknown;
+          email?: unknown;
+          name?: unknown;
+          photo?: unknown;
+        };
         if (typeof body.username !== 'string' || !USERNAME_RE.test(body.username)) {
           throw new HttpError(400, 'ID must be 3-32 characters: a-z, 0-9, _ or .');
         }
-        checkNewPassword(body.password);
+        // Normally there is no password: the person chooses one when they scan the QR invite.
+        if (body.password !== undefined) checkNewPassword(body.password);
+        const departments = await checkDepartments(body.departments);
+        const { phone, email } = checkContactInfo(body.phone, body.email);
+        const name = checkName(body.name);
+        const photo = body.photo === undefined ? null : checkPhoto(body.photo);
+        if (body.canShare !== undefined && typeof body.canShare !== 'boolean') {
+          throw new HttpError(400, 'canShare must be true or false');
+        }
+        const canShare = body.canShare === true;
         if (await db.getUser(body.username)) throw new HttpError(409, 'That ID already exists');
-        await db.createPendingUser(body.username, hashPassword(body.password as string));
-        return send(200, { ok: true });
+        const password = typeof body.password === 'string' ? body.password : randomBytes(24).toString('base64url');
+        await db.createPendingUser(body.username, hashPassword(password), { departments, canShare, phone, email, name });
+        if (photo) await db.setAvatar(body.username, { ...photo, ver: Date.now() });
+        const invite = await newInvite(body.username);
+        const detail = [name, departments.length && `departments: ${departments.join(', ')}`, phone && `mobile ${phone}`, email && `email ${email}`];
+        await audit(me, 'user.create', body.username, detail.filter(Boolean).join(', '));
+        return send(200, { ok: true, invite });
       }
-      if ((m = path.match(/^\/v1\/admin\/users\/([a-z0-9_.]{3,32})(\/password)?$/))) {
+      if ((m = path.match(/^\/v1\/admin\/users\/([a-z0-9_.]{3,32})(\/password|\/ban|\/departments|\/share|\/contact|\/invite|\/profile|\/avatar)?$/))) {
         const target = await db.getUser(m[1]!);
         if (!target) throw new HttpError(404, 'user not found');
-        if (method === 'POST' && m[2]) {
+        // A new QR invite (also to move someone to a new phone: joining replaces their old device).
+        if (method === 'POST' && m[2] === '/invite') {
+          const invite = await newInvite(target.username);
+          await audit(me, 'user.invite', target.username, 'new QR invite');
+          return send(200, invite);
+        }
+        if (method === 'PUT' && m[2] === '/profile') {
+          const body = (await readJson(req)) as { name?: unknown; phone?: unknown; email?: unknown };
+          const name = body.name === undefined ? target.display_name : checkName(body.name);
+          const { phone, email } = checkContactInfo(body.phone ?? target.phone, body.email ?? target.email);
+          await db.setDisplayName(target.username, name);
+          await db.setContactInfo(target.username, phone, email);
+          await audit(me, 'user.profile', target.username, [name, phone, email].filter(Boolean).join(', ') || 'cleared');
+          return send(204);
+        }
+        if (m[2] === '/avatar' && (method === 'PUT' || method === 'DELETE')) {
+          if (method === 'DELETE') {
+            await db.setAvatar(target.username, null);
+            await audit(me, 'user.profile', target.username, 'removed photo');
+            return send(204);
+          }
+          if (!uploadLimit.allow(me)) throw new HttpError(429, 'too many uploads');
+          const photo = checkPhoto(await readJson(req, Math.ceil((MAX_AVATAR_BYTES * 4) / 3) + 1024));
+          const ver = Date.now();
+          await db.setAvatar(target.username, { ...photo, ver });
+          await audit(me, 'user.profile', target.username, 'changed photo');
+          return send(200, { ver });
+        }
+        if (method === 'PUT' && m[2] === '/contact') {
+          const body = (await readJson(req)) as { phone?: unknown; email?: unknown };
+          const { phone, email } = checkContactInfo(body.phone, body.email);
+          await db.setContactInfo(target.username, phone, email);
+          await audit(me, 'user.contact', target.username, [phone && `mobile ${phone}`, email && `email ${email}`].filter(Boolean).join(', ') || 'cleared');
+          return send(204);
+        }
+        if (method === 'PUT' && m[2] === '/share') {
+          const body = (await readJson(req)) as { canShare?: unknown };
+          if (typeof body.canShare !== 'boolean') throw new HttpError(400, 'canShare must be true or false');
+          await db.setCanShare(target.username, body.canShare);
+          await audit(me, body.canShare ? 'user.share_on' : 'user.share_off', target.username);
+          await notify([target.username], 'policy'); // their app re-reads /v1/me and shows or hides Save/Share
+          return send(204);
+        }
+        if (method === 'PUT' && m[2] === '/departments') {
+          const body = (await readJson(req)) as { departments?: unknown };
+          const departments = await checkDepartments(body.departments);
+          await db.setDepartments(target.username, departments);
+          await audit(me, 'user.department', target.username, departments.join(', ') || 'none');
+          return send(204);
+        }
+        if (method === 'POST' && m[2] === '/password') {
           const body = (await readJson(req)) as { password?: unknown };
           checkNewPassword(body.password);
           await db.setPassword(target.username, hashPassword(body.password as string), true);
+          await audit(me, 'user.reset_password', target.username);
+          return send(204);
+        }
+        if (method === 'POST' && m[2] === '/ban') {
+          const body = (await readJson(req)) as { banned?: unknown };
+          if (typeof body.banned !== 'boolean') throw new HttpError(400, 'banned must be true or false');
+          if (target.username === me) throw new HttpError(400, "You can't ban yourself");
+          if (config.adminUsers.includes(target.username)) throw new HttpError(400, "Admins can't be banned");
+          await db.setBanned(target.username, body.banned);
+          if (body.banned) {
+            // Blocking signs them out for good: their device is cut off (its app deletes its keys), their password
+            // stops working and any QR invite is cancelled. Unblocking alone doesn't let them back in; the admin
+            // gives them a new QR code.
+            await db.clearDevice(target.username);
+            await db.setPassword(target.username, hashPassword(randomBytes(24).toString('base64url')), true);
+            await db.setInvite(target.username, null);
+            await kick(target.username, 4005, 'account suspended');
+          }
+          await audit(me, body.banned ? 'user.ban' : 'user.unban', target.username);
+          await notifyGroupsOf(target.username);
           return send(204);
         }
         if (method === 'DELETE' && !m[2]) {
           if (target.username === me) throw new HttpError(400, "You can't remove yourself");
+          const groups = await db.groupsOf(target.username);
           await db.deleteUser(target.username);
           await kick(target.username, 4001, 'account removed by admin');
+          await audit(me, 'user.delete', target.username);
+          if (groups.length) await notify([...new Set(groups.flatMap((g) => g.members))], 'groups');
+          return send(204);
+        }
+      }
+
+      // ---- departments: the list admins pick from when they add or move a user ----
+      if (path === '/v1/admin/departments') {
+        if (method === 'GET') return send(200, { departments: await getDepartments() });
+        if (method === 'POST') {
+          const name = checkDepartmentName(((await readJson(req)) as { name?: unknown }).name);
+          const list = await getDepartments();
+          if (list.some((d) => sameName(d, name))) throw new HttpError(409, `"${name}" already exists`);
+          if (list.length >= MAX_DEPARTMENTS) throw new HttpError(400, `Up to ${MAX_DEPARTMENTS} departments`);
+          await saveDepartments([...list, name]);
+          await audit(me, 'department.create', name);
+          return send(200, { departments: await getDepartments() });
+        }
+      }
+      if ((m = path.match(/^\/v1\/admin\/departments\/([^/]+)$/))) {
+        let current: string;
+        try {
+          current = decodeURIComponent(m[1]!);
+        } catch {
+          throw new HttpError(400, 'bad department name');
+        }
+        const list = await getDepartments();
+        const found = list.find((d) => sameName(d, current));
+        if (!found) throw new HttpError(404, 'department not found');
+        if (method === 'PUT') {
+          const name = checkDepartmentName(((await readJson(req)) as { name?: unknown }).name);
+          if (list.some((d) => d !== found && sameName(d, name))) throw new HttpError(409, `"${name}" already exists`);
+          await replaceDepartment(found, name);
+          await saveDepartments(list.map((d) => (d === found ? name : d)));
+          await audit(me, 'department.rename', name, `was: ${found}`);
+          return send(200, { departments: await getDepartments() });
+        }
+        if (method === 'DELETE') {
+          await replaceDepartment(found, null); // its people are kept, just not in this department
+          await saveDepartments(list.filter((d) => d !== found));
+          await audit(me, 'department.delete', found);
+          return send(200, { departments: await getDepartments() });
+        }
+      }
+
+      if (method === 'GET' && path === '/v1/admin/stats') {
+        const users = await db.listUsers();
+        const stats: AdminStats = {
+          users: users.length,
+          active: users.filter(isActive).length,
+          pending: users.filter((u) => !isActive(u)).length,
+          banned: users.filter((u) => u.banned).length,
+          online: users.filter(isOnline).length,
+          admins: users.filter((u) => config.adminUsers.includes(u.username)).length,
+          groups: (await db.listGroups()).length,
+        };
+        return send(200, stats);
+      }
+      if (method === 'GET' && path === '/v1/admin/audit') {
+        const limit = Math.min(500, Math.max(1, Number(url.searchParams.get('limit')) || 200));
+        const entries: AuditEntry[] = await db.listAudit(limit);
+        return send(200, { entries });
+      }
+      if (path === '/v1/admin/settings') {
+        if (method === 'GET') return send(200, await getPolicy());
+        if (method === 'PUT') {
+          const body = (await readJson(req)) as Partial<Policy>;
+          // Send just the switches you change; the others keep their value.
+          const keys = ['allowEditDelete', 'allowClearHistory'] as const;
+          const given = keys.filter((k) => body[k] !== undefined);
+          if (!given.length) throw new HttpError(400, 'nothing to change');
+          for (const k of given) if (typeof body[k] !== 'boolean') throw new HttpError(400, `${k} must be true or false`);
+          const policy: Policy = { ...(await getPolicy()) };
+          for (const k of given) policy[k] = body[k] as boolean;
+          await db.setMeta('policy', JSON.stringify(policy));
+          const label = { allowEditDelete: 'edit/delete messages', allowClearHistory: 'clear chat history' };
+          const detail = given.map((k) => `${label[k]}: ${policy[k] ? 'on' : 'off'}`).join(', ');
+          await audit(me, 'settings.update', 'policy', detail);
+          await notify(null, 'policy');
+          return send(200, policy);
+        }
+      }
+
+      // ---- groups: only admins create them and decide who is in them ----
+      if (method === 'GET' && path === '/v1/admin/groups') {
+        return send(200, { groups: (await db.listGroups()).map(toGroupInfo) });
+      }
+      if (method === 'POST' && path === '/v1/admin/groups') {
+        const body = (await readJson(req)) as { name?: unknown; members?: unknown; senders?: unknown };
+        const name = checkGroupName(body.name);
+        const members = await existingMembers(checkMemberList(body.members ?? []));
+        const senders = checkSenders(body.senders, members);
+        const id = randomBytes(8).toString('hex');
+        await db.createGroup({ id, name, createdBy: me, members, senders });
+        const who = senders ? `; only these can send: ${senders.join(', ') || 'admins'}` : '';
+        await audit(me, 'group.create', name, `members: ${members.join(', ') || 'none'}${who}`);
+        await notify(members, 'groups');
+        return send(200, toGroupInfo((await db.getGroup(id))!));
+      }
+      if ((m = path.match(/^\/v1\/admin\/groups\/([0-9a-f]+)$/)) && GROUP_ID_RE.test(m[1]!)) {
+        const group = await db.getGroup(m[1]!);
+        if (!group) throw new HttpError(404, 'group not found');
+        if (method === 'PUT') {
+          const body = (await readJson(req)) as { name?: unknown; members?: unknown; senders?: unknown };
+          const name = body.name === undefined ? undefined : checkGroupName(body.name);
+          const members = body.members === undefined ? undefined : await existingMembers(checkMemberList(body.members));
+          const finalMembers = members ?? group.members;
+          // Not sent: keep the current rule, minus anyone who left the group.
+          const senders =
+            body.senders !== undefined
+              ? checkSenders(body.senders, finalMembers)
+              : group.senders && group.senders.filter((u) => finalMembers.includes(u));
+          await db.updateGroup(group.id, { name, members, senders });
+          const details: string[] = [];
+          if (name !== undefined && name !== group.name) details.push(`renamed from "${group.name}"`);
+          if (members) {
+            const added = members.filter((u) => !group.members.includes(u));
+            const removed = group.members.filter((u) => !members.includes(u));
+            if (added.length) details.push(`added: ${added.join(', ')}`);
+            if (removed.length) details.push(`removed: ${removed.join(', ')}`);
+          }
+          if (JSON.stringify(senders) !== JSON.stringify(group.senders)) {
+            details.push(senders ? `only these can send: ${senders.join(', ') || 'admins'}` : 'everyone can send');
+          }
+          await audit(me, 'group.update', name ?? group.name, details.join('; '));
+          await notify([...new Set([...group.members, ...(members ?? [])])], 'groups');
+          return send(200, toGroupInfo((await db.getGroup(group.id))!));
+        }
+        if (method === 'DELETE') {
+          await db.deleteGroup(group.id);
+          await audit(me, 'group.delete', group.name);
+          await notify(group.members, 'groups');
           return send(204);
         }
       }
     }
     if (method === 'DELETE' && path === '/v1/account') {
+      // On a company server (one with admins) accounts belong to the company: only an admin removes them,
+      // from the admin panel. Self-deletion is only for open servers without admins.
+      if (config.adminUsers.length) throw new HttpError(403, 'Only an admin can delete accounts. Ask your admin.');
+      const groups = await db.groupsOf(me);
       await db.deleteUser(me);
       await kick(me, 4001, 'account deleted');
+      if (groups.length) await notify([...new Set(groups.flatMap((g) => g.members))], 'groups');
       return send(204);
     }
     throw new HttpError(404, 'not found');
@@ -481,6 +1131,18 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
     res.setHeader('x-content-type-options', 'nosniff');
     res.setHeader('cache-control', 'no-store');
     res.setHeader('referrer-policy', 'no-referrer');
+    // CORS for the desktop app (its window runs at a different origin). Auth is a header, never a cookie,
+    // so allowing any origin does not let other websites act as the user.
+    res.setHeader('access-control-allow-origin', '*');
+    res.setHeader('access-control-expose-headers', 'content-type');
+    if (req.method === 'OPTIONS') {
+      res.writeHead(204, {
+        'access-control-allow-methods': 'GET, POST, PUT, DELETE',
+        'access-control-allow-headers': 'content-type, authorization, x-delivery-key, x-push',
+        'access-control-max-age': '600',
+      });
+      return res.end();
+    }
     route(req, res).catch((e) => {
       const status = e instanceof HttpError ? e.status : 500;
       if (status === 500) console.error(e);
@@ -524,6 +1186,8 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
       online.get(e.user)?.close(e.code, e.reason);
     } else if (e.type === 'connected') {
       online.get(e.user)?.close(4004, 'connected elsewhere');
+    } else if (e.type === 'refresh') {
+      for (const [u, ws] of online) if (!e.users || e.users.includes(u)) frame(ws, { type: 'refresh', what: e.what });
     } else if (e.type === 'envelope') {
       if (!online.has(e.to)) return;
       // One queue per recipient: notifications arrive in order, and so must the envelopes.
@@ -580,10 +1244,12 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
     let alive = true;
     const authTimer = setTimeout(() => !me && ws.close(4000, 'auth timeout'), AUTH_TIMEOUT_MS);
     ws.on('pong', () => (alive = true));
+    const markOnline = () => me && setPresence(me, Date.now());
     const heartbeat = setInterval(() => {
       if (!alive) return ws.terminate();
       alive = false;
       ws.ping();
+      if (me && online.get(me) === ws) markOnline();
     }, 30_000);
 
     // Frames are handled strictly one after another, so messages keep their order even though
@@ -611,23 +1277,40 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
         try {
           me = await authenticate(f.username, f.password, ip);
         } catch (e) {
-          // 'rate' is temporary; 'auth' means this device's secret is no longer valid (logged in elsewhere / removed).
-          const rate = e instanceof HttpError && e.status === 429;
-          frame(ws, {
-            type: 'error',
-            code: rate ? 'rate' : 'auth',
-            message: rate ? 'Too many attempts, retrying later' : 'Authentication failed',
-          });
+          // 'rate' is temporary; 'banned' lasts until an admin lifts it (keys are kept);
+          // 'auth' means this device's secret is no longer valid (logged in elsewhere / removed) - the app then
+          // deletes its keys, so it must ONLY be sent for a real 401. Anything else (database busy, server
+          // shutting down) is 'unavailable': the app keeps everything and reconnects.
+          const status = e instanceof HttpError ? e.status : 0;
+          if (!status) console.error('auth check failed', e);
+          const [code, message] =
+            status === 401
+              ? ['auth', 'Authentication failed']
+              : status === 403
+                ? ['banned', BANNED_MESSAGE]
+                : status === 429
+                  ? ['rate', 'Too many attempts, retrying later']
+                  : ['unavailable', 'Server busy, reconnecting'];
+          frame(ws, { type: 'error', code, message });
           return ws.close(4003, 'auth failed');
         }
         clearTimeout(authTimer);
         const preKeyCount = await db.countOneTimePreKeys(me);
-        frame(ws, { type: 'ready', preKeyCount, isAdmin: config.adminUsers.includes(me), admins: config.adminUsers });
+        frame(ws, {
+          type: 'ready',
+          preKeyCount,
+          isAdmin: config.adminUsers.includes(me),
+          admins: config.adminUsers,
+          policy: await getPolicy(),
+          canShare: canShare((await db.getUser(me))!),
+          avatar: (await db.getUser(me))!.avatar_ver,
+        });
         // Queued envelopes first, THEN register as online (new messages are delivered directly from then
         // on), then check the queue once more for anything that arrived in between. deliver() skips repeats.
         await deliverPending(me, ws);
         online.get(me)?.close(4004, 'connected elsewhere');
         online.set(me, ws);
+        markOnline();
         await bus.publish({ type: 'connected', user: me });
         await deliverPending(me, ws);
         return;
@@ -647,6 +1330,7 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
           const target = typeof f.to === 'string' && USERNAME_RE.test(f.to) ? await db.getUser(f.to) : undefined;
           if (!target) return fail('unknown_user', 'User not found');
           if (!isActive(target)) return fail('not_active', `${target.username} has not logged in yet`);
+          if (target.banned) return fail('banned', `${target.username} is suspended`);
           if (typeof f.body !== 'string' || f.body.length > MAX_ENVELOPE) return fail('too_large', 'Message too large');
           if ((await db.queueSize(f.to)) >= MAX_QUEUE) return fail('queue_full', "Recipient's inbox is full");
           const ts = Date.now();
@@ -662,7 +1346,10 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
     ws.on('close', () => {
       clearTimeout(authTimer);
       clearInterval(heartbeat);
-      if (me && online.get(me) === ws) online.delete(me);
+      if (me && online.get(me) === ws) {
+        online.delete(me);
+        setPresence(me, null);
+      }
     });
   }
 
@@ -679,6 +1366,7 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
     void purgeAttachments();
   }, 3600_000);
   server.on('close', () => {
+    closing = true;
     clearInterval(purge);
     pushTimers.forEach(clearTimeout);
     wss.close();

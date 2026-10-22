@@ -13,10 +13,11 @@ export function decryptAttachment(ciphertext: Uint8Array, key: Uint8Array, diges
   return openWithKey(key, ciphertext); // AEAD: also fails on any tampering
 }
 
-export type AttachmentKind = 'image' | 'pdf' | 'file';
+export type AttachmentKind = 'image' | 'pdf' | 'audio' | 'file';
 
 export function attachmentKind(mime: string, name: string): AttachmentKind {
   if (/^image\/(png|jpe?g|gif|webp|heic|heif|bmp)$/i.test(mime)) return 'image';
+  if (/^audio\/(webm|ogg|mp4|aac|mpeg|m4a|x-m4a|wav)$/i.test(mime)) return 'audio';
   if (mime === 'application/pdf' || /\.pdf$/i.test(name)) return 'pdf';
   return 'file';
 }

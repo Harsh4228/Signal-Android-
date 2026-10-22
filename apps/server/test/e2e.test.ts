@@ -14,7 +14,7 @@ before(async () => {
     stunUrls: ['stun:stun.example.org'],
     turnUrls: [],
     trustProxy: false,
-    adminUsers: ['boss'],
+    adminUsers: ['boss', 'ops'],
     openRegistration: true,
   });
   ({ url, dir } = srv);
@@ -77,7 +77,11 @@ test('register, message, reply, receipts, offline delivery, timers, call signali
   assert.ok((await srv.queueBodies()).every((b) => !b.includes('TOP SECRET')));
   await waitFor(() => texts(bob, 'alice').includes('TOP SECRET'), 'secret delivered');
 
-  // --- disappearing messages sync to the other side ---
+  // --- disappearing messages sync to the other side (an admin allows them first; off by default) ---
+  const ops = await newClient('ops');
+  await waitFor(() => ops.isAdmin, 'ops is admin');
+  await ops.setPolicy({ allowClearHistory: true });
+  await waitFor(() => alice.canClearHistory && bob.canClearHistory, 'policy reached both');
   await alice.setDisappearingTimer('bob', 1);
   await waitFor(() => bob.getDisappearingTimer('alice') === 1, 'timer synced');
   await alice.sendText('bob', 'self destruct');

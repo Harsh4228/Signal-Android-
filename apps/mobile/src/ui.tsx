@@ -2,6 +2,7 @@ import { useEffect, type ReactNode } from 'react';
 import {
   ActivityIndicator,
   BackHandler,
+  Image,
   Pressable,
   StyleSheet,
   Text,
@@ -11,7 +12,9 @@ import {
   type TextInputProps,
   type ViewStyle,
 } from 'react-native';
-import { ChevronLeft, ShieldCheck, type LucideIcon } from 'lucide-react-native';
+import { ChevronLeft, ShieldCheck, UsersRound, type LucideIcon } from 'lucide-react-native';
+import { isGroupKey } from '@meetme/core';
+import { client } from './messenger';
 import { colors, s } from './theme';
 
 /** Soft background / strong text pairs, picked per name so each contact keeps the same colour. */
@@ -32,8 +35,20 @@ function colorFor(name: string): [string, string] {
   return PALETTE[h % PALETTE.length]!;
 }
 
+/** The person's profile photo if they set one, otherwise their initial on a colour of their own. */
 export function Avatar({ name, size = 44 }: { name: string; size?: number }) {
   const [bg, fg] = colorFor(name);
+  const photo = client.avatarOf(name);
+  if (photo) {
+    return (
+      <Image
+        source={{ uri: photo }}
+        style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: colors.hover }}
+        resizeMode="cover"
+        accessibilityIgnoresInvertColors
+      />
+    );
+  }
   return (
     <View
       style={{
@@ -48,6 +63,54 @@ export function Avatar({ name, size = 44 }: { name: string; size?: number }) {
       <Text style={{ color: fg, fontWeight: '600', fontSize: size * 0.4 }}>{name.slice(0, 1).toUpperCase()}</Text>
     </View>
   );
+}
+
+/** Avatar for a chat: a group icon, or the person with a green dot while they are online. */
+export function ChatAvatar({ chatKey, size = 44 }: { chatKey: string; size?: number }) {
+  if (isGroupKey(chatKey)) {
+    return (
+      <View
+        style={{
+          width: size,
+          height: size,
+          borderRadius: size / 2,
+          backgroundColor: colors.accentSoft,
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}
+      >
+        <UsersRound size={size * 0.46} color={colors.accent} strokeWidth={2} />
+      </View>
+    );
+  }
+  const dot = Math.max(10, Math.round(size * 0.26));
+  return (
+    <View>
+      <Avatar name={chatKey} size={size} />
+      {client.getPresence(chatKey)?.online && (
+        <View
+          style={{
+            position: 'absolute',
+            right: -1,
+            bottom: -1,
+            width: dot,
+            height: dot,
+            borderRadius: dot / 2,
+            backgroundColor: colors.online,
+            borderWidth: 2,
+            borderColor: colors.surface,
+          }}
+        />
+      )}
+    </View>
+  );
+}
+
+/** "alice is typing…", "alice and bob are typing…" */
+export function typingText(names: string[], group: boolean): string {
+  if (!names.length) return '';
+  if (!group) return 'typing…';
+  return names.length === 1 ? `${names[0]} is typing…` : `${names.slice(0, 2).join(' and ')} are typing…`;
 }
 
 export function Logo({ size = 36 }: { size?: number }) {

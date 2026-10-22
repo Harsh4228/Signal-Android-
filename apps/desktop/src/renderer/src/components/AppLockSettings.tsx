@@ -17,7 +17,7 @@ export function AppLockSettings({ onToast }: { onToast: (m: string) => void }) {
       {lock.enabled ? (
         <div className="stack">
           <div className="ok">
-            <Lock size={16} /> App lock is on. MeetMe asks for your PIN when it starts and after it has been idle.
+            <Lock size={16} /> App lock is on. CellMate asks for your PIN when it starts and after it has been idle.
           </div>
           <label className="field-label">
             Lock automatically
@@ -41,7 +41,7 @@ export function AppLockSettings({ onToast }: { onToast: (m: string) => void }) {
       ) : (
         <div className="row">
           <p className="muted small grow" style={{ margin: 0 }}>
-            Require a 6-digit PIN to open MeetMe on this computer.
+            Require a 6-digit PIN to open CellMate on this computer.
           </p>
           <button className="primary" onClick={() => setStep({ name: 'new' })}>
             <Lock size={16} /> Turn on
@@ -107,7 +107,7 @@ function PinDialog({
     step.name === 'new'
       ? step.first
         ? 'Type the same PIN again.'
-        : 'You will need it every time MeetMe starts or has been idle.'
+        : 'You will need it every time CellMate starts or has been idle.'
       : step.then === 'disable'
         ? 'Confirm it is you before turning off app lock.'
         : 'Confirm it is you before choosing a new PIN.';

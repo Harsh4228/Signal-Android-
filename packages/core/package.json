@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Shared MeetMe logic: Signal-style X3DH + Double Ratchet, messaging client and call signaling",
+  "description": "Shared CellMate logic: Signal-style X3DH + Double Ratchet, messaging client and call signaling",
   "main": "src/index.ts",
   "types": "src/index.ts",
   "scripts": {

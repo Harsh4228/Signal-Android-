@@ -37,6 +37,149 @@ export interface AdminUser {
   active: boolean;
   admin: boolean;
   mustChangePassword: boolean;
+  /** Suspended by an admin: cannot log in, send or receive until unbanned. */
+  banned: boolean;
+  online: boolean;
+  /** Last time the user was connected (ms), null = never. */
+  lastSeen: number | null;
+  createdAt: number;
+  /** e.g. ["Sales", "Support"], A-Z; [] = no department. */
+  departments: string[];
+  /** May save received files and share them on (always true for admins). */
+  canShare: boolean;
+  /** Profile photo version; null = no photo. */
+  avatar: number | null;
+  /** Work mobile number and email the admin entered ('' = none). */
+  phone: string;
+  email: string;
+  /** Full name ('' = none, the ID is shown). */
+  name: string;
+  /** A QR invite is waiting to be used (until this time, ms); null = none. */
+  inviteExpires: number | null;
+}
+
+/** Admin: a new user's profile. The admin fills in everything; the user only chooses a password (via the QR). */
+export interface EmployeeInput {
+  username: string;
+  name: string;
+  phone?: string;
+  email?: string;
+  departments?: string[];
+  /** Profile photo, base64 (JPEG / PNG / WebP up to 2 MB). */
+  photo?: { mime: string; data: string };
+}
+
+/** A one-time QR invite: scan (or paste the code), choose a password, done. */
+export interface InviteResponse {
+  username: string;
+  /** The secret; only ever shown in the QR / invite code. */
+  token: string;
+  expires: number;
+}
+
+/** POST /v1/join - accept a QR invite on this device: own password + this device's keys. */
+export interface JoinRequest {
+  username: string;
+  token: string;
+  newPassword: string;
+  deviceSecret: string;
+  identityKey: string;
+  signedPreKey: { id: number; pub: string; sig: string };
+  oneTimePreKeys: { id: number; pub: string }[];
+}
+
+/** Invites are valid this long. */
+export const INVITE_TTL_MS = 7 * 24 * 3600 * 1000;
+export const MAX_NAME = 60;
+
+/**
+ * GET /v1/users/:id - a colleague's directory card (any signed-in user may see it), shown in small text
+ * under their name.
+ */
+export interface UserProfile {
+  username: string;
+  /** Full name the admin entered ('' = none). */
+  name: string;
+  /** Has logged in at least once (can receive messages). */
+  active: boolean;
+  departments: string[];
+  phone: string;
+  email: string;
+}
+
+export const MAX_PHONE = 20;
+export const MAX_EMAIL = 254;
+export const PHONE_RE = /^\+?[0-9 ()\-]{6,20}$/;
+export const EMAIL_RE = /^[^\s@]{1,64}@[^\s@]+\.[^\s@]{2,}$/;
+
+/** Org-wide rules the admin sets. Clients enforce them (message content never reaches the server). */
+export interface Policy {
+  /** Employees may edit and delete-for-everyone their own messages. Admins always may. */
+  allowEditDelete: boolean;
+  /**
+   * Employees may remove chat history on their device: clear a chat, delete a message for themselves,
+   * and use disappearing messages. Admins always may. Off = history can't be removed by employees.
+   */
+  allowClearHistory: boolean;
+}
+
+export const DEFAULT_POLICY: Policy = { allowEditDelete: false, allowClearHistory: false };
+
+/** A group chat. The server knows only the name and the members; messages are end-to-end encrypted per member. */
+export interface GroupInfo {
+  id: string;
+  name: string;
+  members: string[];
+  /**
+   * Who may send messages; everyone else only reads. null = every member. Admins can always send.
+   * Members' apps enforce it (the server can't read group messages): messages from others are dropped.
+   */
+  senders: string[] | null;
+  createdBy: string;
+  createdAt: number;
+}
+
+export const GROUP_ID_RE = /^[0-9a-f]{16}$/;
+export const MAX_GROUP_NAME = 64;
+export const MAX_DEPARTMENT = 40;
+export const MAX_DEPARTMENTS = 200;
+export const MAX_GROUP_MEMBERS = 256;
+
+export interface Presence {
+  online: boolean;
+  lastSeen: number | null;
+  /** Profile photo version (changes when the photo changes); null/missing = no photo. */
+  avatar?: number | null;
+}
+
+/** GET /v1/avatars/:user */
+export interface AvatarResponse {
+  mime: string;
+  /** base64 image bytes */
+  data: string;
+  ver: number;
+}
+
+export const MAX_AVATAR_BYTES = 2 * 1024 * 1024;
+export const AVATAR_MIMES = ['image/jpeg', 'image/png', 'image/webp'] as const;
+
+export interface AdminStats {
+  users: number;
+  active: number;
+  pending: number;
+  banned: number;
+  online: number;
+  admins: number;
+  groups: number;
+}
+
+export interface AuditEntry {
+  id: number;
+  ts: number;
+  actor: string;
+  action: string;
+  target: string;
+  detail: string;
 }
 
 export interface PublicConfig {
@@ -51,6 +194,16 @@ export interface MeResponse {
   isAdmin: boolean;
   /** Who may send announcements; clients only show the 📢 badge for these senders. */
   admins: string[];
+  policy: Policy;
+  /** May save received files and share them on (admins always may). */
+  canShare: boolean;
+  /** My profile photo version; null = none. */
+  avatar: number | null;
+  /** My work mobile number and email ('' = none). Only an admin can change them. */
+  phone: string;
+  email: string;
+  /** My full name ('' = none). Only an admin can change it. */
+  name: string;
 }
 
 export interface UploadKeysRequest {
@@ -87,20 +240,65 @@ export type ClientFrame =
   | { type: 'ping' };
 
 export type ServerFrame =
-  | { type: 'ready'; preKeyCount: number; isAdmin?: boolean; admins?: string[] }
+  | { type: 'ready'; preKeyCount: number; isAdmin?: boolean; admins?: string[]; policy?: Policy; canShare?: boolean; avatar?: number | null }
   | { type: 'envelope'; id: number; from: string; body: string; ts: number }
   | { type: 'sent'; ref: string; ts: number }
   | { type: 'error'; ref?: string; code: string; message: string }
+  /** Something the admin changed: reload my group list / the org policy. */
+  | { type: 'refresh'; what: 'groups' | 'policy' }
   | { type: 'pong' };
 
 // ---- decrypted payloads (only clients ever see these) ----
 export type CallAction = 'offer' | 'answer' | 'ice' | 'hangup' | 'reject' | 'busy';
 
+/** `g` = group id: the message belongs to that group chat (each member gets their own encrypted copy). */
 export type Payload =
-  | { k: 'text'; id: string; text: string; ts: number; expire?: number; bc?: boolean; att?: AttachmentPointer }
+  | {
+      k: 'text';
+      id: string;
+      text: string;
+      ts: number;
+      expire?: number;
+      bc?: boolean;
+      att?: AttachmentPointer;
+      g?: string;
+      /** Reply: a snapshot of the message being answered (shown above the reply). */
+      re?: Quote;
+      /** Contact card: a colleague's username. */
+      contact?: string;
+      /** A shared location pin. */
+      loc?: SharedLocation;
+      /** Forwarded from another chat. */
+      fwd?: boolean;
+      /** A product from the company catalog (snapshot, so it shows even if the product changes later). */
+      product?: ProductCard;
+    }
+  /** My reaction to message `id` ('' = removed). One per person, like WhatsApp. */
+  | { k: 'react'; id: string; e: string; g?: string }
+  /** A poll (like WhatsApp). `multi` = people may pick more than one option. */
+  | { k: 'poll'; id: string; q: string; opts: string[]; multi?: boolean; ts: number; expire?: number; g?: string }
+  /** My vote on poll `id`: option indexes; [] = I took my vote back. Goes to everyone in the chat. */
+  | { k: 'vote'; id: string; ch: number[]; g?: string }
+  /** An event invitation (like WhatsApp). Times are ms since 1970 (UTC). */
+  | { k: 'event'; id: string; title: string; desc?: string; start: number; end?: number; place?: string; ts: number; expire?: number; g?: string }
+  /** My answer to event `id`. Goes to everyone in the chat. */
+  | { k: 'rsvp'; id: string; r: Rsvp; g?: string }
+  | { k: 'edit'; id: string; text: string; g?: string }
+  | { k: 'del'; id: string; g?: string }
+  | { k: 'typing'; on: boolean; g?: string }
   | { k: 'receipt'; ids: string[]; status: 'delivered' | 'read' }
   | { k: 'timer'; expire: number }
   | { k: 'screenshot' }
+  /** Notice from an admin: pops up until the employee clicks OK, then stays in their notice list. */
+  | { k: 'notice'; id: string; title: string; text: string; ts: number }
+  /** The employee clicked OK on notice `id` (sent back to the admin who sent it). */
+  | { k: 'notice-ok'; id: string }
+  /** Status update (like WhatsApp): text on a colour, or a photo with a caption. Gone after 24 hours. */
+  | { k: 'status'; id: string; text: string; bg?: string; photo?: AttachmentPointer; ts: number }
+  /** The poster deleted status `id`. */
+  | { k: 'status-del'; id: string }
+  /** I viewed status `id` (sent back to the poster, who sees the list of viewers). */
+  | { k: 'status-seen'; id: string }
   /** Sealed sender: my delivery key, so you may send me messages without revealing yourself to the server. */
   | { k: 'dk'; key: string }
   | {
@@ -112,7 +310,77 @@ export type Payload =
       candidate?: { candidate: string; sdpMid: string | null; sdpMLineIndex: number | null };
     };
 
+export type Rsvp = 'yes' | 'maybe' | 'no';
+
+/** The message a reply answers: who wrote it and a short preview. */
+export interface Quote {
+  id: string;
+  from: string;
+  text: string;
+}
+
+export interface SharedLocation {
+  lat: number;
+  lng: number;
+  /** Optional place name / address typed by the sender. */
+  name?: string;
+}
+
+/**
+ * A product in someone's catalog (like WhatsApp Business: every user has their own; GET /v1/catalog?owner=).
+ * Like a WhatsApp catalog it is visible to colleagues, so it is stored on the server readable (like profile
+ * photos); products shared into a chat are end-to-end encrypted like any message.
+ */
+export interface Product {
+  id: string;
+  /** Whose catalog it is in. */
+  owner: string;
+  name: string;
+  price: string;
+  description: string;
+  /** Photo version; null = no photo. GET /v1/catalog/:id/photo */
+  photo: number | null;
+  updatedAt: number;
+}
+
+/** Create / change a product in my catalog. photo: new image, null = remove, omitted = keep. */
+export interface ProductInput {
+  name: string;
+  price?: string;
+  description?: string;
+  photo?: { mime: string; data: string } | null;
+}
+
+/** A catalog product as shared into a chat. */
+export interface ProductCard {
+  id: string;
+  /** Whose catalog it comes from (to open the rest of their catalog). */
+  owner?: string;
+  name: string;
+  price?: string;
+  description?: string;
+}
+
+export const MAX_PRODUCT_NAME = 100;
+export const MAX_PRODUCT_PRICE = 40;
+export const MAX_PRODUCT_DESC = 1000;
+
+export const REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '🙏'] as const;
+export const MAX_QUOTE = 200;
+export const MAX_PLACE_NAME = 200;
+
 export const MAX_TEXT_LENGTH = 8000;
+export const MAX_POLL_QUESTION = 255;
+export const MAX_POLL_OPTION = 100;
+export const MAX_POLL_OPTIONS = 12;
+export const MAX_EVENT_TITLE = 100;
+export const MAX_EVENT_DESC = 2000;
+export const MAX_EVENT_PLACE = 200;
+export const MAX_NOTICE_TITLE = 120;
+export const MAX_STATUS_TEXT = 700;
+export const STATUS_TTL_MS = 24 * 3600 * 1000;
+/** Backgrounds for text statuses (the receiving app only accepts these). */
+export const STATUS_COLORS = ['#2455d8', '#067647', '#b93815', '#5925dc', '#c11574', '#026aa2', '#a15c07', '#344054'];
 export const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
 
 /**

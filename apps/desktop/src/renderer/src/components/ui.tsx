@@ -1,4 +1,6 @@
-import { ShieldCheck } from 'lucide-react';
+import { ShieldCheck, UsersRound } from 'lucide-react';
+import { isGroupKey } from '@meetme/core';
+import { client } from '../messenger';
 
 /** Soft background / strong text pairs, picked per name so each contact keeps the same colour. */
 const PALETTE: [string, string][] = [
@@ -18,13 +20,40 @@ function colorFor(name: string): [string, string] {
   return PALETTE[h % PALETTE.length]!;
 }
 
+/** The person's profile photo if they set one, otherwise their initial on a colour of their own. */
 export function Avatar({ name, size }: { name: string; size?: 'sm' | 'xl' }) {
   const [bg, fg] = colorFor(name);
+  const photo = client.avatarOf(name);
+  if (photo) return <img className={`avatar photo ${size ?? ''}`} src={photo} alt="" draggable={false} />;
   return (
     <div className={`avatar ${size ?? ''}`} style={{ background: bg, color: fg }}>
       {name.slice(0, 1).toUpperCase()}
     </div>
   );
+}
+
+/** Avatar for a chat: a group icon, or the person with a green dot while they are online. */
+export function ChatAvatar({ chatKey, size }: { chatKey: string; size?: 'sm' | 'xl' }) {
+  if (isGroupKey(chatKey)) {
+    return (
+      <div className={`avatar group-avatar ${size ?? ''}`}>
+        <UsersRound size={size === 'sm' ? 16 : 20} />
+      </div>
+    );
+  }
+  return (
+    <div className="avatar-wrap">
+      <Avatar name={chatKey} size={size} />
+      {client.getPresence(chatKey)?.online && <span className="presence-dot" />}
+    </div>
+  );
+}
+
+/** "alice is typing…", "alice and bob are typing…" */
+export function typingText(names: string[], group: boolean): string {
+  if (!names.length) return '';
+  if (!group) return 'typing…';
+  return names.length === 1 ? `${names[0]} is typing…` : `${names.slice(0, 2).join(' and ')} are typing…`;
 }
 
 export function Logo({ large }: { large?: boolean }) {

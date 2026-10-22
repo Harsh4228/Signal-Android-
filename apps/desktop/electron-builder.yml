@@ -1,5 +1,5 @@
 appId: app.meetme.desktop
-productName: MeetMe
+productName: CellMate
 directories:
   buildResources: build
   output: dist
@@ -17,8 +17,8 @@ mac:
   category: public.app-category.social-networking
   hardenedRuntime: true
   extendInfo:
-    NSCameraUsageDescription: MeetMe needs the camera for video calls.
-    NSMicrophoneUsageDescription: MeetMe needs the microphone for calls.
+    NSCameraUsageDescription: CellMate needs the camera for video calls.
+    NSMicrophoneUsageDescription: CellMate needs the microphone for calls.
 linux:
   target: AppImage
   category: Network

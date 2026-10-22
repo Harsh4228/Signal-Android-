@@ -1,5 +1,5 @@
 import { bytesToHex } from '@noble/hashes/utils';
-import type { CallSignal, MessengerClient } from './client';
+import type { CallLog, CallSignal, MessengerClient } from './client';
 import { randomBytes } from './crypto/primitives';
 import { Emitter } from './emitter';
 
@@ -57,6 +57,8 @@ export class CallManager extends Emitter<{ change: [CallState] }> {
   private outgoingCandidates: NonNullable<CallSignal['candidate']>[] | null = null;
   private remoteDescriptionSet = false;
   private ringTimer: ReturnType<typeof setTimeout> | null = null;
+  /** I started the current call (for the call entry in the chat). */
+  private outgoing = false;
 
   constructor(
     private readonly client: MessengerClient,
@@ -79,6 +81,7 @@ export class CallManager extends Emitter<{ change: [CallState] }> {
     if (this.state.status !== 'idle') throw new Error('Already in a call');
     const callId = bytesToHex(randomBytes(16));
     this.outgoingCandidates = [];
+    this.outgoing = true;
     this.set({ ...idle(), status: 'outgoing', peer, callId, video });
     try {
       const pc = await this.createPeerConnection(video);
@@ -154,6 +157,7 @@ export class CallManager extends Emitter<{ change: [CallState] }> {
         this.pendingOffer = s.sdp;
         this.pendingCandidates = [];
         this.remoteDescriptionSet = false;
+        this.outgoing = false;
         this.set({ ...idle(), status: 'incoming', peer: from, callId: s.callId, video: !!s.video });
         this.ringTimer = setTimeout(() => this.cleanup('Missed call'), RING_TIMEOUT_MS);
         break;
@@ -236,7 +240,31 @@ export class CallManager extends Emitter<{ change: [CallState] }> {
     if (this.state.status !== 'idle') void this.hangup(e instanceof Error ? e.message : 'Call failed');
   }
 
+  /** What to write in the chat for the call that is ending (null = nothing to log). */
+  private logFor(reason: string): CallLog | null {
+    const { status, peer, video, startedAt } = this.state;
+    if (status === 'idle' || !peer) return null;
+    const outgoing = this.outgoing;
+    if (startedAt) {
+      return { video, outgoing, outcome: 'answered', durationSec: Math.max(0, Math.round((Date.now() - startedAt) / 1000)) };
+    }
+    if (!outgoing) {
+      if (status === 'incoming') return { video, outgoing, outcome: reason === 'Declined' ? 'declined' : 'missed' };
+      return { video, outgoing, outcome: 'failed' }; // accepted, but it never connected
+    }
+    const byReason: Record<string, CallLog['outcome']> = {
+      'Call declined': 'declined',
+      'No answer': 'no-answer',
+      'User is busy': 'busy',
+    };
+    const outcome = byReason[reason] ?? (status === 'outgoing' && reason === 'Call ended' ? 'cancelled' : 'failed');
+    return { video, outgoing, outcome };
+  }
+
   private cleanup(reason: string) {
+    const log = this.logFor(reason);
+    const peer = this.state.peer;
+    if (log && peer) this.client.addCallLog(peer, log);
     this.clearRing();
     this.state.localStream?.getTracks().forEach((t: any) => t.stop());
     try {

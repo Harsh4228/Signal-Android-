@@ -8,7 +8,7 @@ import type { PushKind } from '@meetme/core';
  *
  * A push only ever says "New message" or "Incoming call". It never contains the sender, the text or
  * anything encrypted, so Google and Apple learn only that *someone* sent this device *something*.
- * The app opens, connects to the MeetMe server and decrypts as usual.
+ * The app opens, connects to the CellMate server and decrypts as usual.
  */
 export interface PushSender {
   /** 'invalid' = the token is no longer valid (app uninstalled / reinstalled) and should be forgotten. */
@@ -91,7 +91,7 @@ export class FcmSender implements PushSender {
         ttl: call ? '45s' : '86400s',
         // Same tag = one notification that gets replaced, not a pile of them.
         notification: {
-          title: 'MeetMe',
+          title: 'CellMate',
           body,
           tag: call ? 'meetme-call' : 'meetme-message',
           channel_id: call ? 'calls' : 'messages',
@@ -107,7 +107,7 @@ export class FcmSender implements PushSender {
         },
         payload: {
           aps: {
-            alert: { title: 'MeetMe', body },
+            alert: { title: 'CellMate', body },
             sound: 'default',
             'thread-id': 'meetme',
             'interruption-level': call ? 'time-sensitive' : 'active',

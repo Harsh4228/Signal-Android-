@@ -4,7 +4,7 @@ import * as Keychain from 'react-native-keychain';
  * Fingerprint / Face ID unlock. A small marker item is stored in the Keychain / Keystore with
  * biometric access control; the OS only releases it after a successful fingerprint or face scan.
  * "Current set" means adding a new fingerprint or face invalidates it, so someone who adds their
- * own fingerprint to an unlocked phone cannot use it to open MeetMe.
+ * own fingerprint to an unlocked phone cannot use it to open CellMate.
  */
 const SERVICE = 'meetme:biolock';
 
@@ -40,7 +40,7 @@ export async function disableBiometricUnlock(): Promise<void> {
 }
 
 /** Shows the system fingerprint / Face ID prompt. Resolves false if cancelled or failed. */
-export async function verifyBiometrics(title = 'Unlock MeetMe'): Promise<boolean> {
+export async function verifyBiometrics(title = 'Unlock CellMate'): Promise<boolean> {
   try {
     const r = await Keychain.getGenericPassword({
       service: SERVICE,

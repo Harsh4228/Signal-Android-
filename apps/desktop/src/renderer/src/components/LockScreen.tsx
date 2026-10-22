@@ -35,7 +35,7 @@ export function LockScreen() {
     <div className="lockscreen">
       <div className="lock-card">
         <Logo large />
-        <h1>MeetMe is locked</h1>
+        <h1>CellMate is locked</h1>
         <p className="muted">{wait ? `Too many attempts. Try again in ${wait} s.` : busy ? 'Checking…' : 'Enter your 6-digit PIN'}</p>
         <PinInput onComplete={onComplete} disabled={busy || wait > 0} error={!!error && !wait} />
         <div className="lock-error">{wait ? '' : (error ?? '')}</div>

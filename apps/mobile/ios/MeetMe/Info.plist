@@ -7,7 +7,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
 	<key>CFBundleDisplayName</key>
-	<string>MeetMe</string>
+	<string>CellMate</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -35,12 +35,15 @@
 		<true/>
 	</dict>
 	<key>NSCameraUsageDescription</key>
-	<string>MeetMe uses the camera for end-to-end encrypted video calls.</string>
+	<string>CellMate uses the camera for end-to-end encrypted video calls.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>MeetMe uses the microphone for end-to-end encrypted calls.</string>
+	<string>CellMate uses the microphone for end-to-end encrypted calls and voice messages.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>CellMate uses your location only when you choose to share it in a chat.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>
+		<string>remote-notification</string>
 	</array>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
@@ -62,7 +65,7 @@
 	<key>UIViewControllerBasedStatusBarAppearance</key>
 	<false/>
 	<key>NSFaceIDUsageDescription</key>
-	<string>MeetMe uses Face ID to unlock the app.</string>
+	<string>CellMate uses Face ID to unlock the app.</string>
 	<key>UIUserInterfaceStyle</key>
 	<string>Light</string>
 </dict>

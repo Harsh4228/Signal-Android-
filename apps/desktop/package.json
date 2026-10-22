@@ -2,11 +2,12 @@
   "name": "@meetme/desktop",
   "version": "0.1.0",
   "private": true,
-  "description": "MeetMe secure messenger for Windows / macOS / Linux",
+  "description": "CellMate secure messenger for Windows / macOS / Linux",
   "main": "out/main/index.js",
-  "author": "MeetMe",
+  "author": "CellMate",
   "scripts": {
     "dev": "electron-vite dev",
+    "web": "vite --config web/vite.config.ts",
     "build": "electron-vite build",
     "typecheck": "tsc --noEmit",
     "dist:win": "electron-vite build && electron-builder --win",
@@ -17,10 +18,12 @@
     "@fontsource-variable/inter": "^5.3.0",
     "@meetme/core": "*",
     "lucide-react": "^1.49.0",
-    "pdfjs-dist": "^6.3.289"
+    "pdfjs-dist": "^6.3.289",
+    "qrcode": "^1.5.4"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
+    "@types/qrcode": "^1.5.6",
     "@types/react": "^19.1.0",
     "@types/react-dom": "^19.1.0",
     "@vitejs/plugin-react": "^5.0.0",

@@ -134,3 +134,8 @@ dependencies {
         implementation jscFlavor
     }
 }
+
+// Wake-up pushes need a Firebase project. Without google-services.json the app builds and runs, just without push.
+if (file("google-services.json").exists()) {
+    apply plugin: "com.google.gms.google-services"
+}

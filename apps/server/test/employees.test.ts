@@ -56,10 +56,24 @@ test('admin creates employee, employee logs in and must set own password', async
   await admin.createEmployee('ravi', temp);
   await assert.rejects(admin.createEmployee('ravi', temp), /already exists/);
   let list = await admin.listAllUsers();
-  assert.deepEqual(
-    list.find((u) => u.username === 'ravi'),
-    { username: 'ravi', active: false, admin: false, mustChangePassword: true },
-  );
+  const { createdAt, inviteExpires, ...pending } = list.find((u) => u.username === 'ravi')!;
+  assert.ok(createdAt > 0);
+  assert.ok(inviteExpires && inviteExpires > Date.now()); // every new user also gets a QR invite
+  assert.deepEqual(pending, {
+    username: 'ravi',
+    active: false,
+    admin: false,
+    mustChangePassword: true,
+    banned: false,
+    online: false,
+    lastSeen: null,
+    departments: [],
+    canShare: false,
+    avatar: null,
+    phone: '',
+    email: '',
+    name: '',
+  });
 
   // Can't message someone who hasn't logged in yet.
   await admin.addContact('ravi');

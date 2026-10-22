@@ -52,7 +52,7 @@ export function LockScreen() {
     <View style={[StyleSheet.absoluteFill, styles.bg]}>
       <Logo size={56} />
       <PinPad
-        title="MeetMe is locked"
+        title="CellMate is locked"
         subtitle={wait ? `Try again in ${wait} s` : 'Enter your PIN to continue'}
         error={wait ? null : error}
         busy={busy || wait > 0}

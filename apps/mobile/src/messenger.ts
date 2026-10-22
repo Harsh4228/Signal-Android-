@@ -4,8 +4,9 @@ import { mediaDevices, RTCPeerConnection } from 'react-native-webrtc';
 import InCallManager from 'react-native-incall-manager';
 import { AppLock, CallManager, MessengerClient, type CallState } from '@meetme/core';
 import { keychainStorage } from './storage';
+import { mediaFiles } from './mediaFiles';
 
-export const client = new MessengerClient(keychainStorage);
+export const client = new MessengerClient(keychainStorage, { blobs: mediaFiles });
 
 /** PIN / biometric lock. Its settings live in the same Keychain / Keystore storage. */
 export const appLock = new AppLock(keychainStorage);

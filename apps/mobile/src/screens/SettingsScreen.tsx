@@ -1,24 +1,122 @@
-import { useState } from 'react';
-import { Alert, ScrollView, Text, View } from 'react-native';
-import { ChevronRight, CircleAlert, CircleCheck, Lock, LogOut, Trash2 } from 'lucide-react-native';
-import { MIN_PASSWORD_LENGTH } from '@meetme/core';
+import { useEffect, useState } from 'react';
+import { Alert, Pressable, ScrollView, Text, View } from 'react-native';
+import { Camera, ChevronRight, CircleAlert, CircleCheck, Lock, LogOut, Trash2 } from 'lucide-react-native';
+import { AVATAR_MIMES, MAX_EMAIL, MAX_PHONE, MIN_PASSWORD_LENGTH } from '@meetme/core';
+import { pickFile } from '../files';
 import { appLock, client, useClient, useLock } from '../messenger';
+import { resetPush } from '../push';
 import { colors, s } from '../theme';
 import { Avatar, Banner, Button, Field, Header, Row, errorText } from '../ui';
 import type { Route } from '../App';
 
 const SECURITY = [
   'End-to-end encryption with the Signal protocol (X3DH + Double Ratchet)',
-  'Messages and files live in memory only and vanish when the app closes',
+  'Messages live in memory only and vanish when the app closes; photos and documents are kept encrypted inside the app',
   'Keys stored only in the iOS Keychain / Android Keystore, excluded from backups',
   'Screenshots, screen recording and app-switcher previews are blocked',
-  'No storage permission: the app cannot save any file to your phone',
+  "No storage permission: files can't be saved to your phone's gallery or shared folders",
   'Calls use WebRTC with keys exchanged over the encrypted channel',
 ];
+
+/** Pick a photo and make it my profile photo (JPEG / PNG / WebP up to 2 MB). */
+async function choosePhoto() {
+  try {
+    const f = await pickFile('photo');
+    if (!f) return;
+    if (!(AVATAR_MIMES as readonly string[]).includes(f.mime)) {
+      throw new Error('Please choose a JPEG or PNG photo (on iPhone: share it as "Most Compatible").');
+    }
+    await client.setMyAvatar({ mime: f.mime, data: f.data });
+  } catch (e) {
+    Alert.alert('Profile photo', errorText(e));
+  }
+}
+
+function photoOptions(hasPhoto: boolean) {
+  if (!hasPhoto) return void choosePhoto();
+  Alert.alert('Profile photo', 'Everyone at your company can see it. It is not end-to-end encrypted.', [
+    { text: 'Choose new photo', onPress: () => void choosePhoto() },
+    {
+      text: 'Remove photo',
+      style: 'destructive',
+      onPress: () => client.removeMyAvatar().catch((e) => Alert.alert('Profile photo', errorText(e))),
+    },
+    { text: 'Cancel', style: 'cancel' },
+  ]);
+}
+
+/**
+ * My mobile number and email; colleagues see them under my name. On a company server the admin set them and only
+ * the admin can change them (shown read-only); admins edit their own here.
+ */
+function ContactSettings({ editable }: { editable: boolean }) {
+  const [name, setName] = useState('');
+  const [phone, setPhone] = useState<string | null>(null);
+  const [email, setEmail] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  useEffect(() => {
+    client
+      .getMyContactInfo()
+      .then((c) => {
+        setName(c.name);
+        setPhone(c.phone);
+        setEmail(c.email);
+      })
+      .catch(() => setPhone(''));
+  }, []);
+  if (!editable) {
+    return (
+      <View style={[s.card, { padding: 16, gap: 10 }]}>
+        {(
+          [
+            ['Name', name],
+            ['Mobile', phone],
+            ['Email', email],
+          ] as const
+        ).map(([label, value]) => (
+          <View key={label}>
+            <Text style={[s.muted, { fontSize: 12 }]}>{label}</Text>
+            <Text style={s.text}>{value || '—'}</Text>
+          </View>
+        ))}
+        <Text style={[s.muted, { fontSize: 12, lineHeight: 18 }]}>
+          Your name, photo, mobile and email are set by your admin. Ask your admin if something needs to change.
+        </Text>
+      </View>
+    );
+  }
+  async function save() {
+    setBusy(true);
+    try {
+      await client.setMyContactInfo(phone ?? '', email);
+      setMsg({ ok: true, text: 'Saved' });
+    } catch (e) {
+      setMsg({ ok: false, text: errorText(e) });
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <View style={[s.card, { padding: 16, gap: 10 }]}>
+      <Field value={phone ?? ''} onChangeText={setPhone} placeholder="Mobile number, e.g. +91 98765 43210" keyboardType="phone-pad" maxLength={MAX_PHONE} editable={phone !== null} />
+      <Field value={email} onChangeText={setEmail} placeholder="Work email" keyboardType="email-address" maxLength={MAX_EMAIL} editable={phone !== null} />
+      <Text style={[s.muted, { fontSize: 12 }]}>Shown to your colleagues under your name, with your department.</Text>
+      {msg && (
+        <Banner kind={msg.ok ? 'ok' : 'error'} icon={msg.ok ? CircleCheck : CircleAlert}>
+          {msg.text}
+        </Banner>
+      )}
+      <Button title="Save" busy={busy} disabled={phone === null} onPress={save} />
+    </View>
+  );
+}
 
 export function SettingsScreen({ navigate }: { navigate: (r: Route) => void }) {
   const c = useClient();
   const lock = useLock();
+  // Profiles are set by the admin; only admins (or anyone on a server without admins) edit their own.
+  const canEditProfile = c.isAdmin || c.admins.length === 0;
   const [oldPw, setOldPw] = useState('');
   const [newPw, setNewPw] = useState('');
   const [newPw2, setNewPw2] = useState('');
@@ -45,6 +143,7 @@ export function SettingsScreen({ navigate }: { navigate: (r: Route) => void }) {
         text: 'Sign out',
         onPress: () => {
           navigate({ name: 'list' });
+          resetPush();
           void client.logout().then(() => appLock.load());
         },
       },
@@ -57,11 +156,14 @@ export function SettingsScreen({ navigate }: { navigate: (r: Route) => void }) {
         text: 'Delete',
         style: 'destructive',
         onPress: () => {
-          navigate({ name: 'list' });
-          void client
+          client
             .deleteAccount()
-            .catch(() => {})
-            .then(() => appLock.load());
+            .then(() => {
+              navigate({ name: 'list' });
+              resetPush();
+              return appLock.load();
+            })
+            .catch((e) => Alert.alert('Delete account', errorText(e)));
         },
       },
     ]);
@@ -71,21 +173,55 @@ export function SettingsScreen({ navigate }: { navigate: (r: Route) => void }) {
       <Header title="Settings" onBack={() => navigate({ name: 'list' })} />
       <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40 }} keyboardShouldPersistTaps="handled">
         <View style={[s.card, s.row, { padding: 16, gap: 14 }]}>
-          <Avatar name={c.account?.username ?? '?'} size={52} />
+          <Pressable
+            onPress={() => canEditProfile && photoOptions(!!c.account && !!c.avatarOf(c.account.username))}
+            disabled={!canEditProfile}
+            accessibilityRole="button"
+            accessibilityLabel="Change profile photo"
+          >
+            <Avatar name={c.account?.username ?? '?'} size={52} />
+            {canEditProfile && (
+            <View
+              style={{
+                position: 'absolute',
+                right: -2,
+                bottom: -2,
+                width: 22,
+                height: 22,
+                borderRadius: 11,
+                backgroundColor: colors.accent,
+                borderWidth: 2,
+                borderColor: colors.surface,
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
+              <Camera size={11} color="#fff" />
+            </View>
+            )}
+          </Pressable>
           <View style={{ flex: 1 }}>
-            <Text style={[s.title, { fontSize: 18 }]}>{c.account?.username}</Text>
+            <Text style={[s.title, { fontSize: 18 }]}>{c.account ? c.displayName(c.account.username) : ''}</Text>
             <Text style={s.muted} numberOfLines={1}>
-              {c.account?.serverUrl}
+              @{c.account?.username} · {c.account?.serverUrl}
             </Text>
+            {canEditProfile && (
+              <Text style={{ color: colors.accent, fontSize: 13, marginTop: 2 }}>
+                {c.account && c.avatarOf(c.account.username) ? 'Tap photo to change' : 'Tap to add a profile photo'}
+              </Text>
+            )}
           </View>
         </View>
+
+        <Text style={s.section}>{canEditProfile ? 'Mobile number & email' : 'My profile'}</Text>
+        <ContactSettings editable={canEditProfile} />
 
         <Text style={s.section}>Privacy</Text>
         <View style={[s.card, { padding: 4 }]}>
           <Row
             icon={Lock}
             title="App lock"
-            subtitle={lock.enabled ? 'On' : 'Off. Require a PIN to open MeetMe'}
+            subtitle={lock.enabled ? 'On' : 'Off. Require a PIN to open CellMate'}
             onPress={() => navigate({ name: 'applock' })}
             right={<ChevronRight size={18} color={colors.faint} />}
           />
@@ -117,7 +253,9 @@ export function SettingsScreen({ navigate }: { navigate: (r: Route) => void }) {
         <Text style={s.section}>Account</Text>
         <View style={[s.card, { padding: 4 }]}>
           <Row icon={LogOut} title="Sign out" onPress={logout} />
-          <Row icon={Trash2} title="Delete account" subtitle="Wipes all keys from this phone" danger onPress={wipe} />
+          {c.canDeleteOwnAccount && (
+            <Row icon={Trash2} title="Delete account" subtitle="Wipes all keys from this phone" danger onPress={wipe} />
+          )}
         </View>
       </ScrollView>
     </View>

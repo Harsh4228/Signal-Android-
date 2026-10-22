@@ -96,7 +96,7 @@ export function AppLockScreen({ navigate, onToast }: { navigate: (r: Route) => v
               creating
                 ? step.first
                   ? 'Enter the same PIN again'
-                  : 'You will need it every time you open MeetMe'
+                  : 'You will need it every time you open CellMate'
                 : undefined
             }
             error={error}
@@ -129,7 +129,7 @@ export function AppLockScreen({ navigate, onToast }: { navigate: (r: Route) => v
           </View>
           <View style={{ flex: 1 }}>
             <Text style={s.title}>App lock is on</Text>
-            <Text style={[s.muted, { marginTop: 2 }]}>MeetMe asks for your PIN when it opens.</Text>
+            <Text style={[s.muted, { marginTop: 2 }]}>CellMate asks for your PIN when it opens.</Text>
           </View>
         </View>
 
