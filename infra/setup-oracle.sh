@@ -63,6 +63,8 @@ if [ -f "$HOME/fcm-service-account.json" ]; then
   mv "$HOME/fcm-service-account.json" secrets/fcm-service-account.json
   chmod 600 secrets/fcm-service-account.json
 fi
+# The server container runs as "node" (uid 1000); on Oracle the ubuntu user is a different uid.
+[ -f secrets/fcm-service-account.json ] && sudo chown 1000:1000 secrets/fcm-service-account.json
 if [ ! -f .env ]; then
   PRIVATE_IP=$(hostname -I | awk '{print $1}')
   sed -e "s|^DOMAIN=.*|DOMAIN=$DOMAIN|" \
