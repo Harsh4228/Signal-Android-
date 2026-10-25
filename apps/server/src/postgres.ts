@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import type { Bus, BusEvent } from './bus';
 import {
+  bannedValue,
   parseDepartments,
   parseSenders,
   toProduct,
@@ -207,8 +208,8 @@ export async function openPostgres(connectionString: string): Promise<{ db: Db; 
       tx(async (c) => {
         await c.query(
           `INSERT INTO users (username, pass_hash, device_hash, must_change, identity_key, spk_id, spk_pub, spk_sig, created_at)
-           VALUES ($1, $2, $2, 0, $3, $4, $5, $6, $7)`,
-          [u.username, u.deviceHash, u.identityKey, u.spk.id, u.spk.pub, u.spk.sig, Date.now()],
+           VALUES ($1, $2, $3, 0, $4, $5, $6, $7, $8)`,
+          [u.username, u.passHash ?? u.deviceHash, u.deviceHash, u.identityKey, u.spk.id, u.spk.pub, u.spk.sig, Date.now()],
         );
         await insertOpks(c, u.username, opks);
       }),
@@ -314,7 +315,7 @@ export async function openPostgres(connectionString: string): Promise<{ db: Db; 
       await pool.query('DELETE FROM queue WHERE ts < $1', [ts]);
     },
     async setBanned(username, banned) {
-      await pool.query('UPDATE users SET banned = $1 WHERE username = $2', [banned ? 1 : 0, username]);
+      await pool.query('UPDATE users SET banned = $1 WHERE username = $2', [bannedValue(banned), username]);
     },
     async clearDevice(username) {
       await pool.query('UPDATE users SET device_hash = NULL, push_token = NULL, access_key_hash = NULL WHERE username = $1', [username]);

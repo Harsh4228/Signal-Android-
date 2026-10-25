@@ -33,7 +33,8 @@ import {
   MAX_GROUP_NAME,
   MAX_NAME,
   MAX_PHONE,
-  USERNAME_RE,
+  ID_RE,
+  shortId,
   formatLastSeen,
   fromBase64,
   groupKey,
@@ -63,7 +64,9 @@ const TABS: [Tab, string, typeof Users][] = [
 ];
 
 const userState = (u: AdminUser) =>
-  u.banned
+  u.moved
+    ? 'Moved to another company (account kept in case they come back)'
+    : u.banned
     ? 'Banned'
     : !u.active
       ? 'Not logged in yet'
@@ -217,7 +220,7 @@ function UsersTab({
   const q = query.trim().toLowerCase();
   const shown = (users ?? []).filter(
     (u) =>
-      (u.username.includes(q) || u.name.toLowerCase().includes(q)) &&
+      (shortId(u.username).includes(q) || u.name.toLowerCase().includes(q)) &&
       inDept(u) &&
       (filter === 'all' ||
         (filter === 'online' && u.online) ||
@@ -236,7 +239,7 @@ function UsersTab({
   };
 
   async function newQr(u: AdminUser) {
-    const who = u.name || u.username;
+    const who = u.name || shortId(u.username);
     const msg = u.active
       ? `Make a new QR code for ${who}? Use it for a new phone or a forgotten password: scanning it lets them choose a new password, and signs out their old device.`
       : `Make a new QR code for ${who}? Their old QR code stops working.`;
@@ -245,7 +248,7 @@ function UsersTab({
   }
 
   const ban = async (u: AdminUser) => {
-    const who = u.name || u.username;
+    const who = u.name || shortId(u.username);
     if (!u.banned) {
       const yes = confirm(
         `Block ${who}? They are signed out at once and their app deletes its keys. Their password stops working: ` +
@@ -263,9 +266,17 @@ function UsersTab({
   };
 
   const remove = (u: string) => {
-    if (confirm(`Delete ${u}? Their account is removed for good and they are logged out everywhere.`)) {
-      void act(() => client.removeEmployee(u), `${u} deleted`)();
+    if (confirm(`Delete ${shortId(u)}? Their account is removed for good and they are logged out everywhere.`)) {
+      void act(() => client.removeEmployee(u), `${shortId(u)} deleted`)();
     }
+  };
+
+  const toggleAdmin = (u: AdminUser) => {
+    const who = u.name || shortId(u.username);
+    const text = u.admin
+      ? `Remove ${who} as admin? They will no longer manage people, groups and settings.`
+      : `Make ${who} an admin? They will manage people, groups, departments and settings, like you.`;
+    if (confirm(text)) void act(() => client.setUserAdmin(u.username, !u.admin), u.admin ? `${who} is no longer an admin` : `${who} is now an admin`)();
   };
 
   const count = (f: Filter) =>
@@ -336,9 +347,10 @@ function UsersTab({
             </div>
             <div className="grow">
               <div className="name">
-                {u.name || u.username} {u.name && <span className="muted small">@{u.username}</span>}{' '}
+                {u.name || shortId(u.username)} {u.name && <span className="muted small">@{shortId(u.username)}</span>}{' '}
                 {u.username === me && <span className="muted small">(you)</span>} {u.admin && <span className="tag admin">Admin</span>}{' '}
                 {u.banned && <span className="tag banned">Banned</span>}{' '}
+                {u.moved && <span className="tag">Moved</span>}{' '}
                 {u.departments.map((d) => (
                   <span key={d} className="tag dept">
                     {d}
@@ -386,6 +398,8 @@ function UsersTab({
               )}
             </div>
             <div className="row actions">
+              {!u.moved && (
+                <>
               <button className="icon" title="Edit profile: name, photo, mobile, email" onClick={() => setEditingProfile(u.username)}>
                 <Pencil size={16} />
               </button>
@@ -402,15 +416,24 @@ function UsersTab({
                   <button className="icon" title="New QR code (new phone or forgotten password)" onClick={() => void newQr(u)}>
                     <QrCode size={16} />
                   </button>
+                  {!u.banned && (
+                    <button className={`icon ${u.admin ? 'active' : ''}`} title={u.admin ? 'Remove admin' : 'Make admin'} onClick={() => toggleAdmin(u)}>
+                      <ShieldCheck size={16} />
+                    </button>
+                  )}
                   {!u.admin && (
                     <button className={`icon ${u.banned ? '' : 'warn'}`} title={u.banned ? 'Unblock' : 'Block (signs them out)'} onClick={() => void ban(u)}>
                       {u.banned ? <CircleCheck size={16} /> : <Ban size={16} />}
                     </button>
                   )}
-                  <button className="icon danger" title="Delete" onClick={() => remove(u.username)}>
-                    <Trash2 size={16} />
-                  </button>
                 </>
+              )}
+                </>
+              )}
+              {u.username !== me && (
+                <button className="icon danger" title="Delete" onClick={() => remove(u.username)}>
+                  <Trash2 size={16} />
+                </button>
               )}
             </div>
           </li>
@@ -518,7 +541,7 @@ function CreateUser({
     e.preventDefault();
     setError(null);
     const username = id.trim().toLowerCase();
-    if (!USERNAME_RE.test(username)) return setError('ID: 3-32 characters, a-z 0-9 _ .');
+    if (!ID_RE.test(username)) return setError('ID: 3-32 characters, a-z 0-9 _ .');
     if (!name.trim()) return setError('Enter their full name');
     setBusy(true);
     try {
@@ -1024,7 +1047,7 @@ function GroupEditor({
   }
 
   const q = query.trim().toLowerCase();
-  const shown = users.filter((u) => u.username.includes(q));
+  const shown = users.filter((u) => !u.moved && (shortId(u.username).includes(q) || u.name.toLowerCase().includes(q)));
   return (
     <form onSubmit={save} className="stack">
       <div className="section-title" style={{ marginTop: 4, marginBottom: 0 }}>
@@ -1045,7 +1068,7 @@ function GroupEditor({
             <Avatar name={u.username} size="sm" />
             <div className="grow">
               <div className="name">
-                {u.username} {u.username === me && <span className="muted small">(you)</span>}
+                {u.name || shortId(u.username)} {u.username === me && <span className="muted small">(you)</span>}
               </div>
               <div className="state">{userState(u)}</div>
             </div>
@@ -1072,7 +1095,7 @@ function GroupEditor({
             <div className="chips" style={{ margin: 0 }}>
               {senderChoices.map((u) => (
                 <button key={u} type="button" className={senders.has(u) ? 'active' : ''} onClick={() => toggleSender(u)}>
-                  {senders.has(u) && <Check size={13} />} {u}
+                  {senders.has(u) && <Check size={13} />} {shortId(u)}
                 </button>
               ))}
             </div>

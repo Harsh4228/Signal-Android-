@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Lock, Mic, MicOff, Phone, PhoneOff, Video, VideoOff } from 'lucide-react';
-import { calls, useCall } from '../messenger';
+import { calls, client, useCall } from '../messenger';
 import { Avatar } from './ui';
 
 function VideoEl({ stream, muted, className }: { stream: MediaStream | null; muted?: boolean; className?: string }) {
@@ -51,7 +51,7 @@ export function CallView() {
       {call.video && call.localStream && <VideoEl stream={call.localStream} muted className="local" />}
 
       <div className="call-info">
-        <div className="name">{call.peer}</div>
+        <div className="name">{call.peer ? client.displayName(call.peer) : ''}</div>
         <div className="sub">
           <Lock size={13} /> {label}
         </div>

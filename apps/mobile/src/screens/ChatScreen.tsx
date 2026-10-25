@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { FlatList, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { FlatList, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import {
   Ban,
   BadgeCheck,
@@ -191,7 +191,7 @@ export function ChatScreen({
   const subtitle = typing || (group ? c.groupMemberLine(peer) || 'Tap for group info' : contactLine || presence);
 
   return (
-    <KeyboardAvoidingView style={s.fill} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+    <View style={s.fill}>
       <Header
         onBack={() => navigate({ name: 'list' })}
         title={
@@ -247,7 +247,7 @@ export function ChatScreen({
                 renderItem={({ item }) => (
                   <Pressable onPress={() => jumpTo(item.id)} style={({ pressed }) => [{ paddingHorizontal: 16, paddingVertical: 8 }, pressed && { backgroundColor: colors.hover }]}>
                     <Text style={[s.muted, { fontSize: 12 }]}>
-                      {item.outgoing ? 'You' : (item.from ?? peer)} · {clock(item.ts)}
+                      {item.outgoing ? 'You' : c.displayName(item.from ?? peer)} · {clock(item.ts)}
                     </Text>
                     <Text style={s.text} numberOfLines={1}>
                       {MessengerClient.preview(item)}
@@ -283,7 +283,7 @@ export function ChatScreen({
               </View>
               <IconButton
                 icon={m.call.video ? Video : Phone}
-                label={`Call ${peer} back`}
+                label={`Call ${c.displayName(peer)} back`}
                 size={19}
                 color={colors.accent}
                 onPress={() => void call(m.call!.video)}
@@ -306,7 +306,7 @@ export function ChatScreen({
               ]}
             >
               {group && !m.outgoing && !!m.from && (
-                <Text style={{ color: colors.accentText, fontSize: 12, fontWeight: '700', marginBottom: 2 }}>{m.from}</Text>
+                <Text style={{ color: colors.accentText, fontSize: 12, fontWeight: '700', marginBottom: 2 }}>{c.displayName(m.from)}</Text>
               )}
               {m.broadcast && !m.deleted && (
                 <View style={[s.row, { gap: 5, marginBottom: 4 }]}>
@@ -381,7 +381,7 @@ export function ChatScreen({
               <Reply size={14} color={colors.accentText} />
               <View style={{ flex: 1 }}>
                 <Text style={{ color: colors.accentText, fontSize: 13, fontWeight: '600' }}>
-                  Replying to {replyTo.outgoing ? 'yourself' : (replyTo.from ?? peer)}
+                  Replying to {replyTo.outgoing ? 'yourself' : c.displayName(replyTo.from ?? peer)}
                 </Text>
                 <Text style={[s.muted, { fontSize: 12 }]} numberOfLines={1}>
                   {MessengerClient.preview(replyTo)}
@@ -482,7 +482,7 @@ export function ChatScreen({
           </View>
         </View>
       )}
-    </KeyboardAvoidingView>
+    </View>
   );
 }
 

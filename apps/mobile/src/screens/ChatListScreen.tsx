@@ -124,7 +124,7 @@ export function ChatListScreen({ navigate, onError }: { navigate: (r: Route) => 
               style={({ pressed }) => [styles.suggestItem, pressed && { backgroundColor: colors.bg }]}
             >
               <Avatar name={u} size={32} />
-              <Text style={{ color: colors.text, fontSize: 15 }}>{u}</Text>
+              <Text style={{ color: colors.text, fontSize: 15 }}>{client.displayName(u)}</Text>
             </Pressable>
           ))}
         </View>
@@ -162,7 +162,7 @@ export function ChatListScreen({ navigate, onError }: { navigate: (r: Route) => 
           const unread = c.getUnread(key);
           const group = isGroupKey(key);
           const typing = typingText(c.getTyping(key), group);
-          const who = last ? (last.outgoing ? 'You: ' : group && last.from ? `${last.from}: ` : '') : '';
+          const who = last ? (last.outgoing ? 'You: ' : group && last.from ? `${client.displayName(last.from)}: ` : '') : '';
           const preview = last
             ? who + (last.deleted ? 'Message deleted' : MessengerClient.preview(last))
             : group

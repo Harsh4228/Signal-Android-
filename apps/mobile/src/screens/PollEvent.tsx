@@ -76,7 +76,7 @@ export function PollView({ chat, m, onError }: { chat: string; m: ChatMessage; o
         p.options.map((o, i) => {
           const who = Object.entries(p.votes)
             .filter(([, picks]) => picks.includes(i))
-            .map(([u]) => (u === me ? 'You' : u));
+            .map(([u]) => (u === me ? 'You' : client.displayName(u)));
           return (
             <Text key={i} style={[s.muted, { fontSize: 13 }]}>
               <Text style={{ fontWeight: '600', color: colors.text2 }}>
@@ -96,7 +96,7 @@ export function EventView({ chat, m, onError }: { chat: string; m: ChatMessage; 
   const [showWho, setShowWho] = useState(false);
   const e = m.event!;
   const me = c.account!.username;
-  const by = (r: Rsvp) => Object.entries(e.rsvp).filter(([, x]) => x === r).map(([u]) => (u === me ? 'You' : u));
+  const by = (r: Rsvp) => Object.entries(e.rsvp).filter(([, x]) => x === r).map(([u]) => (u === me ? 'You' : client.displayName(u)));
   const d = new Date(e.start);
 
   return (

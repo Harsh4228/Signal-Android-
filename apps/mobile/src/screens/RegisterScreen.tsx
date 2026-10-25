@@ -1,21 +1,28 @@
 import { useEffect, useRef, useState } from 'react';
-import { BackHandler, KeyboardAvoidingView, PermissionsAndroid, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { BackHandler, PermissionsAndroid, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Camera, CameraType } from 'react-native-camera-kit';
-import { ArrowLeft, CircleAlert, KeyRound, LockKeyhole, QrCode, ScanLine, X } from 'lucide-react-native';
-import { MIN_PASSWORD_LENGTH, MustChangePasswordError, parseInviteCode } from '@meetme/core';
+import { ArrowLeft, Building2, CircleAlert, KeyRound, LockKeyhole, QrCode, ScanLine, X } from 'lucide-react-native';
+import { MIN_PASSWORD_LENGTH, MustChangePasswordError, makeUsername, normalizeServerUrl, parseInviteCode, shortId } from '@meetme/core';
+import { DEFAULT_SERVER } from '../config';
 import { client } from '../messenger';
 import { colors, s } from '../theme';
 import { Banner, Button, Field, IconButton, Logo, errorText } from '../ui';
 
-type Mode = 'join' | 'login' | 'register';
+type Mode = 'join' | 'login' | 'company';
 
 /**
  * New people scan the QR invite from their admin and only choose a password (the admin made their profile).
- * People who already have a password sign in. "Set up a new server" is for the admin's first account.
+ * People who already have a password sign in with company code + ID + password. "Register your company" asks the
+ * server owner for a new company (the very first one sets the server up).
+ *
+ * `moved`: this person was moved to another company; the new company's QR keeps their chats on this phone.
  */
-export function RegisterScreen({ onDone }: { onDone: () => void }) {
-  const [mode, setMode] = useState<Mode>('join');
-  const [server, setServer] = useState('https://');
+export function RegisterScreen({ onDone, moved }: { onDone: () => void; moved?: boolean }) {
+  const [mode, setMode] = useState<Mode>(moved ? 'join' : 'login');
+  const [server, setServer] = useState(DEFAULT_SERVER);
+  const [editServer, setEditServer] = useState(false);
+  const [company, setCompany] = useState('');
+  const [companyName, setCompanyName] = useState('');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [code, setCode] = useState('');
@@ -25,8 +32,21 @@ export function RegisterScreen({ onDone }: { onDone: () => void }) {
   const [newPw2, setNewPw2] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** Nobody has set the server up yet: "Register your company" makes the first company and its owner. */
+  const [needsSetup, setNeedsSetup] = useState(false);
   const invite = mode === 'join' ? parseInviteCode(code) : null;
-  const choosing = (mode === 'join' && !!invite) || mustChange;
+  const choosing = (mode === 'join' && !!invite) || mode === 'company' || mustChange;
+
+  useEffect(() => {
+    let live = true;
+    client
+      .getPublicConfig(server)
+      .then((c) => live && setNeedsSetup(!!c.needsSetup))
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [server]);
 
   async function submit() {
     setError(null);
@@ -36,9 +56,12 @@ export function RegisterScreen({ onDone }: { onDone: () => void }) {
     }
     setBusy(true);
     try {
+      const url = normalizeServerUrl(server);
+      const id = username.trim().toLowerCase();
+      const co = company.trim().toLowerCase();
       if (mode === 'join') await client.join(code, newPw);
-      else if (mode === 'register') await client.register(server, username);
-      else await client.login(server, username, password, mustChange ? newPw : undefined);
+      else if (mode === 'company') await client.setupServer(url, { companyCode: co, companyName, id, password: newPw });
+      else await client.login(url, makeUsername(id, co), password, mustChange ? newPw : undefined);
       onDone();
     } catch (e) {
       if (e instanceof MustChangePasswordError) setMustChange(true);
@@ -60,13 +83,17 @@ export function RegisterScreen({ onDone }: { onDone: () => void }) {
   const switchTo = (m: Mode) => {
     setMode(m);
     setMustChange(false);
+    setNewPw('');
+    setNewPw2('');
     setError(null);
   };
 
   const canSubmit =
     mode === 'join'
       ? !!invite && newPw.length > 0
-      : username.length >= 3 && (mode === 'register' || (password.length > 0 && (!mustChange || newPw.length > 0)));
+      : mode === 'company'
+        ? company.trim().length >= 2 && !!companyName.trim() && username.length >= 3 && newPw.length > 0
+        : username.length >= 3 && password.length > 0 && (!mustChange || newPw.length > 0);
 
   if (scanning) {
     return (
@@ -82,28 +109,39 @@ export function RegisterScreen({ onDone }: { onDone: () => void }) {
     );
   }
 
+  const title = moved
+    ? 'Moved to a new company'
+    : mode === 'join'
+      ? 'Join CellMate'
+      : mode === 'login'
+        ? 'Sign in to CellMate'
+        : needsSetup
+          ? 'Set up CellMate'
+          : 'Register your company';
+  const intro = moved
+    ? 'Scan the QR code from your new admin and choose a password. Your chats and files stay on this phone.'
+    : mode === 'join'
+      ? 'Scan the QR code your admin gave you, then choose your password.'
+      : mode === 'login'
+        ? 'Sign in with your company code, your ID and your password.'
+        : needsSetup
+          ? 'Create the first company. You become its admin and the owner of this server.'
+          : 'Ask for your own company. You can use it as soon as the server owner approves it.';
+
   return (
-    <KeyboardAvoidingView style={{ flex: 1, backgroundColor: colors.surface }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+    <View style={{ flex: 1, backgroundColor: colors.surface }}>
       <ScrollView contentContainerStyle={{ flexGrow: 1, justifyContent: 'center', padding: 24 }} keyboardShouldPersistTaps="handled">
         <View style={{ width: '100%', maxWidth: 420, alignSelf: 'center', gap: 16 }}>
           <View style={{ alignItems: 'center', gap: 10, marginBottom: 12 }}>
             <Logo size={60} />
-            <Text style={[s.h1, { marginTop: 8 }]}>
-              {mode === 'join' ? 'Join CellMate' : mode === 'login' ? 'Sign in to CellMate' : 'Set up CellMate'}
-            </Text>
-            <Text style={[s.muted, { textAlign: 'center', fontSize: 14, lineHeight: 20 }]}>
-              {mode === 'join'
-                ? 'Scan the QR code your admin gave you, then choose your password.'
-                : mode === 'login'
-                  ? 'Sign in with your ID and the password you chose.'
-                  : 'Create the first administrator account for your server.'}
-            </Text>
+            <Text style={[s.h1, { marginTop: 8 }]}>{title}</Text>
+            <Text style={[s.muted, { textAlign: 'center', fontSize: 14, lineHeight: 20 }]}>{intro}</Text>
           </View>
 
           {mode === 'join' ? (
             invite ? (
               <Banner kind="ok" icon={QrCode}>
-                Joining as {invite.username}. Choose your password: after this not even your admin knows it.
+                Joining as {shortId(invite.username)}. Choose your password: after this not even your admin knows it.
               </Banner>
             ) : (
               <>
@@ -118,9 +156,19 @@ export function RegisterScreen({ onDone }: { onDone: () => void }) {
             )
           ) : (
             <>
-              <Field label="Server address" value={server} onChangeText={setServer} keyboardType="url" placeholder="https://chat.yourcompany.com" />
+              {mode === 'company' && (
+                <Field label="Company name" value={companyName} onChangeText={setCompanyName} placeholder="e.g. Acme Pvt Ltd" autoCapitalize="words" />
+              )}
               <Field
-                label={mode === 'login' ? 'User ID' : 'Username'}
+                label="Company code"
+                value={company}
+                onChangeText={(t) => setCompany(t.toLowerCase().replace(/[^a-z0-9]/g, ''))}
+                placeholder="e.g. acme"
+                maxLength={16}
+                editable={!mustChange}
+              />
+              <Field
+                label={mode === 'login' ? 'Your ID' : 'Your ID (you will be its admin)'}
                 value={username}
                 onChangeText={(t) => setUsername(t.toLowerCase())}
                 placeholder="e.g. ravi.k"
@@ -137,8 +185,13 @@ export function RegisterScreen({ onDone }: { onDone: () => void }) {
 
           {choosing && (
             <>
-              <Field label={mode === 'join' ? 'Choose a password' : 'New password'} value={newPw} onChangeText={setNewPw} secureTextEntry />
+              <Field label={mode === 'login' ? 'New password' : 'Choose a password'} value={newPw} onChangeText={setNewPw} secureTextEntry />
               <Field label="Confirm password" value={newPw2} onChangeText={setNewPw2} secureTextEntry />
+              {mode === 'company' && (
+                <Text style={[s.muted, { fontSize: 12.5, lineHeight: 18 }]}>
+                  Remember this password: you need it with your company code and ID to sign in on another phone or computer.
+                </Text>
+              )}
             </>
           )}
 
@@ -155,8 +208,10 @@ export function RegisterScreen({ onDone }: { onDone: () => void }) {
                   ? 'Creating your encryption keys…'
                   : mode === 'join'
                     ? 'Set password and join'
-                    : mode === 'register'
-                      ? 'Create administrator account'
+                    : mode === 'company'
+                      ? needsSetup
+                        ? 'Set up the server'
+                        : 'Send request'
                       : mustChange
                         ? 'Save password and sign in'
                         : 'Sign in'
@@ -169,27 +224,36 @@ export function RegisterScreen({ onDone }: { onDone: () => void }) {
           )}
           {mode === 'join' && invite && <Button title="Scan a different QR" onPress={() => setCode('')} />}
 
-          <View style={{ gap: 2, alignItems: 'center' }}>
-            {mode !== 'join' && <Link icon onPress={() => switchTo('join')} text="I have a QR invite" />}
-            {mode !== 'login' && <Link onPress={() => switchTo('login')} text="I already have a password: sign in" />}
-            {mode !== 'register' && <Link onPress={() => switchTo('register')} text="Administrator? Set up a new server" />}
-          </View>
+          {!moved && (
+            <View style={{ gap: 2, alignItems: 'center' }}>
+              {mode !== 'join' && <Link icon={QrCode} onPress={() => switchTo('join')} text="I have a QR invite" />}
+              {mode !== 'login' && <Link icon={ArrowLeft} onPress={() => switchTo('login')} text="I already have a password: sign in" />}
+              {mode !== 'company' && (
+                <Link icon={Building2} onPress={() => switchTo('company')} text={needsSetup ? 'Owner? Set up this server' : 'Register your company'} />
+              )}
+            </View>
+          )}
 
           <View style={[s.divider, { marginTop: 4 }]} />
-          <View style={[s.row, { gap: 8, justifyContent: 'center' }]}>
-            <LockKeyhole size={14} color={colors.muted} />
-            <Text style={[s.muted, { fontSize: 12.5 }]}>Your keys are created on this phone and never leave it.</Text>
-          </View>
+          {editServer ? (
+            <Field label="Server address" value={server} onChangeText={setServer} keyboardType="url" placeholder={DEFAULT_SERVER} />
+          ) : (
+            // Long-press: use a different server (testing). Normal users never see a server address.
+            <Pressable onLongPress={() => setEditServer(true)} delayLongPress={800} style={[s.row, { gap: 8, justifyContent: 'center' }]}>
+              <LockKeyhole size={14} color={colors.muted} />
+              <Text style={[s.muted, { fontSize: 12.5 }]}>Your keys are created on this phone and never leave it.</Text>
+            </Pressable>
+          )}
         </View>
       </ScrollView>
-    </KeyboardAvoidingView>
+    </View>
   );
 }
 
-function Link({ text, onPress, icon }: { text: string; onPress: () => void; icon?: boolean }) {
+function Link({ text, onPress, icon: Icon }: { text: string; onPress: () => void; icon?: typeof ArrowLeft }) {
   return (
     <Pressable onPress={onPress} style={[s.row, { justifyContent: 'center', gap: 6, paddingVertical: 6 }]}>
-      {icon && <ArrowLeft size={15} color={colors.accent} />}
+      {Icon && <Icon size={15} color={colors.accent} />}
       <Text style={{ color: colors.accent, fontWeight: '600', fontSize: 14 }}>{text}</Text>
     </Pressable>
   );

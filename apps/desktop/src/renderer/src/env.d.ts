@@ -12,6 +12,8 @@ declare global {
       openMaps?: (url: string) => Promise<void>;
       /** Desktop app only. */
       checkUpdates?: (serverUrl: string) => Promise<void>;
+      /** Desktop app only: the server owner's companies page in the browser. */
+      openSuper?: (serverUrl: string) => Promise<void>;
     };
   }
 }

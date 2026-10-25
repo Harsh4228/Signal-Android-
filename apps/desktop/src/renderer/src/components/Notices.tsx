@@ -54,7 +54,7 @@ export function NoticePopup() {
         )}
         {n.text && <div className="notice-text">{n.text}</div>}
         <p className="muted small notice-meta">
-          From {n.from} · {when(n.ts)}
+          From {client.displayName(n.from)} · {when(n.ts)}
         </p>
         <button className="primary block" disabled={busy} onClick={ok} autoFocus>
           <Check size={16} /> OK
@@ -122,7 +122,7 @@ function NoticeItem({ n, open, onToggle }: { n: Notice; open: boolean; onToggle:
         <div className="grow">
           <div className="notice-item-title">{n.title || 'Notice'}</div>
           <div className="muted small">
-            {n.outgoing ? `You → ${n.audience ?? 'Everyone'}` : `From ${n.from}`} · {when(n.ts)}
+            {n.outgoing ? `You → ${n.audience ?? 'Everyone'}` : `From ${client.displayName(n.from)}`} · {when(n.ts)}
           </div>
         </div>
         {n.outgoing ? (
@@ -145,7 +145,7 @@ function NoticeItem({ n, open, onToggle }: { n: Notice; open: boolean; onToggle:
             {readers.length ? (
               readers.map((u) => (
                 <div key={u} className="small">
-                  {u} <span className="muted">· {when(n.okBy![u]!)}</span>
+                  {client.displayName(u)} <span className="muted">· {when(n.okBy![u]!)}</span>
                 </div>
               ))
             ) : (

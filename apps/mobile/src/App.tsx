@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, AppState, BackHandler, StatusBar, Text, View } from 'react-native';
+import { ActivityIndicator, AppState, BackHandler, KeyboardAvoidingView, StatusBar, Text, View } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { CaptureEventType, CaptureProtection } from 'react-native-capture-protection';
 import { Info } from 'lucide-react-native';
@@ -12,6 +12,7 @@ import { ChatListScreen } from './screens/ChatListScreen';
 import { ChatScreen } from './screens/ChatScreen';
 import { ChatInfoScreen } from './screens/ChatInfoScreen';
 import { SettingsScreen } from './screens/SettingsScreen';
+import { PendingScreen } from './screens/PendingScreen';
 import { CallScreen } from './screens/CallScreen';
 import { BroadcastScreen } from './screens/BroadcastScreen';
 import { MediaViewerHost } from './screens/AttachmentView';
@@ -118,8 +119,10 @@ export default function App() {
         <ActivityIndicator color={colors.accent} />
       </View>
     );
-  } else if (!c.account) {
-    screen = <RegisterScreen onDone={() => client.connect()} />;
+  } else if (!c.account || c.moved) {
+    screen = <RegisterScreen moved={!!c.account} onDone={() => client.connect()} />;
+  } else if (c.pending) {
+    screen = <PendingScreen />;
   } else if (route.name === 'chat') {
     screen = <ChatScreen peer={route.peer} navigate={setRoute} onError={setToast} />;
   } else if (route.name === 'info') {
@@ -156,7 +159,10 @@ export default function App() {
     <SafeAreaProvider>
       <StatusBar barStyle="dark-content" />
       <SafeAreaView style={[s.fill, { backgroundColor: colors.surface }]} edges={['top', 'bottom']}>
-        {screen}
+        {/* Android draws edge-to-edge, so the window no longer shrinks for the keyboard: lift the screen ourselves. */}
+        <KeyboardAvoidingView style={s.fill} behavior="padding">
+          {screen}
+        </KeyboardAvoidingView>
         <MediaViewerHost onToast={setToast} />
         {call.status !== 'idle' && <CallScreen />}
         {ready && c.account && !lock.locked && call.status === 'idle' && <NoticePopup />}

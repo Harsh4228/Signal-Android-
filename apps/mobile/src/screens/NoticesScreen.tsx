@@ -154,7 +154,7 @@ function NoticeItem({ n, open, onToggle }: { n: Notice; open: boolean; onToggle:
           {readers.length ? (
             readers.map((u) => (
               <Text key={u} style={[s.text, { fontSize: 14 }]}>
-                {u} <Text style={s.muted}>· {when(n.okBy![u]!)}</Text>
+                {client.displayName(u)} <Text style={s.muted}>· {when(n.okBy![u]!)}</Text>
               </Text>
             ))
           ) : (

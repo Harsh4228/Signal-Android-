@@ -26,7 +26,7 @@ export interface UserRow {
   push_token: string | null;
   /** SHA-256 of the user's sealed-sender delivery key (the key itself only goes to their contacts). */
   access_key_hash: string | null;
-  /** 1 = suspended by an admin. */
+  /** 1 = suspended by an admin; 2 (MOVED) = moved to another company (kept, in case they come back). */
   banned: number;
   /** Refreshed while connected (any server instance); NULL once disconnected. */
   online_at: number | null;
@@ -110,14 +110,17 @@ export const toProduct = (r: ProductRow): ProductRow => ({
 });
 
 export const isActive = (u: UserRow) => !!u.device_hash && !!u.identity_key;
+/** users.banned value of an account whose person was moved to another company. */
+export const MOVED = 2;
+export const bannedValue = (b: boolean | typeof MOVED) => (b === MOVED ? MOVED : b ? 1 : 0);
 /** Connected right now (on any instance); the heartbeat refreshes online_at every 30 s. */
 export const isOnlineRow = (u: UserRow, now = Date.now()) => !!u.online_at && now - Number(u.online_at) < 75_000;
 
 export interface Db {
   getUser(username: string): Promise<UserRow | undefined>;
   listUsers(): Promise<UserRow[]>;
-  /** Self-registration (open servers / the admin's own first account): device secret only. */
-  createUser(u: { username: string; deviceHash: string; identityKey: string; spk: Spk }, opks: Opk[]): Promise<void>;
+  /** Self-registration (open servers / the admin's own first account). No passHash = log in with the device secret only. */
+  createUser(u: { username: string; deviceHash: string; passHash?: string; identityKey: string; spk: Spk }, opks: Opk[]): Promise<void>;
   /** Admin creates an employee: login password only, no keys until the employee logs in. */
   createPendingUser(
     username: string,
@@ -152,7 +155,8 @@ export interface Db {
   ack(id: number, recipient: string): Promise<void>;
   queueSize(recipient: string): Promise<number>;
   purgeOlderThan(ts: number): Promise<void>;
-  setBanned(username: string, banned: boolean): Promise<void>;
+  /** true = suspended, MOVED = moved to another company, false = neither. */
+  setBanned(username: string, banned: boolean | typeof MOVED): Promise<void>;
   /** Sign the user's device out for good: forget its secret, push token and delivery key. */
   clearDevice(username: string): Promise<void>;
   /** onlineAt = null marks the user disconnected. */
@@ -398,7 +402,7 @@ export function openSqlite(file: string): Db {
     listUsers: async () => (q.listUsers.all() as unknown as RawUser[]).map(toUser),
     async createUser(u, opks) {
       tx(() => {
-        q.insertUser.run(u.username, u.deviceHash, u.deviceHash, 0, u.identityKey, u.spk.id, u.spk.pub, u.spk.sig, Date.now());
+        q.insertUser.run(u.username, u.passHash ?? u.deviceHash, u.deviceHash, 0, u.identityKey, u.spk.id, u.spk.pub, u.spk.sig, Date.now());
         for (const k of opks) q.insertOpk.run(u.username, k.id, k.pub);
       });
     },
@@ -489,7 +493,7 @@ export function openSqlite(file: string): Db {
       q.purgeOld.run(ts);
     },
     async setBanned(username, banned) {
-      q.setBanned.run(banned ? 1 : 0, username);
+      q.setBanned.run(bannedValue(banned), username);
     },
     async clearDevice(username) {
       q.clearDevice.run(username);

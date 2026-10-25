@@ -142,6 +142,19 @@ ipcMain.handle('maps:open', async (e, url: string) => {
   await shell.openExternal(url);
 });
 
+/** Server owner: the companies web page (<server>/super) in the system browser. Only that exact page. */
+ipcMain.handle('super:open', async (e, serverUrl: string) => {
+  assertTrusted(e);
+  let page: URL;
+  try {
+    page = new URL('/super', serverUrl);
+  } catch {
+    throw new Error('invalid server address');
+  }
+  if (page.protocol !== 'https:' && page.protocol !== 'http:') throw new Error('invalid server address');
+  await shell.openExternal(page.toString());
+});
+
 // ---------------------------------------------------------------- auto-update
 
 // Updates come from the user's own server (https://<server>/updates/, see infra/Caddyfile), so there is no

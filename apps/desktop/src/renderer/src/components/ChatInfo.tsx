@@ -65,7 +65,7 @@ function GroupDetails({ chatKey, onClose, onError }: { chatKey: string; onClose:
             key={u}
             className={u === me ? '' : 'clickable'}
             onClick={() => u !== me && void client.addContact(u).then(() => client.setActiveChat(u))}
-            title={u === me ? undefined : `Message ${u}`}
+            title={u === me ? undefined : `Message ${client.displayName(u)}`}
           >
             <ChatAvatar chatKey={u} size="sm" />
             <div className="grow">
@@ -130,7 +130,7 @@ function PersonInfo({ peer, onClose, onError }: { peer: string; onClose: () => v
 
       <div className="profile">
         <Avatar name={peer} />
-        <div className="name">{peer}</div>
+        <div className="name">{client.displayName(peer)}</div>
         <div className="muted small">{formatLastSeen(c.getPresence(peer))}</div>
         {profile && profile.departments.length > 0 && (
           <div className="row" style={{ gap: 4, flexWrap: 'wrap', justifyContent: 'center' }}>
@@ -172,7 +172,7 @@ function PersonInfo({ peer, onClose, onError }: { peer: string; onClose: () => v
         <>
           <pre className="safety">{safety.number}</pre>
           <p className="muted small" style={{ margin: '0 0 4px' }}>
-            Compare these numbers with {peer} in person or on a call. If they match, nobody can be listening in.
+            Compare these numbers with {client.displayName(peer)} in person or on a call. If they match, nobody can be listening in.
           </p>
           <button
             className={safety.verified ? '' : 'primary'}
@@ -219,7 +219,7 @@ function PersonInfo({ peer, onClose, onError }: { peer: string; onClose: () => v
         <button
           className="danger"
           onClick={() => {
-            if (confirm(c.canClearHistory ? `Remove ${peer} and delete the chat?` : `Remove ${peer} from your chat list? The messages are kept.`)) {
+            if (confirm(c.canClearHistory ? `Remove ${client.displayName(peer)} and delete the chat?` : `Remove ${client.displayName(peer)} from your chat list? The messages are kept.`)) {
               client.setActiveChat(null);
               void client.removeContact(peer);
             }

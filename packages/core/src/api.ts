@@ -1,10 +1,38 @@
 /** Wire types shared by the server and the clients. */
 
-export const USERNAME_RE = /^[a-z0-9_.]{3,32}$/;
+/**
+ * An account address. In a company it is "<id>-<company code>" (e.g. "ravi.k-acme"), so two companies can
+ * both have a "ravi"; people only ever see the ID part. Without a company (older / open servers) it is just
+ * the ID.
+ */
+export const USERNAME_RE = /^[a-z0-9_.]{3,32}(-[a-z0-9]{2,16})?$/;
+/** What a person types as their ID (no company part). */
+export const ID_RE = /^[a-z0-9_.]{3,32}$/;
+/** A company code, typed at login: 2-16 lowercase letters / digits. */
+export const COMPANY_CODE_RE = /^[a-z0-9]{2,16}$/;
+export const MAX_COMPANY_NAME = 80;
+
+/** The account address for an ID in a company ("" = no company). */
+export const makeUsername = (id: string, company: string) => (company ? `${id}-${company}` : id);
+/** The company code of an account address ("" = no company). */
+export function companyOf(username: string): string {
+  const i = username.lastIndexOf('-');
+  return i < 0 ? "" : username.slice(i + 1);
+}
+/** The ID part people see ("ravi.k-acme" -> "ravi.k"). */
+export function shortId(username: string): string {
+  const i = username.lastIndexOf('-');
+  return i < 0 ? username : username.slice(0, i);
+}
 
 export interface RegisterRequest {
   username: string;
+  /** This device's secret (authenticates every later request). */
   password: string;
+  /** The person's own login password, for signing in again later / on another device. */
+  loginPassword?: string;
+  /** First-time setup: the super admin creates the first company with their own account. */
+  company?: { code: string; name: string };
   identityKey: string;
   signedPreKey: { id: number; pub: string; sig: string };
   oneTimePreKeys: { id: number; pub: string }[];
@@ -56,6 +84,8 @@ export interface AdminUser {
   name: string;
   /** A QR invite is waiting to be used (until this time, ms); null = none. */
   inviteExpires: number | null;
+  /** Moved to another company: the account is kept (groups, departments, catalog) in case they come back. */
+  moved?: boolean;
 }
 
 /** Admin: a new user's profile. The admin fills in everything; the user only chooses a password (via the QR). */
@@ -189,6 +219,28 @@ export interface PublicConfig {
   certKey?: string;
   /** The server's official address. Clients registered under an older address move to it (see followServerMove). */
   serverUrl?: string;
+  /** true = nobody has set the server up yet: the first administrator still has to create their company. */
+  needsSetup?: boolean;
+}
+
+/** A company on the server (super admin view). */
+export interface CompanyInfo {
+  code: string;
+  name: string;
+  createdAt: number;
+  /** pending = asked for, closed until the super admin approves it; suspended = closed by the super admin. */
+  status: 'pending' | 'active' | 'suspended';
+  /** Accounts in it (not counting people moved out). */
+  users: number;
+  admins: string[];
+}
+
+/** Super admin: a new company and its first administrator (who joins with the QR invite). */
+export interface NewCompanyRequest {
+  code: string;
+  name: string;
+  adminId: string;
+  adminName?: string;
 }
 
 export interface MeResponse {
@@ -206,6 +258,10 @@ export interface MeResponse {
   email: string;
   /** My full name ('' = none). Only an admin can change it. */
   name: string;
+  /** My company (null = a server without companies). */
+  company?: { code: string; name: string } | null;
+  /** May manage companies and move people between them. */
+  isSuper?: boolean;
 }
 
 export interface UploadKeysRequest {

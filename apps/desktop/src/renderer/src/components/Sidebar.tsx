@@ -207,7 +207,7 @@ export function Sidebar({ onSettings, onError }: { onSettings: () => void; onErr
                 onMouseEnter={() => setHighlight(i)}
               >
                 <Avatar name={u} size="sm" />
-                <span>{u}</span>
+                <span>{client.displayName(u)}</span>
               </li>
             ))}
           </ul>
@@ -233,7 +233,7 @@ export function Sidebar({ onSettings, onError }: { onSettings: () => void; onErr
           const unread = c.getUnread(key);
           const group = isGroupKey(key);
           const typing = typingText(c.getTyping(key), group);
-          const who = last && (last.outgoing ? 'You: ' : group && last.from ? `${last.from}: ` : '');
+          const who = last && (last.outgoing ? 'You: ' : group && last.from ? `${client.displayName(last.from)}: ` : '');
           return (
             <li
               key={key}

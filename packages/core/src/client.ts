@@ -24,6 +24,14 @@ import {
   STATUS_COLORS,
   STATUS_TTL_MS,
   USERNAME_RE,
+  ID_RE,
+  COMPANY_CODE_RE,
+  MIN_PASSWORD_LENGTH,
+  makeUsername,
+  shortId,
+  type CompanyInfo,
+  type NewCompanyRequest,
+  type RegisterRequest,
   type AdminStats,
   type AdminUser,
   type AttachmentPointer,
@@ -72,7 +80,9 @@ import {
 import {
   createAccount,
   generateOneTimePreKeys,
+  makeSignedPreKey,
   maybeRotateSignedPreKey,
+  publicSpk,
   ONE_TIME_PREKEY_BATCH,
   ONE_TIME_PREKEY_LOW_WATER,
 } from './keys';
@@ -581,6 +591,17 @@ export class MessengerClient extends Emitter<Events> {
   policy: Policy = DEFAULT_POLICY;
   /** Suspended by the admin: the app stays signed in but cannot connect until unbanned. */
   banned = false;
+  /**
+   * Moved to another company: this account is closed, but the app keeps everything. Joining with the new
+   * company's QR invite (join()) carries this device's keys, chats and files over to the new account.
+   */
+  moved = false;
+  /** My company asked to use this server and waits for the super admin's approval. */
+  pending = false;
+  /** My company (null = a server without companies). */
+  company: { code: string; name: string } | null = null;
+  /** May create companies and move people between them. */
+  isSuper = false;
 
   private presence = new Map<string, Presence>();
   /** Profile photos as data: URLs, by user, with the version they belong to. */
@@ -637,30 +658,63 @@ export class MessengerClient extends Emitter<Events> {
     return !!this.account;
   }
 
-  async register(serverUrl: string, username: string): Promise<void> {
-    username = username.trim().toLowerCase();
-    if (!USERNAME_RE.test(username)) throw new Error('Username: 3-32 chars, a-z 0-9 _ .');
+  /**
+   * Create an account myself (open servers, or the server owner's own first account). With `loginPassword` I can
+   * sign in again later with my ID and that password; without it only this device can use the account.
+   */
+  async register(serverUrl: string, username: string, loginPassword?: string): Promise<void> {
+    await this.registerAccount(serverUrl, username, { loginPassword });
+  }
+
+  /**
+   * First-time setup of a company server by its owner: creates the company and my account in it. I become its
+   * admin and the super admin, who adds the other companies. Afterwards I sign in with company code, ID and password.
+   */
+  async setupServer(serverUrl: string, input: { companyCode: string; companyName: string; id: string; password: string }): Promise<void> {
+    const code = input.companyCode.trim().toLowerCase();
+    if (!COMPANY_CODE_RE.test(code)) throw new Error('Company code: 2-16 characters, a-z and 0-9 only');
+    await this.registerAccount(serverUrl, input.id, {
+      loginPassword: input.password,
+      company: { code, name: input.companyName.trim() },
+    });
+  }
+
+  private async registerAccount(
+    serverUrl: string,
+    id: string,
+    opts: { loginPassword?: string; company?: { code: string; name: string } },
+  ): Promise<void> {
+    id = id.trim().toLowerCase();
+    if (!ID_RE.test(id)) throw new Error('ID: 3-32 characters, a-z 0-9 _ .');
+    if (opts.loginPassword !== undefined && opts.loginPassword.length < MIN_PASSWORD_LENGTH) {
+      throw new Error(`Password: at least ${MIN_PASSWORD_LENGTH} characters`);
+    }
     serverUrl = normalizeServerUrl(serverUrl);
+    const username = makeUsername(id, opts.company?.code ?? '');
     const { account, signedPreKey, oneTimePreKeys } = await createAccount(this.store, serverUrl, username);
     try {
+      const body: RegisterRequest = {
+        username: id,
+        password: account.password,
+        loginPassword: opts.loginPassword,
+        company: opts.company,
+        identityKey: toBase64(account.identity.pub),
+        signedPreKey,
+        oneTimePreKeys,
+      };
       const res = await this.fetchImpl(`${serverUrl}/v1/register`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          username,
-          password: account.password,
-          identityKey: toBase64(account.identity.pub),
-          signedPreKey,
-          oneTimePreKeys,
-        }),
+        body: JSON.stringify(body),
       });
-      if (!res.ok) throw new ApiError(res.status, res.status === 409 ? 'Username already taken' : await res.text());
+      if (!res.ok) throw new ApiError(res.status, res.status === 409 && !opts.company ? 'Username already taken' : await res.text());
     } catch (e) {
       await this.store.wipe();
       throw unreachable(serverUrl, e);
     }
     this.account = account;
     this.contacts = [];
+    this.certificate = null; // issued for the previous account's key
     this.emit('change');
   }
 
@@ -706,6 +760,7 @@ export class MessengerClient extends Emitter<Events> {
     }
     this.account = account;
     this.contacts = [];
+    this.certificate = null; // issued for the previous account's key
     this.emit('change');
   }
 
@@ -794,6 +849,7 @@ export class MessengerClient extends Emitter<Events> {
   async join(code: string, newPassword: string): Promise<void> {
     const invite = parseInviteCode(code);
     if (!invite) throw new Error('That is not a CellMate invite. Scan the QR code your admin gave you.');
+    if (this.account && this.moved) return this.moveToInvite(invite, newPassword);
     const { serverUrl, username, token } = invite;
     const { account, signedPreKey, oneTimePreKeys } = await createAccount(this.store, serverUrl, username);
     try {
@@ -818,7 +874,112 @@ export class MessengerClient extends Emitter<Events> {
     }
     this.account = account;
     this.contacts = [];
+    this.certificate = null; // issued for the previous account's key
     this.emit('change');
+  }
+
+  /**
+   * After being moved to another company: join the new account with THIS device's identity, so its chats,
+   * contacts, starred messages and saved files all stay (and colleagues who already know me see no key change).
+   * Nothing is deleted if it fails.
+   */
+  private async moveToInvite(invite: { serverUrl: string; username: string; token: string }, newPassword: string): Promise<void> {
+    const old = this.account!;
+    const spks = await this.store.getSignedPreKeys();
+    const spk = makeSignedPreKey(old, spks.reduce((n, r) => Math.max(n, r.id), 0) + 1);
+    const oneTimePreKeys = await generateOneTimePreKeys(this.store, ONE_TIME_PREKEY_BATCH);
+    const account: Account = { ...old, serverUrl: invite.serverUrl, username: invite.username, password: toBase64(randomBytes(32)) };
+    const body: JoinRequest = {
+      username: invite.username,
+      token: invite.token,
+      newPassword,
+      deviceSecret: account.password,
+      identityKey: toBase64(old.identity.pub),
+      signedPreKey: publicSpk(spk),
+      oneTimePreKeys,
+    };
+    let res: Response;
+    try {
+      res = await this.fetchImpl(`${invite.serverUrl}/v1/join`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+    } catch (e) {
+      throw unreachable(invite.serverUrl, e);
+    }
+    if (!res.ok) throw new ApiError(res.status, (await res.text()) || res.statusText);
+    await this.store.saveSignedPreKeys([spk, ...spks.sort((a, b) => b.id - a.id)].slice(0, 3));
+    await this.store.saveAccount(account);
+    this.disconnect();
+    this.account = account;
+    this.moved = false;
+    this.banned = false;
+    this.certificate = null;
+    this.isAdmin = false;
+    this.admins = [];
+    this.groups = [];
+    this.profiles.clear();
+    this.presence.clear();
+    this.emit('change');
+  }
+
+  /** Admin: make someone an admin of our company too, or take it away (a company keeps at least one admin). */
+  async setUserAdmin(username: string, admin: boolean): Promise<void> {
+    await this.http('PUT', `/v1/admin/users/${encodeURIComponent(username)}/admin`, { admin });
+  }
+
+  // ------------------------------------------------------------------ super admin: companies
+
+  async listCompanies(): Promise<CompanyInfo[]> {
+    return (await this.http<{ companies: CompanyInfo[] }>('GET', '/v1/super/companies')).companies;
+  }
+
+  /** A new company and its first admin. Returns the admin's one-time QR invite (show it with inviteCode()). */
+  async createCompany(req: NewCompanyRequest): Promise<{ company: CompanyInfo; invite: InviteResponse }> {
+    const body: NewCompanyRequest = {
+      code: req.code.trim().toLowerCase(),
+      name: req.name.trim(),
+      adminId: req.adminId.trim().toLowerCase(),
+      adminName: req.adminName?.trim() || undefined,
+    };
+    return this.http('POST', '/v1/super/companies', body);
+  }
+
+  /** Approve a company that asked to join (or let a suspended one back in): its people can use the server. */
+  async approveCompany(code: string): Promise<void> {
+    await this.http('PUT', `/v1/super/companies/${encodeURIComponent(code)}/status`, { status: 'active' });
+  }
+
+  /** Close a company: its people are signed out and can't connect until it is approved again. Nothing is deleted. */
+  async suspendCompany(code: string): Promise<void> {
+    await this.http('PUT', `/v1/super/companies/${encodeURIComponent(code)}/status`, { status: 'suspended' });
+  }
+
+  /** Turn down a company that asked to join: it and the account made with it are deleted. */
+  async rejectCompany(code: string): Promise<void> {
+    await this.http('DELETE', `/v1/super/companies/${encodeURIComponent(code)}`);
+  }
+
+  async renameCompany(code: string, name: string): Promise<void> {
+    await this.http('PUT', `/v1/super/companies/${encodeURIComponent(code)}`, { name: name.trim() });
+  }
+
+  async listCompanyUsers(code: string): Promise<{ username: string; name: string; active: boolean; admin: boolean; banned: boolean; moved: boolean }[]> {
+    return (await this.http<{ users: never[] }>('GET', `/v1/super/companies/${encodeURIComponent(code)}/users`)).users;
+  }
+
+  /** A new QR invite for someone in a company (e.g. its admin lost their phone). */
+  companyInvite(code: string, username: string): Promise<InviteResponse> {
+    return this.http('POST', `/v1/super/companies/${encodeURIComponent(code)}/invite`, { username });
+  }
+
+  /**
+   * Move a person to another company (`id`: their ID there, default the same). Their old account is kept, closed;
+   * moving them back opens it again with its groups and settings. Returns the QR invite for the new account.
+   */
+  async transferUser(username: string, to: string, id?: string): Promise<{ username: string; invite: InviteResponse; returning: boolean }> {
+    return this.http('POST', '/v1/super/transfer', { username, to: to.trim().toLowerCase(), id: id?.trim().toLowerCase() || undefined });
   }
 
   /** Admin: a user's work mobile number and email ('' clears it). */
@@ -1032,7 +1193,7 @@ export class MessengerClient extends Emitter<Events> {
       this.setStatus('offline');
       if (this.wantOnline) {
         // While suspended, check back once a minute so an unban takes effect without restarting the app.
-        const delay = this.banned ? 60_000 : Math.min(30_000, 1000 * 2 ** this.retry++);
+        const delay = this.banned || this.moved || this.pending ? 60_000 : Math.min(30_000, 1000 * 2 ** this.retry++);
         this.reconnectTimer = setTimeout(() => this.openSocket(), delay);
       }
     };
@@ -1056,7 +1217,10 @@ export class MessengerClient extends Emitter<Events> {
         this.admins = Array.isArray(f.admins) ? f.admins : [];
         this.policy = { ...DEFAULT_POLICY, ...f.policy };
         this.banned = false;
+        this.moved = false;
+        this.pending = false;
         this.emit('change');
+        void this.loadMe();
         this.maintainKeys(f.preKeyCount).catch((e) => this.emit('error', `Key upload failed: ${e.message}`));
         this.setupSealedSender().catch((e) => console.warn('sealed sender unavailable', e));
         this.followServerMove().catch((e) => console.warn('server address check failed', e));
@@ -1068,14 +1232,7 @@ export class MessengerClient extends Emitter<Events> {
         break;
       case 'refresh':
         if (f.what === 'groups') await this.loadGroups().catch((e) => console.warn('groups unavailable', e));
-        if (f.what === 'policy') {
-          const me = await this.http<MeResponse>('GET', '/v1/me').catch(() => null);
-          if (me) {
-            this.policy = { ...DEFAULT_POLICY, ...me.policy };
-            this.canShare = !!me.canShare;
-            this.emit('change');
-          }
-        }
+        if (f.what === 'policy') await this.loadMe();
         break;
       case 'envelope':
         if (!f.from && isSealed(f.body)) {
@@ -1104,6 +1261,22 @@ export class MessengerClient extends Emitter<Events> {
             this.setMsgStatus(p.peer, p.msgId, 'failed');
           }
         }
+        if (f.code === 'pending' && !f.ref) {
+          // My company is waiting for approval: keep everything and check back every minute.
+          const first = !this.pending;
+          this.pending = true;
+          this.emit('change');
+          if (first) this.emit('error', f.message);
+          break;
+        }
+        if (f.code === 'moved' && !f.ref) {
+          // Moved to another company. Everything stays on this device until the new QR invite is used.
+          const first = !this.moved;
+          this.moved = true;
+          this.emit('change');
+          if (first) this.emit('error', f.message);
+          break;
+        }
         if (f.code === 'banned' && !f.ref) {
           // Suspended by the admin. Keys stay on this device, so an unban restores everything.
           const first = !this.banned;
@@ -1130,6 +1303,19 @@ export class MessengerClient extends Emitter<Events> {
         this.emit('error', f.message);
         break;
     }
+  }
+
+  /** My role and company, the admin list and the policy (they change when an admin changes them). */
+  private async loadMe(): Promise<void> {
+    const me = await this.http<MeResponse>('GET', '/v1/me').catch(() => null);
+    if (!me) return;
+    this.policy = { ...DEFAULT_POLICY, ...me.policy };
+    this.canShare = !!me.canShare;
+    this.isAdmin = !!me.isAdmin;
+    this.admins = Array.isArray(me.admins) ? me.admins : [];
+    this.company = me.company ?? null;
+    this.isSuper = !!me.isSuper;
+    this.emit('change');
   }
 
   private async maintainKeys(serverCount: number) {
@@ -2214,7 +2400,7 @@ export class MessengerClient extends Emitter<Events> {
 
   /** A person's full name as the admin entered it, or their ID. */
   displayName(username: string): string {
-    return this.profileOf(username)?.name || username;
+    return this.profileOf(username)?.name || shortId(username);
   }
 
   /** Everything for the chat list: my groups first, then 1:1 contacts. */
@@ -2733,6 +2919,11 @@ export class MessengerClient extends Emitter<Events> {
     this.groups = [];
     this.policy = DEFAULT_POLICY;
     this.banned = false;
+    this.moved = false;
+    this.pending = false;
+    this.certificate = null;
+    this.company = null;
+    this.isSuper = false;
     this.presence.clear();
     this.profiles.clear();
     this.avatars.clear();

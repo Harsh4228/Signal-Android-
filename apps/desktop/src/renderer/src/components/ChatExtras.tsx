@@ -94,7 +94,7 @@ export function ContactCardView({ username }: { username: string }) {
       <div className="row">
         <Avatar name={username} size="sm" />
         <div className="grow">
-          <div className="card-title">{username}</div>
+          <div className="card-title">{client.displayName(username)}</div>
           <div className="muted small">Contact</div>
         </div>
       </div>
@@ -392,7 +392,7 @@ export function ContactPicker({ chat, onClose, onError }: { chat: string; onClos
         {list.map((u) => (
           <li key={u} className="clickable" onClick={() => void share(u)}>
             <Avatar name={u} />
-            <div className="grow name">{u}</div>
+            <div className="grow name">{client.displayName(u)}</div>
           </li>
         ))}
       </ul>

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Camera, CircleCheck, LogOut, Settings as SettingsIcon, Trash2, X } from 'lucide-react';
-import { MAX_EMAIL, MAX_PHONE, MIN_PASSWORD_LENGTH } from '@meetme/core';
+import { MAX_EMAIL, MAX_PHONE, MIN_PASSWORD_LENGTH, shortId } from '@meetme/core';
 import { appLock, client, useClient } from '../messenger';
 import { AppLockSettings } from './AppLockSettings';
 import { Avatar, errorText } from './ui';
@@ -208,7 +208,8 @@ export function Settings({ onClose, onToast }: { onClose: () => void; onToast: (
           <div className="grow">
             <div className="name">{c.account ? c.displayName(c.account.username) : ''}</div>
             <div className="muted small">
-              @{c.account?.username} · {c.account?.serverUrl}
+              @{c.account ? shortId(c.account.username) : ''}
+              {c.company ? ` · ${c.company.name} (${c.company.code})` : ` · ${c.account?.serverUrl ?? ''}`}
             </div>
           </div>
           <input
@@ -242,6 +243,19 @@ export function Settings({ onClose, onToast }: { onClose: () => void; onToast: (
 
         <div className="section-title">App lock</div>
         <AppLockSettings onToast={onToast} />
+
+        {c.isSuper && (
+          <>
+            <div className="section-title">Server owner</div>
+            <div className="stack">
+              <p className="muted small" style={{ margin: 0 }}>
+                Approve companies, add new ones and move people between them. Opens in your browser; sign in there with company code,
+                ID and password.
+              </p>
+              <button onClick={() => c.account && void window.meetme.openSuper?.(c.account.serverUrl)}>Open the companies page</button>
+            </div>
+          </>
+        )}
 
         <div className="section-title">Change password</div>
         <form onSubmit={changePassword} className="stack">

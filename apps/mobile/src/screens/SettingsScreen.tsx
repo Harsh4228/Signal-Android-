@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
-import { Alert, Pressable, ScrollView, Text, View } from 'react-native';
-import { Camera, ChevronRight, CircleAlert, CircleCheck, Lock, LogOut, Trash2 } from 'lucide-react-native';
-import { AVATAR_MIMES, MAX_EMAIL, MAX_PHONE, MIN_PASSWORD_LENGTH } from '@meetme/core';
+import { Alert, Linking, Pressable, ScrollView, Text, View } from 'react-native';
+import { Building2, Camera, ChevronRight, CircleAlert, CircleCheck, Lock, LogOut, Trash2 } from 'lucide-react-native';
+import { AVATAR_MIMES, MAX_EMAIL, MAX_PHONE, MIN_PASSWORD_LENGTH, shortId } from '@meetme/core';
 import { pickFile } from '../files';
 import { appLock, client, useClient, useLock } from '../messenger';
 import { resetPush } from '../push';
@@ -203,7 +203,8 @@ export function SettingsScreen({ navigate }: { navigate: (r: Route) => void }) {
           <View style={{ flex: 1 }}>
             <Text style={[s.title, { fontSize: 18 }]}>{c.account ? c.displayName(c.account.username) : ''}</Text>
             <Text style={s.muted} numberOfLines={1}>
-              @{c.account?.username} · {c.account?.serverUrl}
+              @{c.account ? shortId(c.account.username) : ''}
+              {c.company ? ` · ${c.company.name} (${c.company.code})` : ` · ${c.account?.serverUrl ?? ''}`}
             </Text>
             {canEditProfile && (
               <Text style={{ color: colors.accent, fontSize: 13, marginTop: 2 }}>
@@ -226,6 +227,21 @@ export function SettingsScreen({ navigate }: { navigate: (r: Route) => void }) {
             right={<ChevronRight size={18} color={colors.faint} />}
           />
         </View>
+
+        {c.isSuper && (
+          <>
+            <Text style={s.section}>Server owner</Text>
+            <View style={[s.card, { padding: 4 }]}>
+              <Row
+                icon={Building2}
+                title="Companies"
+                subtitle="Approve companies, add new ones, move people. Opens in your browser; sign in with company code, ID and password."
+                onPress={() => c.account && void Linking.openURL(`${c.account.serverUrl}/super`)}
+                right={<ChevronRight size={18} color={colors.faint} />}
+              />
+            </View>
+          </>
+        )}
 
         <Text style={s.section}>Change password</Text>
         <View style={[s.card, { padding: 16, gap: 10 }]}>

@@ -30,8 +30,9 @@ import {
   MAX_GROUP_NAME,
   MAX_NAME,
   MAX_PHONE,
-  USERNAME_RE,
+  ID_RE,
   formatLastSeen,
+  shortId,
   groupKey,
   inviteCode,
   toBase64,
@@ -60,7 +61,9 @@ const TABS: [Tab, string][] = [
 ];
 
 const userState = (u: AdminUser) =>
-  u.banned
+  u.moved
+    ? 'Moved to another company'
+    : u.banned
     ? 'Banned'
     : !u.active
       ? 'Not logged in yet'
@@ -316,7 +319,7 @@ function UsersTab({
   const shown = useMemo(() => {
     const q = query.trim().toLowerCase();
     return (users ?? []).filter(
-      (u) => (u.username.includes(q) || u.name.toLowerCase().includes(q)) && matches(u, filter) && inDept(u, dept),
+      (u) => (shortId(u.username).includes(q) || u.name.toLowerCase().includes(q)) && matches(u, filter) && inDept(u, dept),
     );
   }, [users, query, filter, dept]);
   const deptCount = (d: string) => (users ?? []).filter((u) => inDept(u, d)).length;
@@ -333,7 +336,24 @@ function UsersTab({
 
   const manage = (u: AdminUser) => {
     const buttons: { text: string; style?: 'cancel' | 'destructive'; onPress?: () => void }[] = [];
-    const who = u.name || u.username;
+    const who = u.name || shortId(u.username);
+    const remove = {
+      text: 'Delete account',
+      style: 'destructive' as const,
+      onPress: () =>
+        Alert.alert('Delete account', `Delete ${who} for good? They are logged out everywhere.`, [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Delete', style: 'destructive', onPress: () => void run(() => client.removeEmployee(u.username), `${who} deleted`) },
+        ]),
+    };
+    if (u.moved) {
+      // Kept in case they come back (then their groups and departments are still here); deleting frees the ID.
+      Alert.alert(who, `@${shortId(u.username)} was moved to another company. The account is kept in case they come back.`, [
+        remove,
+        { text: 'Close', style: 'cancel' },
+      ]);
+      return;
+    }
     if (u.active && !u.banned) buttons.push({ text: 'Message', onPress: () => openChat(u.username) });
     buttons.push({ text: 'Edit profile', onPress: () => setEditingProfile(u) });
     buttons.push({ text: 'Change departments', onPress: () => setEditing(u) });
@@ -342,6 +362,25 @@ function UsersTab({
       onPress: () =>
         void run(async () => setInvite({ invite: await client.newInvite(u.username), name: who, renewed: true })),
     });
+    if (!u.banned) {
+      buttons.push({
+        text: u.admin ? 'Remove admin' : 'Make admin',
+        onPress: () =>
+          Alert.alert(
+            u.admin ? 'Remove admin' : 'Make admin',
+            u.admin
+              ? `${who} will no longer manage people, groups and settings.`
+              : `${who} will manage people, groups, departments and settings, like you.`,
+            [
+              { text: 'Cancel', style: 'cancel' },
+              {
+                text: u.admin ? 'Remove admin' : 'Make admin',
+                onPress: () => void run(() => client.setUserAdmin(u.username, !u.admin), u.admin ? `${who} is no longer an admin` : `${who} is now an admin`),
+              },
+            ],
+          ),
+      });
+    }
     if (!u.admin) {
       buttons.push({
         text: u.banned ? 'Unblock' : 'Block',
@@ -370,17 +409,9 @@ function UsersTab({
               ),
       });
     }
-    buttons.push({
-      text: 'Delete account',
-      style: 'destructive',
-      onPress: () =>
-        Alert.alert('Delete account', `Delete ${u.username} for good? They are logged out everywhere.`, [
-          { text: 'Cancel', style: 'cancel' },
-          { text: 'Delete', style: 'destructive', onPress: () => void run(() => client.removeEmployee(u.username), `${u.username} deleted`) },
-        ]),
-    });
+    buttons.push(remove);
     buttons.push({ text: 'Cancel', style: 'cancel' });
-    Alert.alert(who, `@${u.username} · ${userState(u)}`, buttons);
+    Alert.alert(who, `@${shortId(u.username)} · ${userState(u)}`, buttons);
   };
 
   return (
@@ -464,12 +495,13 @@ function UsersTab({
           <View style={{ flex: 1 }}>
             <View style={[s.row, { gap: 6 }]}>
               <Text style={[s.textStrong, { flexShrink: 1 }]} numberOfLines={1}>
-                {u.name || u.username}
-                {u.name ? <Text style={[s.muted, { fontWeight: '400' }]}> @{u.username}</Text> : null}
+                {u.name || shortId(u.username)}
+                {u.name ? <Text style={[s.muted, { fontWeight: '400' }]}> @{shortId(u.username)}</Text> : null}
                 {u.username === me ? ' (you)' : ''}
               </Text>
               {u.admin && <Pill text="Admin" />}
               {u.banned && <Pill text="Banned" danger />}
+              {u.moved && <Pill text="Moved" />}
             </View>
             {(!!u.phone || !!u.email) && (
               <Text style={[s.muted, { fontSize: 11.5, marginTop: 1 }]} numberOfLines={1}>
@@ -490,7 +522,7 @@ function UsersTab({
                 label={u.banned ? 'Unban' : 'Ban'}
                 size={19}
                 color={u.banned ? colors.ok : colors.muted}
-                disabled={u.admin}
+                disabled={u.admin || u.moved}
                 onPress={() => manage(u)}
               />
             </View>
@@ -604,7 +636,7 @@ function CreateUser({
   async function create() {
     setError(null);
     const username = id.trim().toLowerCase();
-    if (!USERNAME_RE.test(username)) return setError('ID: 3-32 characters, a-z 0-9 _ .');
+    if (!ID_RE.test(username)) return setError('ID: 3-32 characters, a-z 0-9 _ .');
     if (!name.trim()) return setError('Enter their full name');
     setBusy(true);
     try {
@@ -957,7 +989,7 @@ function GroupEditor({
   const q = query.trim().toLowerCase();
   return (
     <FlatList
-      data={users.filter((u) => u.username.includes(q))}
+      data={users.filter((u) => !u.moved && (shortId(u.username).includes(q) || u.name.toLowerCase().includes(q)))}
       keyExtractor={(u) => u.username}
       keyboardShouldPersistTaps="handled"
       contentContainerStyle={{ paddingBottom: 32 }}
@@ -1009,7 +1041,7 @@ function GroupEditor({
                       style={[styles.chip, on && styles.chipActive, s.row, { gap: 4 }]}
                     >
                       {on && <Check size={13} color={colors.accentText} />}
-                      <Text style={{ fontSize: 13, color: on ? colors.accentText : colors.text2, fontWeight: '500' }}>{u}</Text>
+                      <Text style={{ fontSize: 13, color: on ? colors.accentText : colors.text2, fontWeight: '500' }}>{shortId(u)}</Text>
                     </Pressable>
                   );
                 })}
@@ -1030,7 +1062,7 @@ function GroupEditor({
             <Avatar name={u.username} size={38} />
             <View style={{ flex: 1 }}>
               <Text style={s.textStrong}>
-                {u.username}
+                {u.name || shortId(u.username)}
                 {u.username === me ? ' (you)' : ''}
               </Text>
               <Text style={[s.muted, { fontSize: 12 }]}>{userState(u)}</Text>

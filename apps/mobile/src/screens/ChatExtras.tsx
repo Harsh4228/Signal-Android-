@@ -46,7 +46,7 @@ import { play, startRecording, stopPlaying, stopRecording } from '../voice';
 import { pickFile } from '../files';
 import type { Route } from '../App';
 
-const who = (u: string) => (u === client.account?.username ? 'You' : u);
+const who = (u: string) => (u === client.account?.username ? 'You' : client.displayName(u));
 
 export function QuoteView({ q }: { q: Quote }) {
   return (
@@ -111,7 +111,7 @@ export function ContactCardView({ username, navigate }: { username: string; navi
       <View style={[s.row, { gap: 10 }]}>
         <Avatar name={username} size={40} />
         <View>
-          <Text style={s.textStrong}>{username}</Text>
+          <Text style={s.textStrong}>{client.displayName(username)}</Text>
           <Text style={[s.muted, { fontSize: 12 }]}>Contact</Text>
         </View>
       </View>

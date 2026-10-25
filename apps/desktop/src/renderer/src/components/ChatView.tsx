@@ -350,7 +350,7 @@ export function ChatView({ peer, onError }: { peer: string; onError: (m: string)
                     {time(m.ts)}
                   </div>
                 </div>
-                <button className="call-back" title={`Call ${peer} back`} onClick={() => call(m.call!.video)}>
+                <button className="call-back" title={`Call ${client.displayName(peer)} back`} onClick={() => call(m.call!.video)}>
                   {m.call.video ? <Video size={15} /> : <Phone size={15} />} Call back
                 </button>
               </div>
@@ -384,7 +384,7 @@ export function ChatView({ peer, onError }: { peer: string; onError: (m: string)
                   />
                 )}
                 {reactingTo === m.id && <ReactionPicker chat={peer} m={m} onDone={() => setReactingTo(null)} onError={onError} />}
-                {group && !m.outgoing && m.from && <div className="sender">{m.from}</div>}
+                {group && !m.outgoing && m.from && <div className="sender">{client.displayName(m.from)}</div>}
                 {m.forwarded && !m.deleted && (
                   <div className="forwarded">
                     <Forward size={12} /> Forwarded

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Info, LockKeyhole } from 'lucide-react';
+import { Hourglass, Info, LockKeyhole } from 'lucide-react';
 import { appLock, client, useCall, useClient, useLock } from './messenger';
 import { Register } from './components/Register';
 import { Sidebar } from './components/Sidebar';
@@ -80,7 +80,30 @@ export function App() {
         <Logo large />
       </div>
     );
-  if (!c.account) return <Register onDone={() => client.connect()} />;
+  if (!c.account || c.moved) return <Register moved={!!c.account} onDone={() => client.connect()} />;
+  if (c.pending) {
+    // My company asked to use the server; the app checks back every minute and opens by itself once approved.
+    return (
+      <div className="register">
+        <div className="card">
+          <div className="card-head">
+            <Hourglass size={40} />
+            <h1>Waiting for approval</h1>
+            <p className="muted small" style={{ margin: 0 }}>
+              Your company was sent to the server owner. You can use CellMate as soon as they approve it: this window opens the app
+              by itself.
+            </p>
+          </div>
+          <button className="primary block" onClick={() => (client.disconnect(), client.connect())}>
+            Check now
+          </button>
+          <button className="block" onClick={() => void client.logout().then(() => appLock.load())}>
+            Sign out
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="app">

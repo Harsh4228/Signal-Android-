@@ -2,6 +2,8 @@ import { createHash, createHmac, randomBytes, scryptSync, timingSafeEqual } from
 import { mkdirSync, promises as fs } from 'node:fs';
 import http from 'node:http';
 import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import QRCode from 'qrcode';
 import { WebSocketServer, type WebSocket } from 'ws';
 import {
   DEFAULT_POLICY,
@@ -24,6 +26,14 @@ import {
   MAX_PRODUCT_PRICE,
   MIN_PASSWORD_LENGTH,
   USERNAME_RE,
+  ID_RE,
+  COMPANY_CODE_RE,
+  MAX_COMPANY_NAME,
+  companyOf,
+  makeUsername,
+  shortId,
+  type CompanyInfo,
+  type NewCompanyRequest,
   type AdminStats,
   type AdminUser,
   type AvatarResponse,
@@ -40,6 +50,7 @@ import {
   type PushKind,
   type PushTokenRequest,
   fromBase64,
+  inviteCode,
   generateIdentityKeyPair,
   isSealed,
   issueCertificate,
@@ -54,7 +65,7 @@ import {
   type UploadKeysRequest,
 } from '@meetme/core';
 import { LocalBus, type Bus, type BusEvent } from './bus';
-import { isActive, isOnlineRow, openSqlite, type Db, type GroupRow, type ProductPhoto, type ProductRow, type UserRow } from './db';
+import { MOVED, isActive, isOnlineRow, openSqlite, type Db, type GroupRow, type ProductPhoto, type ProductRow, type UserRow } from './db';
 import type { PushSender } from './push';
 
 export interface ServerConfig {
@@ -83,7 +94,17 @@ const ATTACHMENT_TTL_MS = 14 * 24 * 3600 * 1000;
 const MAX_QUEUE = 5000;
 const QUEUE_TTL_MS = 30 * 24 * 3600 * 1000;
 const AUTH_TIMEOUT_MS = 5000;
-const SEALED_PATH = new RegExp('^/v1/sealed/([a-z0-9_.]{3,32})$');
+/** The super admin's web page (companies, approvals): static files in ./web, served by this server. */
+const WEB_DIR = join(dirname(fileURLToPath(import.meta.url)), 'web');
+const WEB_FILES: Record<string, [file: string, type: string]> = {
+  '/super': ['super.html', 'text/html; charset=utf-8'],
+  '/super.js': ['super.js', 'text/javascript; charset=utf-8'],
+  '/super.css': ['super.css', 'text/css; charset=utf-8'],
+};
+const WEB_CSP =
+  "default-src 'none'; script-src 'self'; style-src 'self'; img-src data:; connect-src 'self'; form-action 'none'; frame-ancestors 'none'; base-uri 'none'";
+const WEB_SESSION_MS = 8 * 3600_000;
+const SEALED_PATH = new RegExp('^/v1/sealed/([a-z0-9_.]{3,32}(?:-[a-z0-9]{2,16})?)$');
 
 class HttpError extends Error {
   constructor(
@@ -130,6 +151,30 @@ function checkOpks(list: unknown) {
 }
 
 const BANNED_MESSAGE = 'Your account is suspended. Contact your admin.';
+const MOVED_MESSAGE = 'You were moved to another company. Scan the QR code from your new admin.';
+const accountClosed = (u: UserRow) => (u.banned === MOVED ? MOVED_MESSAGE : BANNED_MESSAGE);
+const PENDING_MESSAGE = 'Your company is waiting for approval by the server owner. You can use CellMate as soon as it is approved.';
+const SUSPENDED_MESSAGE = 'Your company has been suspended by the server owner.';
+
+function checkCompanyCode(v: unknown): string {
+  if (typeof v !== 'string' || !COMPANY_CODE_RE.test(v)) throw new HttpError(400, 'Company code: 2-16 characters, a-z and 0-9 only');
+  return v;
+}
+
+function checkCompanyName(v: unknown): string {
+  const name = typeof v === 'string' ? v.trim().replace(/\s+/g, ' ') : '';
+  if (!name || name.length > MAX_COMPANY_NAME) throw new HttpError(400, `Company name: 1-${MAX_COMPANY_NAME} characters`);
+  return name;
+}
+
+function parseList(v: string | undefined): string[] {
+  try {
+    const list = JSON.parse(v ?? '[]') as unknown;
+    return Array.isArray(list) ? list.filter((x): x is string => typeof x === 'string') : [];
+  } catch {
+    return [];
+  }
+}
 
 const toGroupInfo = (g: GroupRow): GroupInfo => ({
   id: g.id,
@@ -248,6 +293,14 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
     });
   certKey.catch((e) => console.error('could not load the sender certificate key', e));
   const sealedLimit = new RateLimiter(600, 60_000);
+  /** Super admin web sign-ins: SHA-256 of the token -> who and until when (memory only; a restart signs out). */
+  const webSessions = new Map<string, { user: string; until: number }>();
+  const tokenHash = (t: string) => createHash('sha256').update(t).digest('base64');
+  function webSessionUser(token: string): string {
+    const s = webSessions.get(tokenHash(token));
+    if (!s || s.until < Date.now()) throw new HttpError(401, 'Signed out. Sign in again.');
+    return s.user;
+  }
   const online = new Map<string, WebSocket>();
   const authCache = new Map<string, { digest: string; until: number }>();
   const registerLimit = new RateLimiter(10, 3600_000);
@@ -275,7 +328,9 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
       throw new HttpError(401, 'unauthorized');
     }
     // Banning kicks the user, which also clears this cache, so a ban takes effect at once.
-    if (user.banned) throw new HttpError(403, BANNED_MESSAGE);
+    if (user.banned) throw new HttpError(403, accountClosed(user));
+    const closed = await companyClosed(username);
+    if (closed) throw new HttpError(403, closed);
     authCache.set(username, { digest, until: Date.now() + 10 * 60_000 });
     return username;
   }
@@ -288,13 +343,56 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
 
   const isOnline = (u: UserRow) => online.has(u.username) || isOnlineRow(u);
 
+  // ---- companies ----
+  // A company's people are "<id>-<code>". The company list, each company's admins, departments and policy live
+  // in `meta`. Accounts without a company part (older / open servers) form the '' company, whose admins are
+  // ADMIN_USERS. People only ever see, find and message people in their own company.
+  /** status: missing = active; 'pending' = asked for, waits for the super admin's approval. */
+  type Company = { code: string; name: string; createdAt: number; status?: 'pending' | 'active' | 'suspended' };
+  async function listCompanies(): Promise<Company[]> {
+    try {
+      const list = JSON.parse((await db.getMeta('companies')) ?? '[]') as unknown;
+      return Array.isArray(list) ? (list as Company[]) : [];
+    } catch {
+      return [];
+    }
+  }
+  const saveCompanies = (list: Company[]) => db.setMeta('companies', JSON.stringify(list));
+  const getCompany = async (code: string) => (await listCompanies()).find((c) => c.code === code);
+  /** Per-company meta key; the '' company keeps the old server-wide keys. */
+  const metaKey = (key: string, company: string) => (company ? `${key}:${company}` : key);
+  async function adminsOf(company: string): Promise<string[]> {
+    return company ? parseList(await db.getMeta(metaKey('admins', company))) : config.adminUsers;
+  }
+  const setAdmins = (company: string, list: string[]) =>
+    db.setMeta(metaKey('admins', company), JSON.stringify(sortNames([...new Set(list)])));
+  const isAdminUser = async (u: string) => (await adminsOf(companyOf(u))).includes(u);
+  const superAdmins = async () => parseList(await db.getMeta('super_admins'));
+  const sameCompany = (a: string, b: string) => companyOf(a) === companyOf(b);
+  const companyUsers = async (company: string) => (await db.listUsers()).filter((u) => companyOf(u.username) === company);
+  /** Another account, but only if it is in my company: other companies don't exist for me. */
+  const colleague = async (me: string, username: string) => (sameCompany(me, username) ? db.getUser(username) : undefined);
+  /** Why the people of this account's company can't use the server now (null = they can). */
+  async function companyClosed(username: string): Promise<string | null> {
+    const code = companyOf(username);
+    if (!code) return null;
+    const c = await getCompany(code);
+    if (!c) return SUSPENDED_MESSAGE;
+    return c.status === 'pending' ? PENDING_MESSAGE : c.status === 'suspended' ? SUSPENDED_MESSAGE : null;
+  }
+  async function companyInfo(company: string): Promise<{ code: string; name: string } | null> {
+    if (!company) return null;
+    const c = await getCompany(company);
+    return { code: company, name: c?.name ?? company };
+  }
+
   async function notifyGroupsOf(user: string) {
     const groups = await db.groupsOf(user);
     if (groups.length) await notify([...new Set(groups.flatMap((g) => g.members))], 'groups');
   }
 
-  async function existingMembers(list: string[]): Promise<string[]> {
-    const known = new Set((await db.listUsers()).map((u) => u.username));
+  async function existingMembers(list: string[], company: string): Promise<string[]> {
+    const known = new Set((await companyUsers(company)).map((u) => u.username));
     const missing = list.filter((u) => !known.has(u));
     if (missing.length) throw new HttpError(400, `Unknown ID: ${missing.join(', ')}`);
     return list;
@@ -308,26 +406,21 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
   const canShare = (_u: UserRow) => false;
 
   /** The admin's department list, plus any name still on a user (so nothing in use goes missing). */
-  async function getDepartments(): Promise<string[]> {
-    let stored: string[] = [];
-    try {
-      const v = JSON.parse((await db.getMeta('departments')) ?? '[]') as unknown;
-      if (Array.isArray(v)) stored = v.filter((d): d is string => typeof d === 'string');
-    } catch {
-      // unreadable value: start from the names in use
-    }
-    for (const u of await db.listUsers()) {
+  async function getDepartments(company: string): Promise<string[]> {
+    const stored = parseList(await db.getMeta(metaKey('departments', company)));
+    for (const u of await companyUsers(company)) {
       for (const d of u.departments) if (!stored.some((s) => sameName(s, d))) stored.push(d);
     }
     return sortNames(stored);
   }
-  const saveDepartments = (list: string[]) => db.setMeta('departments', JSON.stringify(sortNames(list)));
+  const saveDepartments = (company: string, list: string[]) =>
+    db.setMeta(metaKey('departments', company), JSON.stringify(sortNames(list)));
 
   /** A user's departments: missing or [] = none; each must be on the department list. Returns them A-Z, once each. */
-  async function checkDepartments(v: unknown): Promise<string[]> {
+  async function checkDepartments(company: string, v: unknown): Promise<string[]> {
     if (v === undefined || v === null) return [];
     if (!Array.isArray(v) || v.length > MAX_DEPARTMENTS) throw new HttpError(400, 'departments must be a list of names');
-    const list = await getDepartments();
+    const list = await getDepartments(company);
     const out: string[] = [];
     for (const item of v) {
       const name = checkDepartmentName(item);
@@ -339,8 +432,8 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
   }
 
   /** Rename (to = name) or remove (to = null) a department on everyone who has it. */
-  async function replaceDepartment(from: string, to: string | null) {
-    for (const u of await db.listUsers()) {
+  async function replaceDepartment(company: string, from: string, to: string | null) {
+    for (const u of await companyUsers(company)) {
       if (!u.departments.includes(from)) continue;
       const next = u.departments.filter((d) => d !== from);
       if (to && !next.includes(to)) next.push(to);
@@ -350,11 +443,10 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
 
   // A server without admins has nobody to switch protections on or off, so there users keep full control
   // of their own history; with an admin, history is protected until the admin allows clearing it.
-  const defaultPolicy: Policy = { ...DEFAULT_POLICY, allowClearHistory: config.adminUsers.length === 0 };
-
-  async function getPolicy(): Promise<Policy> {
+  async function getPolicy(company: string): Promise<Policy> {
+    const defaultPolicy: Policy = { ...DEFAULT_POLICY, allowClearHistory: (await adminsOf(company)).length === 0 };
     try {
-      return { ...defaultPolicy, ...(JSON.parse((await db.getMeta('policy')) ?? '{}') as Partial<Policy>) };
+      return { ...defaultPolicy, ...(JSON.parse((await db.getMeta(metaKey('policy', company))) ?? '{}') as Partial<Policy>) };
     } catch {
       return defaultPolicy;
     }
@@ -448,6 +540,16 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
     return { fields, photo };
   }
 
+  /** Groups of a company: those its admins made. */
+  const companyGroups = async (company: string) => (await db.listGroups()).filter((g) => companyOf(g.created_by) === company);
+
+  /** For the web page: the invite as a code to send and as a QR picture. */
+  async function inviteExtras(req: http.IncomingMessage, invite: InviteResponse) {
+    const proto = config.trustProxy ? String(req.headers['x-forwarded-proto'] ?? 'http').split(',')[0] : 'http';
+    const code = inviteCode(config.publicUrl || `${proto}://${req.headers.host}`, invite);
+    return { code, qrSvg: await QRCode.toString(code, { type: 'svg', margin: 1, errorCorrectionLevel: 'M' }) };
+  }
+
   async function audit(actor: string, action: string, target: string, detail = '') {
     await db.addAudit({ ts: Date.now(), actor, action, target, detail }).catch((e) => console.error('audit failed', e));
   }
@@ -517,11 +619,47 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
     if (!requestLimit.allow(clientIp(req))) throw new HttpError(429, 'slow down');
 
     if (method === 'GET' && path === '/health') return send(200, { ok: true });
+    const page = method === 'GET' ? WEB_FILES[path] : undefined;
+    if (page) {
+      res.writeHead(200, { 'content-type': page[1], 'content-security-policy': WEB_CSP, 'x-frame-options': 'DENY' });
+      return res.end(await fs.readFile(join(WEB_DIR, page[0])));
+    }
+    // Super admin web page: sign in with company code + ID + password (the login password, never the device secret).
+    if (path === '/v1/super/session') {
+      if (method === 'DELETE') {
+        const t = String(req.headers.authorization ?? '').replace(/^Bearer /, '');
+        webSessions.delete(tokenHash(t));
+        return send(204);
+      }
+      if (method === 'POST') {
+        const ip = clientIp(req);
+        if (authFailLimit.isBlocked(ip)) throw new HttpError(429, 'Too many attempts, try again later');
+        const body = (await readJson(req)) as { username?: unknown; password?: unknown };
+        const user = typeof body.username === 'string' && USERNAME_RE.test(body.username) ? await db.getUser(body.username) : undefined;
+        const ok =
+          !!user &&
+          !user.banned &&
+          typeof body.password === 'string' &&
+          verifyPassword(body.password, user.pass_hash) &&
+          (await superAdmins()).includes(user.username);
+        if (!ok) {
+          authFailLimit.allow(ip);
+          throw new HttpError(401, 'Wrong company, ID or password (or not the server owner)');
+        }
+        for (const [k, s] of webSessions) if (s.until < Date.now()) webSessions.delete(k);
+        const token = randomBytes(32).toString('base64url');
+        const expires = Date.now() + WEB_SESSION_MS;
+        webSessions.set(tokenHash(token), { user: user!.username, until: expires });
+        await audit(user!.username, 'super.web_login', user!.username, 'signed in on the web page');
+        return send(200, { token, username: user!.username, expires });
+      }
+    }
     if (method === 'GET' && path === '/v1/config') {
       const pub: PublicConfig = {
         openRegistration: config.openRegistration,
         certKey: toBase64((await certKey).pub),
         ...(config.publicUrl ? { serverUrl: config.publicUrl } : {}),
+        needsSetup: !config.openRegistration && config.adminUsers.length > 0 && !(await superAdmins()).length,
       };
       return send(200, pub);
     }
@@ -535,7 +673,9 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
         authFailLimit.allow(ip);
         throw new HttpError(401, 'Wrong ID or password');
       }
-      if (user.banned) throw new HttpError(403, BANNED_MESSAGE);
+      if (user.banned) throw new HttpError(403, accountClosed(user));
+      const closed = await companyClosed(user.username);
+      if (closed) throw new HttpError(403, closed);
       let newHash: string | null = null;
       if (user.must_change) {
         if (body.newPassword === undefined) throw new HttpError(403, 'must_change');
@@ -573,7 +713,9 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
         authFailLimit.allow(ip);
         throw new HttpError(401, 'This QR code is not valid any more. Ask your admin for a new one.');
       }
-      if (user!.banned) throw new HttpError(403, BANNED_MESSAGE);
+      if (user!.banned) throw new HttpError(403, accountClosed(user!));
+      const closed = await companyClosed(user!.username);
+      if (closed) throw new HttpError(403, closed);
       checkNewPassword(body.newPassword);
       if (typeof body.deviceSecret !== 'string' || body.deviceSecret.length < 32 || body.deviceSecret.length > 128) {
         throw new HttpError(400, 'invalid device secret');
@@ -593,21 +735,53 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
     if (method === 'POST' && path === '/v1/register') {
       if (!registerLimit.allow(clientIp(req))) throw new HttpError(429, 'too many registrations');
       const body = (await readJson(req)) as Partial<RegisterRequest>;
-      if (typeof body.username !== 'string' || !USERNAME_RE.test(body.username)) {
+      // A self-chosen account never has a company part: only admins put people into companies.
+      if (typeof body.username !== 'string' || !ID_RE.test(body.username)) {
         throw new HttpError(400, 'invalid username');
       }
-      if (!config.openRegistration && !config.adminUsers.includes(body.username)) {
+      const setup = body.company;
+      let company: Company | null = null;
+      if (setup !== undefined) {
+        // First-time setup: the server owner (in ADMIN_USERS) creates the first company with their own account and
+        // becomes its admin and the super admin, who then creates the other companies.
+        const code = checkCompanyCode((setup as { code?: unknown } | null)?.code);
+        const name = checkCompanyName((setup as { name?: unknown } | null)?.name);
+        const companies = await listCompanies();
+        if (!(await superAdmins()).length && !companies.length) {
+          if (!config.adminUsers.includes(body.username)) {
+            throw new HttpError(403, 'Only the server owner can set it up. Ask your admin for a QR invite.');
+          }
+          company = { code, name, createdAt: Date.now() };
+        } else {
+          // Anyone may ask for a company; it stays closed until the super admin approves it.
+          if (companies.some((c) => c.code === code)) throw new HttpError(409, `The company code "${code}" is already used. Choose another.`);
+          company = { code, name, createdAt: Date.now(), status: 'pending' };
+        }
+      } else if (!config.openRegistration && !config.adminUsers.includes(body.username)) {
         throw new HttpError(403, 'Sign-up is closed. Ask your admin for an ID and password, then use Log in.');
       }
       if (typeof body.password !== 'string' || body.password.length < 32 || body.password.length > 128) {
         throw new HttpError(400, 'invalid password');
       }
+      if (body.loginPassword !== undefined) checkNewPassword(body.loginPassword);
       const identityKey = b64Key(body.identityKey, 32, 'identityKey');
       const spk = checkSpk(identityKey, body.signedPreKey);
       const opks = checkOpks(body.oneTimePreKeys ?? []);
-      if (await db.getUser(body.username)) throw new HttpError(409, 'username taken');
-      await db.createUser({ username: body.username, deviceHash: hashPassword(body.password), identityKey, spk }, opks);
-      return send(200, { ok: true });
+      const username = makeUsername(body.username, company?.code ?? '');
+      if (await db.getUser(username)) throw new HttpError(409, 'username taken');
+      const passHash = typeof body.loginPassword === 'string' ? hashPassword(body.loginPassword) : undefined;
+      await db.createUser({ username, deviceHash: hashPassword(body.password), passHash, identityKey, spk }, opks);
+      if (company?.status === 'pending') {
+        await saveCompanies([...(await listCompanies()), company]);
+        await setAdmins(company.code, [username]);
+        await audit(username, 'company.request', company.code, `${company.name}: waiting for approval`);
+      } else if (company) {
+        await saveCompanies([company]);
+        await setAdmins(company.code, [username]);
+        await db.setMeta('super_admins', JSON.stringify([username]));
+        await audit(username, 'company.create', company.code, `${company.name} (server set up)`);
+      }
+      return send(200, { ok: true, username, pending: company?.status === 'pending' });
     }
 
     // Sealed sender: NO login, so the server never learns who is sending. Allowed only with the
@@ -638,14 +812,15 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
     }
 
     // Everything below needs authentication.
-    const me = await basicAuth(req);
+    const authz = String(req.headers.authorization ?? '');
+    const me = authz.startsWith('Bearer ') && path.startsWith('/v1/super/') ? webSessionUser(authz.slice(7)) : await basicAuth(req);
 
     let m: RegExpMatchArray | null;
     if (method === 'GET' && path === '/v1/keys/count') {
       return send(200, { count: await db.countOneTimePreKeys(me) });
     }
-    if (method === 'GET' && (m = path.match(/^\/v1\/keys\/([a-z0-9_.]{3,32})$/))) {
-      const user = await db.getUser(m[1]!);
+    if (method === 'GET' && (m = path.match(/^\/v1\/keys\/([a-z0-9_.]{3,32}(?:-[a-z0-9]{2,16})?)$/))) {
+      const user = await colleague(me, m[1]!);
       if (!user) throw new HttpError(404, 'user not found');
       if (!isActive(user)) throw new HttpError(409, `${user.username} has not logged in yet`);
       if (user.banned) throw new HttpError(409, `${user.username} is suspended`);
@@ -668,14 +843,14 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
     if (method === 'GET' && path === '/v1/users') {
       const q = (url.searchParams.get('q') ?? '').trim().toLowerCase();
       if (!/^[a-z0-9_.]{1,32}$/.test(q)) return send(200, { users: [] });
-      const users = (await db.listUsers())
-        .filter((u) => u.username !== me && u.username.startsWith(q) && isActive(u) && !u.banned)
+      const users = (await companyUsers(companyOf(me)))
+        .filter((u) => u.username !== me && shortId(u.username).startsWith(q) && isActive(u) && !u.banned)
         .slice(0, 20)
         .map((u) => u.username);
       return send(200, { users });
     }
-    if (method === 'GET' && (m = path.match(/^\/v1\/users\/([a-z0-9_.]{3,32})$/))) {
-      const u = await db.getUser(m[1]!);
+    if (method === 'GET' && (m = path.match(/^\/v1\/users\/([a-z0-9_.]{3,32}(?:-[a-z0-9]{2,16})?)$/))) {
+      const u = await colleague(me, m[1]!);
       if (!u) throw new HttpError(404, 'user not found');
       // The company directory: department and the work contact details the admin entered.
       const profile: UserProfile & { exists: true } = {
@@ -736,20 +911,22 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
       const user = (await db.getUser(me))!;
       const me_: MeResponse = {
         username: me,
-        isAdmin: config.adminUsers.includes(me),
-        admins: config.adminUsers,
-        policy: await getPolicy(),
+        isAdmin: await isAdminUser(me),
+        admins: await adminsOf(companyOf(me)),
+        policy: await getPolicy(companyOf(me)),
         canShare: canShare(user),
         avatar: user.avatar_ver,
         phone: user.phone,
         email: user.email,
         name: user.display_name,
+        company: await companyInfo(companyOf(me)),
+        isSuper: (await superAdmins()).includes(me),
       };
       return send(200, me_);
     }
     // Profiles are made by the admin and locked: only admins may change their own details (employees ask the
     // admin). On a server without admins people manage their own.
-    const profileLocked = config.adminUsers.length > 0 && !config.adminUsers.includes(me);
+    const profileLocked = (await adminsOf(companyOf(me))).length > 0 && !(await isAdminUser(me));
     if (method === 'PUT' && path === '/v1/me/contact') {
       if (profileLocked) throw new HttpError(403, 'Only your admin can change your profile');
       const body = (await readJson(req)) as { phone?: unknown; email?: unknown };
@@ -772,8 +949,8 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
       await db.setAvatar(me, null);
       return send(204);
     }
-    if (method === 'GET' && (m = path.match(/^\/v1\/avatars\/([a-z0-9_.]{3,32})$/))) {
-      const a = await db.getAvatar(m[1]!);
+    if (method === 'GET' && (m = path.match(/^\/v1\/avatars\/([a-z0-9_.]{3,32}(?:-[a-z0-9]{2,16})?)$/))) {
+      const a = sameCompany(me, m[1]!) ? await db.getAvatar(m[1]!) : undefined;
       if (!a) throw new HttpError(404, 'no photo');
       const out: AvatarResponse = a;
       return send(200, out);
@@ -783,10 +960,12 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
     if (method === 'GET' && path === '/v1/catalog') {
       const owner = url.searchParams.get('owner') ?? me;
       if (!USERNAME_RE.test(owner)) throw new HttpError(400, 'invalid owner');
+      if (!sameCompany(me, owner)) return send(200, { products: [] });
       return send(200, { products: (await db.listProducts(owner)).map(toProductInfo) });
     }
     if (method === 'GET' && (m = path.match(/^\/v1\/catalog\/([0-9a-f]{16})\/photo$/))) {
-      const photo = await db.getProductPhoto(m[1]!);
+      const product = await db.getProduct(m[1]!);
+      const photo = product && sameCompany(me, product.owner) ? await db.getProductPhoto(product.id) : undefined;
       if (!photo) throw new HttpError(404, 'no photo');
       return send(200, photo);
     }
@@ -802,7 +981,7 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
       const product = await db.getProduct(m[1]!);
       if (!product) throw new HttpError(404, 'product not found');
       // Only the owner changes their catalog; an admin may also remove a product (moderation).
-      const isAdmin = config.adminUsers.includes(me);
+      const isAdmin = sameCompany(me, product.owner) && (await isAdminUser(me));
       if (product.owner !== me && !(method === 'DELETE' && isAdmin)) throw new HttpError(403, 'Not your product');
       if (method === 'PUT') {
         if (!uploadLimit.allow(me)) throw new HttpError(429, 'too many uploads');
@@ -815,7 +994,7 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
       return send(204);
     }
     if (method === 'GET' && path === '/v1/presence') {
-      const names = [...new Set((url.searchParams.get('u') ?? '').split(',').filter((u) => USERNAME_RE.test(u)))];
+      const names = [...new Set((url.searchParams.get('u') ?? '').split(',').filter((u) => USERNAME_RE.test(u) && sameCompany(me, u)))];
       if (names.length > 200) throw new HttpError(400, 'too many users');
       const out: Record<string, Presence> = {};
       for (const u of await Promise.all(names.map((n) => db.getUser(n)))) {
@@ -827,7 +1006,7 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
     }
     if (method === 'GET' && path === '/v1/groups') {
       // Members can only exchange messages with people who have logged in and are not suspended.
-      const reachable = new Set((await db.listUsers()).filter((u) => isActive(u) && !u.banned).map((u) => u.username));
+      const reachable = new Set((await companyUsers(companyOf(me))).filter((u) => isActive(u) && !u.banned).map((u) => u.username));
       const groups = (await db.groupsOf(me)).map((g) => ({ ...toGroupInfo(g), members: g.members.filter((u) => reachable.has(u)) }));
       return send(200, { groups });
     }
@@ -843,17 +1022,156 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
       return send(204);
     }
 
-    // ---- admin: employee accounts ----
+    // ---- super admin: companies, and moving people between them ----
+    if (path.startsWith('/v1/super/')) {
+      if (!(await superAdmins()).includes(me)) throw new HttpError(403, 'super admin only');
+
+      if (method === 'GET' && path === '/v1/super/companies') {
+        const users = await db.listUsers();
+        const companies: CompanyInfo[] = [];
+        for (const c of await listCompanies()) {
+          const people = users.filter((u) => companyOf(u.username) === c.code && u.banned !== MOVED);
+          companies.push({ ...c, status: c.status ?? 'active', users: people.length, admins: await adminsOf(c.code) });
+        }
+        companies.sort((a, b) => Number(b.status === 'pending') - Number(a.status === 'pending'));
+        return send(200, { companies });
+      }
+      if (method === 'POST' && path === '/v1/super/companies') {
+        // A new company and its first admin, who joins with the QR invite and chooses their own password.
+        const body = (await readJson(req)) as Partial<NewCompanyRequest>;
+        const code = checkCompanyCode(body.code);
+        const name = checkCompanyName(body.name);
+        if (typeof body.adminId !== 'string' || !ID_RE.test(body.adminId)) {
+          throw new HttpError(400, 'Admin ID must be 3-32 characters: a-z, 0-9, _ or .');
+        }
+        const adminName = checkName(body.adminName);
+        const list = await listCompanies();
+        if (list.some((c) => c.code === code)) throw new HttpError(409, `The company code "${code}" is already used`);
+        const username = makeUsername(body.adminId, code);
+        const company = { code, name, createdAt: Date.now() };
+        await saveCompanies([...list, company]);
+        await db.createPendingUser(username, hashPassword(randomBytes(24).toString('base64url')), { name: adminName });
+        await setAdmins(code, [username]);
+        const invite = await newInvite(username);
+        await audit(me, 'company.create', code, `${name}; first admin: ${body.adminId}`);
+        const info: CompanyInfo = { ...company, status: 'active', users: 1, admins: [username] };
+        return send(200, { company: info, invite, ...(await inviteExtras(req, invite)) });
+      }
+      if ((m = path.match(/^\/v1\/super\/companies\/([a-z0-9]{2,16})(\/users|\/invite|\/status)?$/))) {
+        const company = await getCompany(m[1]!);
+        if (!company) throw new HttpError(404, 'company not found');
+        // Approve a company that asked to join (active), suspend one (its people are cut off, nothing is deleted),
+        // or let it back in.
+        if (method === 'PUT' && m[2] === '/status') {
+          const status = ((await readJson(req)) as { status?: unknown }).status;
+          if (status !== 'active' && status !== 'suspended') throw new HttpError(400, 'status must be active or suspended');
+          const people = (await companyUsers(company.code)).map((u) => u.username);
+          if (people.includes(me)) throw new HttpError(400, "You can't suspend your own company");
+          await saveCompanies((await listCompanies()).map((c) => (c.code === company.code ? { ...c, status } : c)));
+          if (status === 'suspended') for (const u of people) await kick(u, 4007, 'company suspended');
+          const action = status === 'suspended' ? 'company.suspend' : company.status === 'pending' ? 'company.approve' : 'company.resume';
+          await audit(me, action, company.code, company.name);
+          return send(204);
+        }
+        // Turn down a request: the company and the account made with it are deleted.
+        if (method === 'DELETE' && !m[2]) {
+          if (company.status !== 'pending') throw new HttpError(400, 'Only a company waiting for approval can be turned down');
+          for (const u of await companyUsers(company.code)) {
+            await db.deleteUser(u.username);
+            await kick(u.username, 4001, 'company request turned down');
+          }
+          await saveCompanies((await listCompanies()).filter((c) => c.code !== company.code));
+          await db.setMeta(metaKey('admins', company.code), '[]');
+          await audit(me, 'company.reject', company.code, company.name);
+          return send(204);
+        }
+        if (method === 'PUT' && !m[2]) {
+          const name = checkCompanyName(((await readJson(req)) as { name?: unknown }).name);
+          await saveCompanies((await listCompanies()).map((c) => (c.code === company.code ? { ...c, name } : c)));
+          await audit(me, 'company.rename', company.code, `${name} (was: ${company.name})`);
+          await notify((await companyUsers(company.code)).map((u) => u.username), 'policy');
+          return send(204);
+        }
+        if (method === 'GET' && m[2] === '/users') {
+          const admins = await adminsOf(company.code);
+          const users = (await companyUsers(company.code)).map((u) => ({
+            username: u.username,
+            name: u.display_name,
+            active: isActive(u),
+            admin: admins.includes(u.username),
+            banned: u.banned === 1,
+            moved: u.banned === MOVED,
+          }));
+          return send(200, { users });
+        }
+        // A new QR for someone in the company, e.g. its admin lost their phone and nobody else there can do it.
+        if (method === 'POST' && m[2] === '/invite') {
+          const username = String(((await readJson(req)) as { username?: unknown }).username ?? '');
+          const user = await db.getUser(username);
+          if (!user || companyOf(user.username) !== company.code) throw new HttpError(404, 'user not found');
+          if (user.banned) throw new HttpError(400, `${shortId(user.username)} is suspended or was moved`);
+          const invite = await newInvite(user.username);
+          await audit(me, 'user.invite', user.username, 'new QR invite (super admin)');
+          return send(200, { ...invite, ...(await inviteExtras(req, invite)) });
+        }
+      }
+      if (method === 'POST' && path === '/v1/super/transfer') {
+        // Move a person to another company. Their account here is kept as it is (groups, departments, catalog),
+        // just closed; if they ever come back, that same account opens again with everything still attached.
+        const body = (await readJson(req)) as { username?: unknown; to?: unknown; id?: unknown };
+        const user = typeof body.username === 'string' ? await db.getUser(body.username) : undefined;
+        if (!user || user.banned === MOVED) throw new HttpError(404, 'user not found');
+        const to = checkCompanyCode(body.to);
+        const toCompany = await getCompany(to);
+        if (!toCompany) throw new HttpError(404, 'company not found');
+        if (toCompany.status === 'pending') throw new HttpError(400, 'That company is still waiting for approval');
+        if (to === companyOf(user.username)) throw new HttpError(400, 'They are already in that company');
+        const id = body.id === undefined || body.id === '' ? shortId(user.username) : String(body.id);
+        if (!ID_RE.test(id)) throw new HttpError(400, 'ID must be 3-32 characters: a-z, 0-9, _ or .');
+        const target = makeUsername(id, to);
+        const before = await db.getUser(target);
+        if (before && before.banned !== MOVED) {
+          throw new HttpError(409, `The ID "${id}" is already used in ${to}. Choose another ID.`);
+        }
+        if (before) {
+          // Coming back: open their old account there again. Its old device sign-in is not valid any more.
+          await db.clearDevice(target);
+          await db.setBanned(target, false);
+        } else {
+          await db.createPendingUser(target, hashPassword(randomBytes(24).toString('base64url')), {
+            name: user.display_name,
+            phone: user.phone,
+            email: user.email,
+          });
+          const photo = await db.getAvatar(user.username);
+          if (photo) await db.setAvatar(target, photo);
+        }
+        // The device is NOT signed out: the app keeps its chats and keys, and carries them to the new account.
+        await db.setBanned(user.username, MOVED);
+        await db.setInvite(user.username, null);
+        await kick(user.username, 4006, 'moved to another company');
+        await notifyGroupsOf(user.username);
+        const invite = await newInvite(target);
+        await audit(me, 'user.transfer', user.username, `to ${target}${before ? ' (back to their old account)' : ''}`);
+        return send(200, { username: target, invite, returning: !!before, ...(await inviteExtras(req, invite)) });
+      }
+      throw new HttpError(404, 'not found');
+    }
+
+    // ---- admin: employee accounts (of the admin's own company) ----
     if (path.startsWith('/v1/admin/')) {
-      if (!config.adminUsers.includes(me)) throw new HttpError(403, 'admin only');
+      if (!(await isAdminUser(me))) throw new HttpError(403, 'admin only');
+      const co = companyOf(me);
 
       if (method === 'GET' && path === '/v1/admin/users') {
-        const users: AdminUser[] = (await db.listUsers()).map((u) => ({
+        const admins = await adminsOf(co);
+        const users: AdminUser[] = (await companyUsers(co)).map((u) => ({
           username: u.username,
           active: isActive(u),
-          admin: config.adminUsers.includes(u.username),
+          admin: admins.includes(u.username),
           mustChangePassword: !!u.must_change,
-          banned: !!u.banned,
+          banned: u.banned === 1,
+          ...(u.banned === MOVED ? { moved: true } : {}),
           online: isOnline(u),
           lastSeen: u.last_seen === null ? null : Number(u.last_seen),
           createdAt: Number(u.created_at),
@@ -878,12 +1196,15 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
           name?: unknown;
           photo?: unknown;
         };
-        if (typeof body.username !== 'string' || !USERNAME_RE.test(body.username)) {
+        // The admin types an ID; the account gets the company part (apps of the same version send just the ID).
+        const typed = typeof body.username === 'string' && co && body.username.endsWith(`-${co}`) ? shortId(body.username) : body.username;
+        if (typeof typed !== 'string' || !ID_RE.test(typed)) {
           throw new HttpError(400, 'ID must be 3-32 characters: a-z, 0-9, _ or .');
         }
+        const username = makeUsername(typed, co);
         // Normally there is no password: the person chooses one when they scan the QR invite.
         if (body.password !== undefined) checkNewPassword(body.password);
-        const departments = await checkDepartments(body.departments);
+        const departments = await checkDepartments(co, body.departments);
         const { phone, email } = checkContactInfo(body.phone, body.email);
         const name = checkName(body.name);
         const photo = body.photo === undefined ? null : checkPhoto(body.photo);
@@ -891,18 +1212,39 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
           throw new HttpError(400, 'canShare must be true or false');
         }
         const canShare = body.canShare === true;
-        if (await db.getUser(body.username)) throw new HttpError(409, 'That ID already exists');
+        if (await db.getUser(username)) throw new HttpError(409, 'That ID already exists');
         const password = typeof body.password === 'string' ? body.password : randomBytes(24).toString('base64url');
-        await db.createPendingUser(body.username, hashPassword(password), { departments, canShare, phone, email, name });
-        if (photo) await db.setAvatar(body.username, { ...photo, ver: Date.now() });
-        const invite = await newInvite(body.username);
+        await db.createPendingUser(username, hashPassword(password), { departments, canShare, phone, email, name });
+        if (photo) await db.setAvatar(username, { ...photo, ver: Date.now() });
+        const invite = await newInvite(username);
         const detail = [name, departments.length && `departments: ${departments.join(', ')}`, phone && `mobile ${phone}`, email && `email ${email}`];
-        await audit(me, 'user.create', body.username, detail.filter(Boolean).join(', '));
+        await audit(me, 'user.create', username, detail.filter(Boolean).join(', '));
         return send(200, { ok: true, invite });
       }
-      if ((m = path.match(/^\/v1\/admin\/users\/([a-z0-9_.]{3,32})(\/password|\/ban|\/departments|\/share|\/contact|\/invite|\/profile|\/avatar)?$/))) {
-        const target = await db.getUser(m[1]!);
+      if ((m = path.match(/^\/v1\/admin\/users\/([a-z0-9_.]{3,32}(?:-[a-z0-9]{2,16})?)(\/password|\/ban|\/departments|\/share|\/contact|\/invite|\/profile|\/avatar|\/admin)?$/))) {
+        const target = await colleague(me, m[1]!);
         if (!target) throw new HttpError(404, 'user not found');
+        if (target.banned === MOVED && m[2] && method !== 'GET') {
+          throw new HttpError(400, `${shortId(target.username)} was moved to another company`);
+        }
+        // Make someone an admin of the company, or take it away. A company always keeps at least one admin.
+        if (method === 'PUT' && m[2] === '/admin') {
+          const body = (await readJson(req)) as { admin?: unknown };
+          if (typeof body.admin !== 'boolean') throw new HttpError(400, 'admin must be true or false');
+          if (!co) throw new HttpError(400, 'Admins of this server are set in its settings (ADMIN_USERS)');
+          const admins = await adminsOf(co);
+          if (body.admin) {
+            if (target.banned) throw new HttpError(400, `${shortId(target.username)} is suspended`);
+            await setAdmins(co, [...admins, target.username]);
+          } else {
+            const rest = admins.filter((a) => a !== target.username);
+            if (!rest.length) throw new HttpError(400, 'The company needs at least one admin');
+            await setAdmins(co, rest);
+          }
+          await audit(me, body.admin ? 'user.admin_on' : 'user.admin_off', target.username);
+          await notify((await companyUsers(co)).map((u) => u.username), 'policy'); // apps re-read who the admins are
+          return send(204);
+        }
         // A new QR invite (also to move someone to a new phone: joining replaces their old device).
         if (method === 'POST' && m[2] === '/invite') {
           const invite = await newInvite(target.username);
@@ -948,7 +1290,7 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
         }
         if (method === 'PUT' && m[2] === '/departments') {
           const body = (await readJson(req)) as { departments?: unknown };
-          const departments = await checkDepartments(body.departments);
+          const departments = await checkDepartments(co, body.departments);
           await db.setDepartments(target.username, departments);
           await audit(me, 'user.department', target.username, departments.join(', ') || 'none');
           return send(204);
@@ -964,7 +1306,7 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
           const body = (await readJson(req)) as { banned?: unknown };
           if (typeof body.banned !== 'boolean') throw new HttpError(400, 'banned must be true or false');
           if (target.username === me) throw new HttpError(400, "You can't ban yourself");
-          if (config.adminUsers.includes(target.username)) throw new HttpError(400, "Admins can't be banned");
+          if (await isAdminUser(target.username)) throw new HttpError(400, "Admins can't be banned");
           await db.setBanned(target.username, body.banned);
           if (body.banned) {
             // Blocking signs them out for good: their device is cut off (its app deletes its keys), their password
@@ -982,6 +1324,11 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
         if (method === 'DELETE' && !m[2]) {
           if (target.username === me) throw new HttpError(400, "You can't remove yourself");
           const groups = await db.groupsOf(target.username);
+          const admins = await adminsOf(co);
+          if (co && admins.includes(target.username)) {
+            if (admins.length === 1) throw new HttpError(400, 'The company needs at least one admin');
+            await setAdmins(co, admins.filter((a) => a !== target.username));
+          }
           await db.deleteUser(target.username);
           await kick(target.username, 4001, 'account removed by admin');
           await audit(me, 'user.delete', target.username);
@@ -992,15 +1339,15 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
 
       // ---- departments: the list admins pick from when they add or move a user ----
       if (path === '/v1/admin/departments') {
-        if (method === 'GET') return send(200, { departments: await getDepartments() });
+        if (method === 'GET') return send(200, { departments: await getDepartments(co) });
         if (method === 'POST') {
           const name = checkDepartmentName(((await readJson(req)) as { name?: unknown }).name);
-          const list = await getDepartments();
+          const list = await getDepartments(co);
           if (list.some((d) => sameName(d, name))) throw new HttpError(409, `"${name}" already exists`);
           if (list.length >= MAX_DEPARTMENTS) throw new HttpError(400, `Up to ${MAX_DEPARTMENTS} departments`);
-          await saveDepartments([...list, name]);
+          await saveDepartments(co, [...list, name]);
           await audit(me, 'department.create', name);
-          return send(200, { departments: await getDepartments() });
+          return send(200, { departments: await getDepartments(co) });
         }
       }
       if ((m = path.match(/^\/v1\/admin\/departments\/([^/]+)$/))) {
@@ -1010,45 +1357,47 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
         } catch {
           throw new HttpError(400, 'bad department name');
         }
-        const list = await getDepartments();
+        const list = await getDepartments(co);
         const found = list.find((d) => sameName(d, current));
         if (!found) throw new HttpError(404, 'department not found');
         if (method === 'PUT') {
           const name = checkDepartmentName(((await readJson(req)) as { name?: unknown }).name);
           if (list.some((d) => d !== found && sameName(d, name))) throw new HttpError(409, `"${name}" already exists`);
-          await replaceDepartment(found, name);
-          await saveDepartments(list.map((d) => (d === found ? name : d)));
+          await replaceDepartment(co, found, name);
+          await saveDepartments(co, list.map((d) => (d === found ? name : d)));
           await audit(me, 'department.rename', name, `was: ${found}`);
-          return send(200, { departments: await getDepartments() });
+          return send(200, { departments: await getDepartments(co) });
         }
         if (method === 'DELETE') {
-          await replaceDepartment(found, null); // its people are kept, just not in this department
-          await saveDepartments(list.filter((d) => d !== found));
+          await replaceDepartment(co, found, null); // its people are kept, just not in this department
+          await saveDepartments(co, list.filter((d) => d !== found));
           await audit(me, 'department.delete', found);
-          return send(200, { departments: await getDepartments() });
+          return send(200, { departments: await getDepartments(co) });
         }
       }
 
       if (method === 'GET' && path === '/v1/admin/stats') {
-        const users = await db.listUsers();
+        const users = (await companyUsers(co)).filter((u) => u.banned !== MOVED);
+        const admins = await adminsOf(co);
         const stats: AdminStats = {
           users: users.length,
           active: users.filter(isActive).length,
           pending: users.filter((u) => !isActive(u)).length,
           banned: users.filter((u) => u.banned).length,
           online: users.filter(isOnline).length,
-          admins: users.filter((u) => config.adminUsers.includes(u.username)).length,
-          groups: (await db.listGroups()).length,
+          admins: users.filter((u) => admins.includes(u.username)).length,
+          groups: (await companyGroups(co)).length,
         };
         return send(200, stats);
       }
       if (method === 'GET' && path === '/v1/admin/audit') {
         const limit = Math.min(500, Math.max(1, Number(url.searchParams.get('limit')) || 200));
-        const entries: AuditEntry[] = await db.listAudit(limit);
+        // The log is shared; each company sees what its own admins did.
+        const entries: AuditEntry[] = (await db.listAudit(co ? 2000 : limit)).filter((e) => companyOf(e.actor) === co).slice(0, limit);
         return send(200, { entries });
       }
       if (path === '/v1/admin/settings') {
-        if (method === 'GET') return send(200, await getPolicy());
+        if (method === 'GET') return send(200, await getPolicy(co));
         if (method === 'PUT') {
           const body = (await readJson(req)) as Partial<Policy>;
           // Send just the switches you change; the others keep their value.
@@ -1056,25 +1405,25 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
           const given = keys.filter((k) => body[k] !== undefined);
           if (!given.length) throw new HttpError(400, 'nothing to change');
           for (const k of given) if (typeof body[k] !== 'boolean') throw new HttpError(400, `${k} must be true or false`);
-          const policy: Policy = { ...(await getPolicy()) };
+          const policy: Policy = { ...(await getPolicy(co)) };
           for (const k of given) policy[k] = body[k] as boolean;
-          await db.setMeta('policy', JSON.stringify(policy));
+          await db.setMeta(metaKey('policy', co), JSON.stringify(policy));
           const label = { allowEditDelete: 'edit/delete messages', allowClearHistory: 'clear chat history' };
           const detail = given.map((k) => `${label[k]}: ${policy[k] ? 'on' : 'off'}`).join(', ');
           await audit(me, 'settings.update', 'policy', detail);
-          await notify(null, 'policy');
+          await notify((await companyUsers(co)).map((u) => u.username), 'policy');
           return send(200, policy);
         }
       }
 
       // ---- groups: only admins create them and decide who is in them ----
       if (method === 'GET' && path === '/v1/admin/groups') {
-        return send(200, { groups: (await db.listGroups()).map(toGroupInfo) });
+        return send(200, { groups: (await companyGroups(co)).map(toGroupInfo) });
       }
       if (method === 'POST' && path === '/v1/admin/groups') {
         const body = (await readJson(req)) as { name?: unknown; members?: unknown; senders?: unknown };
         const name = checkGroupName(body.name);
-        const members = await existingMembers(checkMemberList(body.members ?? []));
+        const members = await existingMembers(checkMemberList(body.members ?? []), co);
         const senders = checkSenders(body.senders, members);
         const id = randomBytes(8).toString('hex');
         await db.createGroup({ id, name, createdBy: me, members, senders });
@@ -1085,11 +1434,11 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
       }
       if ((m = path.match(/^\/v1\/admin\/groups\/([0-9a-f]+)$/)) && GROUP_ID_RE.test(m[1]!)) {
         const group = await db.getGroup(m[1]!);
-        if (!group) throw new HttpError(404, 'group not found');
+        if (!group || companyOf(group.created_by) !== co) throw new HttpError(404, 'group not found');
         if (method === 'PUT') {
           const body = (await readJson(req)) as { name?: unknown; members?: unknown; senders?: unknown };
           const name = body.name === undefined ? undefined : checkGroupName(body.name);
-          const members = body.members === undefined ? undefined : await existingMembers(checkMemberList(body.members));
+          const members = body.members === undefined ? undefined : await existingMembers(checkMemberList(body.members), co);
           const finalMembers = members ?? group.members;
           // Not sent: keep the current rule, minus anyone who left the group.
           const senders =
@@ -1123,7 +1472,7 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
     if (method === 'DELETE' && path === '/v1/account') {
       // On a company server (one with admins) accounts belong to the company: only an admin removes them,
       // from the admin panel. Self-deletion is only for open servers without admins.
-      if (config.adminUsers.length) throw new HttpError(403, 'Only an admin can delete accounts. Ask your admin.');
+      if ((await adminsOf(companyOf(me))).length) throw new HttpError(403, 'Only an admin can delete accounts. Ask your admin.');
       const groups = await db.groupsOf(me);
       await db.deleteUser(me);
       await kick(me, 4001, 'account deleted');
@@ -1293,7 +1642,10 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
             status === 401
               ? ['auth', 'Authentication failed']
               : status === 403
-                ? ['banned', BANNED_MESSAGE]
+                ? [
+                    (e as Error).message === MOVED_MESSAGE ? 'moved' : (e as Error).message === PENDING_MESSAGE ? 'pending' : 'banned',
+                    (e as Error).message,
+                  ]
                 : status === 429
                   ? ['rate', 'Too many attempts, retrying later']
                   : ['unavailable', 'Server busy, reconnecting'];
@@ -1305,9 +1657,9 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
         frame(ws, {
           type: 'ready',
           preKeyCount,
-          isAdmin: config.adminUsers.includes(me),
-          admins: config.adminUsers,
-          policy: await getPolicy(),
+          isAdmin: await isAdminUser(me),
+          admins: await adminsOf(companyOf(me)),
+          policy: await getPolicy(companyOf(me)),
           canShare: canShare((await db.getUser(me))!),
           avatar: (await db.getUser(me))!.avatar_ver,
         });
@@ -1333,7 +1685,7 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
           const ref = typeof f.ref === 'string' ? f.ref.slice(0, 64) : '';
           const fail = (code: string, message: string) => frame(ws, { type: 'error', ref, code, message });
           if (!sendLimit.allow(me)) return fail('rate', 'Sending too fast');
-          const target = typeof f.to === 'string' && USERNAME_RE.test(f.to) ? await db.getUser(f.to) : undefined;
+          const target = typeof f.to === 'string' && USERNAME_RE.test(f.to) ? await colleague(me, f.to) : undefined;
           if (!target) return fail('unknown_user', 'User not found');
           if (!isActive(target)) return fail('not_active', `${target.username} has not logged in yet`);
           if (target.banned) return fail('banned', `${target.username} is suspended`);

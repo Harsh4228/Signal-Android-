@@ -37,7 +37,7 @@ export async function createAccount(
   return { account, signedPreKey: publicSpk(spk), oneTimePreKeys };
 }
 
-function makeSignedPreKey(account: Account, id: number): SignedPreKeyRecord {
+export function makeSignedPreKey(account: Account, id: number): SignedPreKeyRecord {
   const keyPair = generateKeyPair();
   return { id, keyPair, sig: signPreKey(account.identity, keyPair.pub), createdAt: Date.now() };
 }

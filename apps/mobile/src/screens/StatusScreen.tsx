@@ -344,7 +344,7 @@ export function StatusViewerScreen({
                   viewers.map(([u, ts]) => (
                     <View key={u} style={[s.row, { gap: 10, padding: 6 }]}>
                       <Avatar name={u} size={32} />
-                      <Text style={[s.text, { flex: 1 }]}>{u}</Text>
+                      <Text style={[s.text, { flex: 1 }]}>{client.displayName(u)}</Text>
                       <Text style={s.muted}>{shortTime(ts)}</Text>
                     </View>
                   ))

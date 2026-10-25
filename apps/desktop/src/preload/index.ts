@@ -10,6 +10,8 @@ contextBridge.exposeInMainWorld('meetme', {
   openMaps: (url: string): Promise<void> => ipcRenderer.invoke('maps:open', url),
   /** Start background update checks against <server>/updates/ (installed builds only). */
   checkUpdates: (serverUrl: string): Promise<void> => ipcRenderer.invoke('updates:check', serverUrl),
+  /** Server owner: open the companies page of this server in the system browser. */
+  openSuper: (serverUrl: string): Promise<void> => ipcRenderer.invoke('super:open', serverUrl),
   store: {
     getItem: (key: string): Promise<string | null> => ipcRenderer.invoke('store:get', key),
     setItem: (key: string, value: string): Promise<void> => ipcRenderer.invoke('store:set', key, value),

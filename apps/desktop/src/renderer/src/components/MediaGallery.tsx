@@ -131,7 +131,7 @@ function MediaGallery({ chatKey, onClose, onToast }: { chatKey: string; onClose:
                     <div className="grow">
                       <div className="att-name">{m.name}</div>
                       <div className="muted small">
-                        {formatBytes(m.size)} · {m.outgoing ? 'You' : m.from} · {day(m.ts)}
+                        {formatBytes(m.size)} · {m.outgoing ? 'You' : client.displayName(m.from)} · {day(m.ts)}
                       </div>
                       {m.caption && <div className="small doc-caption">{m.caption}</div>}
                     </div>
@@ -188,7 +188,7 @@ function SavedViewer({ item, onClose, onToast }: { item: MediaItem; onClose: () 
   );
 
   return (
-    <Viewer title={`${item.name} · ${item.outgoing ? 'You' : item.from} · ${day(item.ts)}`} onClose={onClose} actions={actions}>
+    <Viewer title={`${item.name} · ${item.outgoing ? 'You' : client.displayName(item.from)} · ${day(item.ts)}`} onClose={onClose} actions={actions}>
       {error ? (
         <div className="error">{error}</div>
       ) : !a?.data ? (

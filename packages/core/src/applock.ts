@@ -29,6 +29,9 @@ export const AUTO_LOCK_OPTIONS: [number, string][] = [
   [3600, 'After 1 hour'],
 ];
 
+/** PBKDF2-SHA256(pin, salt, iter) -> 32 bytes. Phones pass a native one: the JS version takes seconds there. */
+export type PinDerive = (pin: string, salt: Uint8Array, iter: number) => Promise<Uint8Array>;
+
 interface Stored {
   salt: string;
   hash: string;
@@ -48,6 +51,7 @@ export class AppLock extends Emitter<{ change: [] }> {
   constructor(
     private readonly storage: SecureStorage,
     private readonly now: () => number = Date.now,
+    private readonly derive: PinDerive = derivePin,
   ) {
     super();
   }
@@ -82,7 +86,7 @@ export class AppLock extends Emitter<{ change: [] }> {
     const salt = randomBytes(16);
     this.cfg = {
       salt: toBase64(salt),
-      hash: toBase64(await derive(pin, salt, ITERATIONS)),
+      hash: toBase64(await this.derive(pin, salt, ITERATIONS)),
       iter: ITERATIONS,
       autoLockSec: opts.autoLockSec ?? this.cfg?.autoLockSec ?? 60,
       biometrics: opts.biometrics ?? this.cfg?.biometrics ?? false,
@@ -159,7 +163,7 @@ export class AppLock extends Emitter<{ change: [] }> {
     const cfg = this.cfg;
     if (!cfg) return true;
     if (this.lockoutRemaining > 0) return false;
-    const hash = await derive(pin, fromBase64(cfg.salt), cfg.iter);
+    const hash = await this.derive(pin, fromBase64(cfg.salt), cfg.iter);
     if (equal(hash, fromBase64(cfg.hash))) {
       cfg.failed = 0;
       cfg.lockoutUntil = 0;
@@ -188,7 +192,8 @@ function checkPin(pin: string) {
   }
 }
 
-function derive(pin: string, salt: Uint8Array, iter: number): Promise<Uint8Array> {
+/** The portable (JavaScript) PIN hash. */
+export function derivePin(pin: string, salt: Uint8Array, iter: number): Promise<Uint8Array> {
   return pbkdf2Async(sha256, utf8(pin), salt, { c: iter, dkLen: 32 });
 }
 

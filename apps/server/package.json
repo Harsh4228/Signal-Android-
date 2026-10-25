@@ -13,12 +13,14 @@
   "dependencies": {
     "@meetme/core": "*",
     "pg": "^8.23.1",
+    "qrcode": "^1.5.4",
     "tsx": "^4.20.0",
     "ws": "^8.18.0"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
     "@types/pg": "^8.23.1",
+    "@types/qrcode": "^1.5.6",
     "@types/ws": "^8.18.0",
     "typescript": "^5.9.0"
   }

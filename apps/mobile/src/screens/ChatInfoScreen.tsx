@@ -179,7 +179,7 @@ function PersonInfoScreen({
       <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40 }}>
         <View style={{ alignItems: 'center', gap: 8, paddingVertical: 8 }}>
           <Avatar name={peer} size={80} />
-          <Text style={[s.h1, { fontSize: 20 }]}>{peer}</Text>
+          <Text style={[s.h1, { fontSize: 20 }]}>{client.displayName(peer)}</Text>
           {!!c.getPresence(peer) && <Text style={s.muted}>{formatLastSeen(c.getPresence(peer))}</Text>}
           {!!c.profileOf(peer)?.departments.length && (
             <Text style={[s.muted, { fontSize: 13, fontWeight: '600', color: colors.accentText }]}>{c.profileOf(peer)!.departments.join(', ')}</Text>
@@ -235,7 +235,7 @@ function PersonInfoScreen({
                 {safety.number.replace(/(\S+ \S+ \S+ \S+) /g, '$1\n')}
               </Text>
               <Text style={[s.muted, { marginTop: 12, lineHeight: 19 }]}>
-                Compare these numbers with {peer} in person or on a video call. If they match, nobody can be listening in.
+                Compare these numbers with {client.displayName(peer)} in person or on a video call. If they match, nobody can be listening in.
               </Text>
               <Button
                 style={{ marginTop: 14 }}
@@ -294,7 +294,7 @@ function PersonInfoScreen({
             title="Remove contact"
             danger
             onPress={() =>
-              Alert.alert('Remove contact', c.canClearHistory ? `Remove ${peer} and delete the chat?` : `Remove ${peer} from your chat list? The messages are kept.`, [
+              Alert.alert('Remove contact', c.canClearHistory ? `Remove ${client.displayName(peer)} and delete the chat?` : `Remove ${client.displayName(peer)} from your chat list? The messages are kept.`, [
                 { text: 'Cancel', style: 'cancel' },
                 {
                   text: 'Remove',

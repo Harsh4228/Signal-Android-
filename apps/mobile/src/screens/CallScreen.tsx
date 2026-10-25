@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { RTCView } from 'react-native-webrtc';
-import { Lock, Mic, MicOff, Phone, PhoneOff, SwitchCamera, Video, VideoOff, type LucideIcon } from 'lucide-react-native';
-import { calls, useCall } from '../messenger';
+import { Lock, Mic, MicOff, Phone, PhoneOff, SwitchCamera, Video, VideoOff, Volume1, Volume2, type LucideIcon } from 'lucide-react-native';
+import { calls, client, setSpeaker, useCall, useSpeaker } from '../messenger';
 import { colors, s } from '../theme';
 import { Avatar } from '../ui';
 
@@ -43,6 +43,7 @@ function Btn({
 
 export function CallScreen() {
   const call = useCall();
+  const speaker = useSpeaker();
   const duration = useDuration(call.startedAt);
   const hasVideo = call.video && !!call.remoteStream;
   const label =
@@ -68,7 +69,7 @@ export function CallScreen() {
       )}
 
       <View style={[styles.info, hasVideo && styles.infoOnVideo]}>
-        <Text style={[s.h1, { fontSize: 22 }]}>{call.peer}</Text>
+        <Text style={[s.h1, { fontSize: 22 }]}>{call.peer ? client.displayName(call.peer) : ''}</Text>
         <View style={[s.row, { gap: 5, marginTop: 4 }]}>
           <Lock size={13} color={colors.muted} />
           <Text style={s.muted}>{label}</Text>
@@ -88,6 +89,12 @@ export function CallScreen() {
               label={call.muted ? 'Unmute' : 'Mute'}
               kind={call.muted ? 'on' : 'normal'}
               onPress={() => calls.toggleMute()}
+            />
+            <Btn
+              icon={speaker ? Volume2 : Volume1}
+              label="Speaker"
+              kind={speaker ? 'on' : 'normal'}
+              onPress={() => setSpeaker(!speaker)}
             />
             {call.video && (
               <Btn
@@ -143,9 +150,9 @@ const styles = StyleSheet.create({
     borderColor: colors.line,
   },
   btn: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
     alignItems: 'center',
     justifyContent: 'center',
   },
