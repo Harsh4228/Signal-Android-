@@ -1,5 +1,5 @@
 # Builds desktop installers: Windows (.exe), macOS (.dmg), Linux (.AppImage).
-# Runs when you push a version tag (git tag v1.0.0 && git push --tags) or by hand from the Actions tab.
+# Runs when you push a version tag (Windows + Linux) or by hand from the Actions tab (also macOS).
 # Installers are unsigned until code-signing certificates are added as secrets.
 #
 # Auto-update: installed apps check https://<your server>/updates/ (infra/updates/ on the server).
@@ -21,14 +21,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - os: windows-latest
-            target: win
-          - os: macos-latest
-            target: mac
-          - os: ubuntu-latest
-            target: linux
-    runs-on: ${{ matrix.os }}
+        # Version tags build Windows + Linux. macOS only when run by hand: Mac minutes cost 10x on GitHub's free plan.
+        target: ${{ fromJSON(github.event_name == 'workflow_dispatch' && '["win","mac","linux"]' || '["win","linux"]') }}
+    runs-on: ${{ matrix.target == 'win' && 'windows-latest' || matrix.target == 'mac' && 'macos-latest' || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -71,5 +66,6 @@ jobs:
           install -m 600 /dev/null ~/key && printf '%s\n' "$DEPLOY_SSH_KEY" > ~/key
           mkdir -p ~/.ssh && ssh-keyscan -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts
           # Installers first, latest*.yml last: apps never see a version whose files aren't there yet.
+          shopt -s nullglob  # tag builds have no macOS files
           scp -i ~/key updates/*.exe updates/*.dmg updates/*.zip updates/*.AppImage updates/*.blockmap "$DEPLOY_USER@$DEPLOY_HOST:meetme/infra/updates/"
           scp -i ~/key updates/latest*.yml "$DEPLOY_USER@$DEPLOY_HOST:meetme/infra/updates/"
