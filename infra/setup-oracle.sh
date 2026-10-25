@@ -13,7 +13,7 @@ set -euo pipefail
 DOMAIN=${1:?usage: setup-oracle.sh <domain> <admin-username> <public-ip>}
 ADMIN=${2:?usage: setup-oracle.sh <domain> <admin-username> <public-ip>}
 PUBLIC_IP=${3:?usage: setup-oracle.sh <domain> <admin-username> <public-ip>}
-REPO=git@github.com:Harsh4228/meetme.git
+REPO=git@github.com:Harsh4228/Signal-Android-.git
 DIR=$HOME/meetme
 step() { printf '\n==> %s\n' "$*"; }
 
@@ -47,7 +47,7 @@ fi
 ssh-keyscan -t ed25519 github.com 2>/dev/null >> "$HOME/.ssh/known_hosts"
 until git ls-remote "$REPO" >/dev/null 2>&1; do
   echo
-  echo "Add this key on GitHub: github.com/Harsh4228/meetme -> Settings -> Deploy keys -> Add deploy key"
+  echo "Add this key on GitHub: github.com/Harsh4228/Signal-Android- -> Settings -> Deploy keys -> Add deploy key"
   echo "(Title: oracle-server, leave 'Allow write access' OFF):"
   echo
   cat "$KEY.pub"
