@@ -1,5 +1,6 @@
 appId: app.meetme.desktop
 productName: CellMate
+artifactName: CellMate-${version}-${os}-${arch}.${ext}
 directories:
   buildResources: build
   output: dist
@@ -7,13 +8,19 @@ files:
   - out/**
   - package.json
 asar: true
+# Writes latest.yml / latest-mac.yml / latest-linux.yml next to the installers for auto-update.
+# The real feed is the user's own server (<server>/updates/), set by the app at runtime.
+publish:
+  provider: generic
+  url: https://localhost/updates/
 win:
   target: nsis
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
 mac:
-  target: dmg
+  # zip is what macOS auto-update installs (it only works once the app is code-signed).
+  target: [dmg, zip]
   category: public.app-category.social-networking
   hardenedRuntime: true
   extendInfo:

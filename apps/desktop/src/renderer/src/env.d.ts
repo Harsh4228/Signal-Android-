@@ -10,6 +10,8 @@ declare global {
       media?: BlobStorage;
       /** Desktop app only. */
       openMaps?: (url: string) => Promise<void>;
+      /** Desktop app only. */
+      checkUpdates?: (serverUrl: string) => Promise<void>;
     };
   }
 }

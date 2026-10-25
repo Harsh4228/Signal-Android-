@@ -52,7 +52,10 @@ export function App() {
 
   useEffect(() => {
     Promise.all([client.init(), appLock.load()]).then(([registered]) => {
-      if (registered) client.connect();
+      if (registered) {
+        client.connect();
+        if (client.account) void window.meetme.checkUpdates?.(client.account.serverUrl);
+      }
       setReady(true);
     });
     const offErr = client.on('error', (m) => setToast(m));

@@ -3,9 +3,11 @@
 #   server - CellMate relay (only public keys + ciphertext)
 #   db     - PostgreSQL (accounts, public keys, queued ciphertext)
 #   backup - nightly pg_dump of the database, kept 14 days
+#   offsite - (optional) encrypted copy of the backups + attachments in Oracle Object Storage / any S3 bucket
 #   coturn - TURN relay so calls work behind any NAT and hide users' IP addresses
 #
 # Setup:  cp .env.example .env   (fill it in)   then   docker compose up -d --build
+# Update: git pull   then   docker compose up -d --build
 services:
   server:
     build:
@@ -79,6 +81,8 @@ services:
       DOMAIN: ${DOMAIN:?set DOMAIN in infra/.env}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # Desktop app updates (installers + latest*.yml from the Desktop workflow), served at /updates/
+      - ./updates:/srv/updates:ro
       - caddy-data:/data
       - caddy-config:/config
 
@@ -107,8 +111,44 @@ services:
       - --denied-peer-ip=169.254.0.0-169.254.255.255
       - --denied-peer-ip=172.16.0.0-172.31.255.255
       - --denied-peer-ip=192.168.0.0-192.168.255.255
-      # On AWS / behind NAT, uncomment and set your public IP:
-      # - --external-ip=${PUBLIC_IP}
+      # Oracle / AWS / GCP give the VM a private IP behind 1:1 NAT: coturn must announce the public one.
+      - --external-ip=${PUBLIC_IP:?set PUBLIC_IP in infra/.env}/${PRIVATE_IP:?set PRIVATE_IP in infra/.env}
+
+  # Off-site copy, so a lost VM doesn't take the backups with it. Enable with COMPOSE_PROFILES=offsite in .env.
+  # Everything is encrypted with BACKUP_PASSPHRASE (rclone crypt) before upload: the bucket only sees ciphertext.
+  # Restore the dumps:  docker compose run --rm offsite 'setup && rclone copy secure:db /backups/restore'
+  offsite:
+    image: rclone/rclone:1.71
+    profiles: [offsite]
+    restart: unless-stopped
+    environment:
+      RCLONE_CONFIG_BUCKET_TYPE: s3
+      RCLONE_CONFIG_BUCKET_PROVIDER: Other
+      RCLONE_CONFIG_BUCKET_ENDPOINT: ${S3_ENDPOINT:-}
+      RCLONE_CONFIG_BUCKET_REGION: ${S3_REGION:-}
+      RCLONE_CONFIG_BUCKET_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-}
+      RCLONE_CONFIG_BUCKET_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-}
+      RCLONE_CONFIG_BUCKET_FORCE_PATH_STYLE: "true"
+      RCLONE_CONFIG_BUCKET_NO_CHECK_BUCKET: "true"
+      RCLONE_CONFIG_SECURE_TYPE: crypt
+      RCLONE_CONFIG_SECURE_REMOTE: bucket:${S3_BUCKET:-meetme-backups}
+      BACKUP_PASSPHRASE: ${BACKUP_PASSPHRASE:-}
+    volumes:
+      - ./backups:/backups
+      - meetme-data:/data:ro
+    entrypoint: ["/bin/sh", "-c", "setup() { [ -n \"$$BACKUP_PASSPHRASE\" ] || { echo 'set BACKUP_PASSPHRASE in infra/.env'; exit 1; }; export RCLONE_CONFIG_SECURE_PASSWORD=\"$$(rclone obscure \"$$BACKUP_PASSPHRASE\")\"; }; eval \"$$0\""]
+    command:
+      - |
+        setup
+        # Give the backup service time to write today's dump first.
+        sleep 600
+        while true; do
+          rclone copy /backups secure:db --include "meetme-*.dump" \
+            && rclone delete secure:db --min-age 30d \
+            && rclone sync /data/attachments secure:attachments \
+            && echo "offsite ok"
+          sleep 86400
+        done
 
 volumes:
   meetme-data:

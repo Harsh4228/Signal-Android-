@@ -9,6 +9,7 @@ import {
   shell,
   type IpcMainInvokeEvent,
 } from 'electron';
+import { autoUpdater } from 'electron-updater';
 import { createHash } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
@@ -139,6 +140,24 @@ ipcMain.handle('maps:open', async (e, url: string) => {
   assertTrusted(e);
   if (typeof url !== 'string' || !MAPS_URL.test(url)) throw new Error('invalid maps link');
   await shell.openExternal(url);
+});
+
+// ---------------------------------------------------------------- auto-update
+
+// Updates come from the user's own server (https://<server>/updates/, see infra/Caddyfile), so there is no
+// third-party update host. They download in the background and install when the app is next closed.
+const UPDATE_CHECK_MS = 6 * 60 * 60 * 1000;
+let updateFeed: string | undefined;
+
+ipcMain.handle('updates:check', async (e, serverUrl: string) => {
+  assertTrusted(e);
+  if (!app.isPackaged || updateFeed || typeof serverUrl !== 'string' || !/^https:\/\/\S+$/i.test(serverUrl)) return;
+  updateFeed = `${serverUrl.replace(/\/+$/, '')}/updates/`;
+  autoUpdater.setFeedURL({ provider: 'generic', url: updateFeed });
+  autoUpdater.on('error', (err) => console.warn('update check failed:', err.message));
+  const check = () => autoUpdater.checkForUpdatesAndNotify().catch(() => {});
+  void check();
+  setInterval(check, UPDATE_CHECK_MS);
 });
 
 // ---------------------------------------------------------------- hardening

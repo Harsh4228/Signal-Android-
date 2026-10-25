@@ -8,6 +8,8 @@ contextBridge.exposeInMainWorld('meetme', {
   platform: process.platform,
   /** Open a shared location in Google Maps in the system browser (only exact maps links are accepted). */
   openMaps: (url: string): Promise<void> => ipcRenderer.invoke('maps:open', url),
+  /** Start background update checks against <server>/updates/ (installed builds only). */
+  checkUpdates: (serverUrl: string): Promise<void> => ipcRenderer.invoke('updates:check', serverUrl),
   store: {
     getItem: (key: string): Promise<string | null> => ipcRenderer.invoke('store:get', key),
     setItem: (key: string, value: string): Promise<void> => ipcRenderer.invoke('store:set', key, value),

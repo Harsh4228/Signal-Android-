@@ -12,3 +12,5 @@ infra/backups/
 apps/mobile/android/app/google-services.json
 apps/mobile/ios/MeetMe/GoogleService-Info.plist
 infra/secrets/
+infra/updates/*
+!infra/updates/README.md

@@ -8,8 +8,16 @@
 		-Server
 	}
 
-	# WebSockets (/v1/ws) are proxied automatically.
-	reverse_proxy server:8080
+	# Desktop app auto-updates: put the Desktop workflow's files in infra/updates/.
+	handle_path /updates/* {
+		root * /srv/updates
+		file_server
+	}
+
+	# Everything else (incl. WebSockets /v1/ws) goes to the CellMate server.
+	handle {
+		reverse_proxy server:8080
+	}
 
 	# Access logs off: no record of who connected when.
 	log {

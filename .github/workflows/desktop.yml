@@ -1,6 +1,14 @@
 # Builds desktop installers: Windows (.exe), macOS (.dmg), Linux (.AppImage).
 # Runs when you push a version tag (git tag v1.0.0 && git push --tags) or by hand from the Actions tab.
 # Installers are unsigned until code-signing certificates are added as secrets.
+#
+# Auto-update: installed apps check https://<your server>/updates/ (infra/updates/ on the server).
+# Bump "version" in apps/desktop/package.json before tagging, otherwise apps see nothing new.
+# To copy the update files to the server automatically, add these repository secrets:
+#   DEPLOY_HOST      server IP or domain
+#   DEPLOY_USER      SSH user (Oracle Ubuntu: ubuntu)
+#   DEPLOY_SSH_KEY   private SSH key allowed to log in to that server
+# Without them, download the "meetme-desktop-*" artifacts and copy them into infra/updates/ yourself.
 name: Desktop
 
 on:
@@ -37,4 +45,31 @@ jobs:
           path: |
             apps/desktop/dist/*.exe
             apps/desktop/dist/*.dmg
+            apps/desktop/dist/*.zip
             apps/desktop/dist/*.AppImage
+            apps/desktop/dist/*.blockmap
+            apps/desktop/dist/latest*.yml
+
+  publish-updates:
+    needs: build
+    runs-on: ubuntu-latest
+    env:
+      DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+    steps:
+      - uses: actions/download-artifact@v4
+        if: env.DEPLOY_HOST != ''
+        with:
+          pattern: meetme-desktop-*
+          path: updates
+          merge-multiple: true
+      - name: Copy to the server's infra/updates/
+        if: env.DEPLOY_HOST != ''
+        env:
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        run: |
+          install -m 600 /dev/null ~/key && printf '%s\n' "$DEPLOY_SSH_KEY" > ~/key
+          mkdir -p ~/.ssh && ssh-keyscan -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts
+          # Installers first, latest*.yml last: apps never see a version whose files aren't there yet.
+          scp -i ~/key updates/*.exe updates/*.dmg updates/*.zip updates/*.AppImage updates/*.blockmap "$DEPLOY_USER@$DEPLOY_HOST:meetme/infra/updates/"
+          scp -i ~/key updates/latest*.yml "$DEPLOY_USER@$DEPLOY_HOST:meetme/infra/updates/"
