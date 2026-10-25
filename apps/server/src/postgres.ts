@@ -43,12 +43,12 @@ const SCHEMA = `
   ALTER TABLE users ADD COLUMN IF NOT EXISTS online_at BIGINT;
   ALTER TABLE users ADD COLUMN IF NOT EXISTS last_seen BIGINT;
   ALTER TABLE users ADD COLUMN IF NOT EXISTS department TEXT;
-  DO $ BEGIN
+  DO $$ BEGIN
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'departments') THEN
       ALTER TABLE users ADD COLUMN departments TEXT NOT NULL DEFAULT '[]';
       UPDATE users SET departments = json_build_array(department)::text WHERE department IS NOT NULL AND department <> '';
     END IF;
-  END $;
+  END $$;
   ALTER TABLE users ADD COLUMN IF NOT EXISTS can_share SMALLINT NOT NULL DEFAULT 0;
   ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_ver BIGINT;
   ALTER TABLE users ADD COLUMN IF NOT EXISTS phone TEXT NOT NULL DEFAULT '';
