@@ -115,3 +115,9 @@ button.link { border: none; background: none; color: var(--accent); padding: 4px
   .row > button { flex: 1; }
 }
 .center { justify-content: center; }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-top: 18px; }
+.stat { padding: 12px 14px; }
+.stat-value { font-size: 26px; font-weight: 700; line-height: 1.2; }
+.stat.active .stat-value { color: var(--ok); }
+.stat.pending .stat-value { color: var(--warn); }
+.stat.suspended .stat-value { color: var(--danger); }

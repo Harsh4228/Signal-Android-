@@ -249,11 +249,23 @@ function render() {
     h('div', { class: 'row' }, h('div', { class: 'grow' }, h('h1', {}, 'Companies'), h('div', { class: 'muted small' }, 'Admins of each company manage their own people. You decide which companies may use this server.')),
       h('button', { class: 'primary', onclick: newCompany }, '+ New company'),
       h('button', { onclick: () => void load() }, 'Refresh')),
+    h(
+      'div',
+      { class: 'stats' },
+      stat('Active companies', companies.filter((c) => c.status === 'active').length, 'active'),
+      stat('Waiting for approval', waiting.length, 'pending'),
+      stat('Suspended', companies.filter((c) => c.status === 'suspended').length, 'suspended'),
+      stat('People in all companies', companies.reduce((n, c) => n + c.users, 0), 'plain'),
+    ),
     h('h2', {}, `Waiting for approval (${waiting.length})`),
     waiting.length ? h('div', {}, ...waiting.map(companyCard)) : h('div', { class: 'muted small' }, 'No requests. People ask for a company with "Register your company" in the app.'),
     h('h2', {}, `All companies (${others.length})`),
     h('div', {}, ...others.map(companyCard)),
   );
+}
+
+function stat(label, value, kind) {
+  return h('div', { class: `card stat ${kind}` }, h('div', { class: 'stat-value' }, String(value)), h('div', { class: 'muted small' }, label));
 }
 
 function companyCard(c) {
