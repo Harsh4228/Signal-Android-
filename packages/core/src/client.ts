@@ -1059,6 +1059,7 @@ export class MessengerClient extends Emitter<Events> {
         this.emit('change');
         this.maintainKeys(f.preKeyCount).catch((e) => this.emit('error', `Key upload failed: ${e.message}`));
         this.setupSealedSender().catch((e) => console.warn('sealed sender unavailable', e));
+        this.followServerMove().catch((e) => console.warn('server address check failed', e));
         this.loadGroups().catch((e) => console.warn('groups unavailable', e));
         void this.sendNoticeOks();
         this.stopPresence();
@@ -1491,6 +1492,31 @@ export class MessengerClient extends Emitter<Events> {
   }
 
   // ------------------------------------------------------------------ sealed sender
+
+  /**
+   * The server announces its official address (e.g. after moving to a new domain). Switch to it, but only once the
+   * new address proves to be this same server: it has the same certificate key and accepts my login. Never moves
+   * from https to plain http.
+   */
+  private async followServerMove(): Promise<void> {
+    const a = this.account;
+    if (!a) return;
+    const cfg = await this.http<PublicConfig>('GET', '/v1/config');
+    if (!cfg.serverUrl || !cfg.certKey) return;
+    const next = normalizeServerUrl(cfg.serverUrl);
+    if (next === a.serverUrl || !/^https?:\/\/\S+$/i.test(next)) return;
+    if (/^https:/i.test(a.serverUrl) && !/^https:/i.test(next)) return;
+    const there = await this.fetchImpl(`${next}/v1/config`);
+    if (!there.ok || ((await there.json()) as PublicConfig).certKey !== cfg.certKey) return;
+    const me = await this.fetchImpl(`${next}/v1/me`, {
+      headers: { authorization: 'Basic ' + toBase64(utf8(`${a.username}:${a.password}`)) },
+    });
+    if (!me.ok || this.account !== a) return;
+    this.account = { ...a, serverUrl: next };
+    await this.store.saveAccount(this.account);
+    this.emit('change');
+    this.ws?.close(); // reconnects on the new address
+  }
 
   /** Load the server's certificate key (trust on first use), register my delivery key, fetch a certificate. */
   private async setupSealedSender(): Promise<void> {

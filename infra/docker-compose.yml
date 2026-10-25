@@ -19,6 +19,8 @@ services:
         condition: service_healthy
     environment:
       TRUST_PROXY: "1"
+      # Official address. Apps registered under an old domain (OLD_DOMAINS) move to this one by themselves.
+      PUBLIC_URL: https://${DOMAIN:?set DOMAIN in infra/.env}
       DATABASE_URL: postgres://meetme:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in infra/.env}@db:5432/meetme
       ATTACHMENTS_DIR: /data/attachments
       # Wake-up pushes: put the Firebase service account at infra/secrets/fcm-service-account.json
@@ -79,6 +81,7 @@ services:
       - '443:443'
     environment:
       DOMAIN: ${DOMAIN:?set DOMAIN in infra/.env}
+      OLD_DOMAINS: ${OLD_DOMAINS:-}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       # Desktop app updates (installers + latest*.yml from the Desktop workflow), served at /updates/

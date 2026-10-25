@@ -187,6 +187,8 @@ export interface PublicConfig {
   openRegistration: boolean;
   /** Sealed sender: base64 Ed25519 key that signs sender certificates. */
   certKey?: string;
+  /** The server's official address. Clients registered under an older address move to it (see followServerMove). */
+  serverUrl?: string;
 }
 
 export interface MeResponse {

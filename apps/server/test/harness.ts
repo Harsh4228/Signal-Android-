@@ -12,7 +12,7 @@ import type { PushSender } from '../src/push';
  * Starts a test server on a random port. Uses SQLite by default; set TEST_DATABASE_URL to run the
  * same tests against PostgreSQL (each test file gets its own throw-away schema).
  */
-export async function startTestServer(cfg: Omit<ServerConfig, 'dbPath'>, extra: { push?: PushSender } = {}) {
+export async function startTestServer(cfg: Omit<ServerConfig, 'dbPath'>, extra: { push?: PushSender; port?: number } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'meetme-'));
   const pgUrl = process.env.TEST_DATABASE_URL;
   let schema = '';
@@ -31,8 +31,8 @@ export async function startTestServer(cfg: Omit<ServerConfig, 'dbPath'>, extra: 
     deps = await openPostgres(connectionString);
   }
 
-  const server = createMeetMeServer({ ...cfg, dbPath: join(dir, 'test.db'), attachmentsDir: join(dir, 'attachments') }, { ...deps, ...extra });
-  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+  const server = createMeetMeServer({ ...cfg, dbPath: join(dir, 'test.db'), attachmentsDir: join(dir, 'attachments') }, { ...deps, push: extra.push });
+  await new Promise<void>((r) => server.listen(extra.port ?? 0, '127.0.0.1', r));
   const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 
   return {

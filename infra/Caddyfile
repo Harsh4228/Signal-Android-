@@ -1,4 +1,5 @@
-{$DOMAIN} {
+# OLD_DOMAINS keeps a previous address working after a domain change, so apps can move over (see .env.example).
+{$DOMAIN} {$OLD_DOMAINS} {
 	encode zstd gzip
 
 	header {

@@ -71,6 +71,8 @@ export interface ServerConfig {
   openRegistration: boolean;
   /** How long a message may wait unacknowledged before a wake-up push is sent (ms). */
   pushDelayMs?: number;
+  /** Official address (e.g. https://chat.example.com). After a domain change, clients still using an old address move here. */
+  publicUrl?: string;
 }
 
 const MAX_BODY = 64 * 1024;
@@ -516,7 +518,11 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
 
     if (method === 'GET' && path === '/health') return send(200, { ok: true });
     if (method === 'GET' && path === '/v1/config') {
-      const pub: PublicConfig = { openRegistration: config.openRegistration, certKey: toBase64((await certKey).pub) };
+      const pub: PublicConfig = {
+        openRegistration: config.openRegistration,
+        certKey: toBase64((await certKey).pub),
+        ...(config.publicUrl ? { serverUrl: config.publicUrl } : {}),
+      };
       return send(200, pub);
     }
 
