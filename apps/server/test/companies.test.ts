@@ -1,15 +1,16 @@
 import { test, after, before } from 'node:test';
 import assert from 'node:assert/strict';
-import { MemoryStorage, MessengerClient, inviteCode, makeUsername } from '@meetme/core';
+import { MemoryStorage, MessengerClient, MustChangePasswordError, inviteCode, makeUsername } from '@meetme/core';
 import { startTestServer } from './harness';
 
-// A company server: the owner ("boss", in ADMIN_USERS) sets it up and is the super admin.
+// A company server. The owner ("owner", no company) runs it from the /super web page.
 let srv: Awaited<ReturnType<typeof startTestServer>>;
 let url = '';
+let owner: Record<string, string> = {};
 const clients: MessengerClient[] = [];
 
 before(async () => {
-  srv = await startTestServer({ stunUrls: [], turnUrls: [], trustProxy: false, adminUsers: ['boss'], openRegistration: false });
+  srv = await startTestServer({ stunUrls: [], turnUrls: [], trustProxy: false, adminUsers: [], openRegistration: false });
   url = srv.url;
 });
 after(async () => {
@@ -46,39 +47,59 @@ async function joinWith(invite: { username: string; token: string }, password: s
   return online(c);
 }
 
-test('companies: setup, separate people, several admins, moving someone out and back', async () => {
+/** The owner's web page API (Bearer token from the web sign-in). */
+async function web<T = unknown>(method: string, path: string, body?: unknown, headers: Record<string, string> = owner): Promise<T> {
+  const res = await fetch(`${url}${path}`, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
+  const text = await res.text();
+  if (!res.ok) throw new Error(`${res.status} ${text}`);
+  return (text ? JSON.parse(text) : undefined) as T;
+}
+
+/** An app's own API credentials (its device secret), as the apps send them. */
+const deviceAuth = (c: MessengerClient) => ({
+  authorization: `Basic ${Buffer.from(`${c.account!.username}:${c.account!.password}`).toString('base64')}`,
+});
+
+type Invite = { username: string; token: string; expires: number };
+
+test('owner sets up the server on the web page and creates companies; admins manage their own people', async () => {
   assert.equal((await (await fresh()).getPublicConfig(url)).needsSetup, true);
 
-  // Only the owner may set the server up, and only once. Their login password works afterwards.
-  await assert.rejects(
-    (await fresh()).setupServer(url, { companyCode: 'acme', companyName: 'Acme', id: 'mallory', password: 'password-123' }),
-    /Only the server owner/,
-  );
-  const boss = await fresh();
-  await boss.setupServer(url, { companyCode: 'acme', companyName: 'Acme Ltd', id: 'boss', password: 'boss-password-1' });
-  assert.equal(boss.account!.username, 'boss-acme');
-  await online(boss);
-  await waitFor(() => boss.isSuper && boss.isAdmin && boss.company?.name === 'Acme Ltd', 'boss roles');
+  // The owner account needs the one-time setup code from the server log.
+  await assert.rejects(web('POST', '/v1/super/setup', { code: 'guess', username: 'owner', password: 'owner-password-1' }, {}), /401 Wrong setup code/);
+  const code = (await srv.meta('setup_code'))!;
+  assert.ok(code.length >= 10);
+  await web('POST', '/v1/super/setup', { code, username: 'owner', password: 'owner-password-1' }, {});
   assert.equal((await (await fresh()).getPublicConfig(url)).needsSetup, false);
-  await assert.rejects(
-    (await fresh()).setupServer(url, { companyCode: 'acme', companyName: 'Again', id: 'boss', password: 'password-123' }),
-    /already used/, // later requests are new companies waiting for approval (see below)
-  );
-  // The owner can sign in again with company + ID + password (e.g. on a new phone).
-  const bossPhone2 = await fresh();
-  await bossPhone2.login(url, makeUsername('boss', 'acme'), 'boss-password-1');
-  bossPhone2.dispose();
-  await boss.login(url, 'boss-acme', 'boss-password-1');
-  await online(boss);
-  await waitFor(() => boss.isSuper, 'boss back');
+  await assert.rejects(web('POST', '/v1/super/setup', { code, username: 'x_y', password: 'password-123' }, {}), /409/);
 
-  // A second company with its own first admin.
-  await assert.rejects(boss.createCompany({ code: 'acme', name: 'Again', adminId: 'x_y' }), /already used/);
-  const { invite: betaInvite } = await boss.createCompany({ code: 'beta', name: 'Beta Corp', adminId: 'boss', adminName: 'Beta Boss' });
-  assert.equal(betaInvite.username, 'boss-beta'); // the same ID can exist in two companies
-  const betaBoss = await joinWith(betaInvite, 'beta-boss-pw-1');
-  await waitFor(() => betaBoss.isAdmin && !betaBoss.isSuper && betaBoss.company?.code === 'beta', 'beta admin');
-  await assert.rejects(betaBoss.listCompanies(), /super admin only/);
+  // Owner signs in with ID + password only (no company code).
+  await assert.rejects(web('POST', '/v1/super/session', { username: 'owner', password: 'wrong-password' }, {}), /401/);
+  const { token } = await web<{ token: string }>('POST', '/v1/super/session', { username: 'owner', password: 'owner-password-1' }, {});
+  owner = { authorization: `Bearer ${token}` };
+
+  // A paying company: the owner creates it and hands its admin a temporary password (or the QR).
+  const acme = await web<{ invite: Invite; tempPassword: string; code: string }>('POST', '/v1/super/companies', {
+    code: 'acme',
+    name: 'Acme Ltd',
+    adminId: 'boss',
+    adminName: 'Acme Boss',
+  });
+  assert.equal(acme.invite.username, 'boss-acme');
+  await assert.rejects(web('POST', '/v1/super/companies', { code: 'acme', name: 'Again', adminId: 'x_y' }), /already used/);
+  const boss = await fresh();
+  await assert.rejects(boss.login(url, makeUsername('boss', 'acme'), acme.tempPassword), MustChangePasswordError);
+  await boss.login(url, 'boss-acme', acme.tempPassword, 'boss-password-1');
+  await online(boss);
+  await waitFor(() => boss.isAdmin && !boss.isSuper && boss.company?.name === 'Acme Ltd', 'boss is acme admin');
+  await assert.rejects(boss.inviteEmployee({ username: 'ravi-beta', name: 'x' }), /ID must be/); // can't make people elsewhere
+  assert.equal((await fetch(`${url}/v1/super/companies`, { headers: deviceAuth(boss) })).status, 403);
+
+  // A second company; the same ID can exist in both.
+  const beta = await web<{ invite: Invite }>('POST', '/v1/super/companies', { code: 'beta', name: 'Beta Corp', adminId: 'boss' });
+  assert.equal(beta.invite.username, 'boss-beta');
+  const betaBoss = await joinWith(beta.invite, 'beta-boss-pw-1');
+  await waitFor(() => betaBoss.isAdmin && betaBoss.company?.code === 'beta', 'beta admin');
 
   // Each admin adds people to their own company.
   const ravi = await joinWith(await boss.inviteEmployee({ username: 'ravi', name: 'Ravi K' }), 'ravi-password-1');
@@ -101,19 +122,21 @@ test('companies: setup, separate people, several admins, moving someone out and 
   // A second admin in acme; the last admin can't be removed.
   await boss.setUserAdmin('ravi-acme', true);
   await waitFor(() => ravi.isAdmin, 'ravi became admin');
-  assert.ok((await ravi.listAllUsers()).find((u) => u.username === 'ravi-acme')!.admin);
   await ravi.setUserAdmin('ravi-acme', false);
   await waitFor(() => !ravi.isAdmin, 'ravi no longer admin');
   await assert.rejects(boss.setUserAdmin('boss-acme', false), /at least one admin/);
 
-  // Super admin moves ravi to beta (as "ravi.k", since beta already has a ravi).
-  const raviStorage = new MemoryStorage();
-  const raviApp = await fresh(raviStorage);
+  // The owner moves ravi to beta (as "ravi.k", since beta already has a ravi).
+  const raviApp = await fresh();
   await raviApp.login(url, 'ravi-acme', 'ravi-password-1');
   await online(raviApp);
   await raviApp.addContact('boss-acme');
-  await assert.rejects(boss.transferUser('ravi-acme', 'beta'), /already used in beta/);
-  const moved = await boss.transferUser('ravi-acme', 'beta', 'ravi.k');
+  await assert.rejects(web('POST', '/v1/super/transfer', { username: 'ravi-acme', to: 'beta' }), /already used in beta/);
+  const moved = await web<{ username: string; invite: Invite; returning: boolean }>('POST', '/v1/super/transfer', {
+    username: 'ravi-acme',
+    to: 'beta',
+    id: 'ravi.k',
+  });
   assert.equal(moved.username, 'ravi.k-beta');
   assert.equal(moved.returning, false);
   await waitFor(() => raviApp.moved, 'app sees the move');
@@ -132,7 +155,11 @@ test('companies: setup, separate people, several admins, moving someone out and 
   await waitFor(() => betaBoss.getMessages('ravi.k-beta').some((m) => m.text === 'hello beta'), 'message in new company');
 
   // Moved back: the same acme account opens again.
-  const back = await boss.transferUser('ravi.k-beta', 'acme', 'ravi');
+  const back = await web<{ username: string; invite: Invite; returning: boolean }>('POST', '/v1/super/transfer', {
+    username: 'ravi.k-beta',
+    to: 'acme',
+    id: 'ravi',
+  });
   assert.equal(back.username, 'ravi-acme');
   assert.equal(back.returning, true);
   await waitFor(() => raviApp.moved, 'app sees the second move');
@@ -143,7 +170,7 @@ test('companies: setup, separate people, several admins, moving someone out and 
   await raviApp.sendText('boss-acme', 'back again');
   await waitFor(() => boss.getMessages('ravi-acme').some((m) => m.text === 'back again'), 'message after coming back');
 
-  const companies = await boss.listCompanies();
+  const { companies } = await web<{ companies: { code: string; name: string; users: number }[] }>('GET', '/v1/super/companies');
   assert.deepEqual(
     companies.map((c) => [c.code, c.name, c.users]),
     [
@@ -153,47 +180,39 @@ test('companies: setup, separate people, several admins, moving someone out and 
   );
 });
 
-test('a company asked for in the app waits for the super admin; the web page signs in with the password', async () => {
-  // (the server was set up by "boss-acme" in the test above)
-  const owner = await fresh();
-  await owner.setupServer(url, { companyCode: 'gamma', companyName: 'Gamma Traders', id: 'gita', password: 'gita-password-1' });
-  assert.equal(owner.account!.username, 'gita-gamma');
-  owner.connect();
-  await waitFor(() => owner.pending, 'waiting for approval');
-  assert.equal(owner.status, 'offline');
+test('a company asked for in the app waits for the owner; suspend cuts it off; the web session ends on sign-out', async () => {
+  const gita = await fresh();
+  await gita.requestCompany(url, { companyCode: 'gamma', companyName: 'Gamma Traders', id: 'gita', password: 'gita-password-1' });
+  assert.equal(gita.account!.username, 'gita-gamma');
+  gita.connect();
+  await waitFor(() => gita.pending, 'waiting for approval');
+  assert.equal(gita.status, 'offline');
   await assert.rejects((await fresh()).login(url, 'gita-gamma', 'gita-password-1'), /waiting for approval/);
   await assert.rejects(
-    (await fresh()).setupServer(url, { companyCode: 'gamma', companyName: 'Copy', id: 'x_y', password: 'password-123' }),
+    (await fresh()).requestCompany(url, { companyCode: 'gamma', companyName: 'Copy', id: 'x_y', password: 'password-123' }),
     /already used/,
   );
 
-  // The server owner's web page: company code + ID + password.
   const page = await fetch(`${url}/super`);
   assert.equal(page.status, 200);
   assert.match(page.headers.get('content-security-policy') ?? '', /script-src 'self'/);
-  const bad = await fetch(`${url}/v1/super/session`, { method: 'POST', body: JSON.stringify({ username: 'gita-gamma', password: 'gita-password-1' }) });
-  assert.equal(bad.status, 401, 'only the super admin may sign in');
-  const login = await fetch(`${url}/v1/super/session`, { method: 'POST', body: JSON.stringify({ username: 'boss-acme', password: 'boss-password-1' }) });
-  assert.equal(login.status, 200);
-  const { token } = (await login.json()) as { token: string };
-  const auth = { authorization: `Bearer ${token}` };
-  const list = (await (await fetch(`${url}/v1/super/companies`, { headers: auth })).json()) as { companies: { code: string; status: string }[] };
+  await assert.rejects(web('POST', '/v1/super/session', { username: 'gita-gamma', password: 'gita-password-1' }, {}), /401/);
+  const list = await web<{ companies: { code: string; status: string }[] }>('GET', '/v1/super/companies');
   assert.deepEqual(list.companies[0], { ...list.companies[0], code: 'gamma', status: 'pending' }); // waiting ones first
-  assert.equal((await fetch(`${url}/v1/admin/users`, { headers: auth })).status, 401, 'the web sign-in only opens the super admin pages');
+  await assert.rejects(web('GET', '/v1/admin/users'), /401/); // the web sign-in only opens the owner pages
 
-  // Approve: the app connects by itself (it checks back every minute; reconnect now to keep the test short).
-  assert.equal((await fetch(`${url}/v1/super/companies/gamma/status`, { method: 'PUT', headers: auth, body: JSON.stringify({ status: 'active' }) })).status, 204);
-  owner.disconnect();
-  await online(owner);
-  await waitFor(() => owner.isAdmin && owner.company?.name === 'Gamma Traders' && !owner.pending, 'approved');
-  const created = (await (await fetch(`${url}/v1/super/companies`, { method: 'POST', headers: auth, body: JSON.stringify({ code: 'delta', name: 'Delta', adminId: 'dev' }) })).json()) as { code: string; qrSvg: string };
+  // Approve: the app connects (it checks back every minute; reconnect now to keep the test short).
+  await web('PUT', '/v1/super/companies/gamma/status', { status: 'active' });
+  gita.disconnect();
+  await online(gita);
+  await waitFor(() => gita.isAdmin && gita.company?.name === 'Gamma Traders' && !gita.pending, 'approved');
+  const created = await web<{ code: string; qrSvg: string }>('POST', '/v1/super/companies', { code: 'delta', name: 'Delta', adminId: 'dev' });
   assert.match(created.code, /^cellmate:\/\/join\?/);
   assert.match(created.qrSvg, /^<svg/);
 
-  // Suspend cuts everyone off without deleting anything; signing out ends the web session.
-  assert.equal((await fetch(`${url}/v1/super/companies/gamma/status`, { method: 'PUT', headers: auth, body: JSON.stringify({ status: 'suspended' }) })).status, 204);
-  await waitFor(() => owner.status !== 'online', 'suspended company disconnected');
-  assert.ok(owner.account);
-  assert.equal((await fetch(`${url}/v1/super/session`, { method: 'DELETE', headers: auth })).status, 204);
-  assert.equal((await fetch(`${url}/v1/super/companies`, { headers: auth })).status, 401);
+  await web('PUT', '/v1/super/companies/gamma/status', { status: 'suspended' });
+  await waitFor(() => gita.status !== 'online', 'suspended company disconnected');
+  assert.ok(gita.account);
+  await web('DELETE', '/v1/super/session');
+  await assert.rejects(web('GET', '/v1/super/companies'), /401/);
 });

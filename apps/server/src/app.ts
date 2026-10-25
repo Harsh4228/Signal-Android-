@@ -50,6 +50,7 @@ import {
   type PushKind,
   type PushTokenRequest,
   fromBase64,
+  generatePassword,
   inviteCode,
   generateIdentityKeyPair,
   isSealed,
@@ -380,6 +381,16 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
     if (!c) return SUSPENDED_MESSAGE;
     return c.status === 'pending' ? PENDING_MESSAGE : c.status === 'suspended' ? SUSPENDED_MESSAGE : null;
   }
+  // The server owner (super admin) is an account of its own, in no company: ID + password, used on the /super web
+  // page. Until it exists, a one-time setup code from the server log proves that it is really the owner setting up.
+  async function setupCode(): Promise<string | null> {
+    if ((await superAdmins()).length) return null;
+    return db.getOrCreateMeta('setup_code', () => randomBytes(9).toString('base64url'));
+  }
+  void setupCode()
+    .then((c) => c && console.log(`Owner setup: open <your server>/super and enter the setup code ${c}`))
+    .catch((e) => console.error('setup code failed', e));
+
   async function companyInfo(company: string): Promise<{ code: string; name: string } | null> {
     if (!company) return null;
     const c = await getCompany(company);
@@ -625,6 +636,28 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
       return res.end(await fs.readFile(join(WEB_DIR, page[0])));
     }
     // Super admin web page: sign in with company code + ID + password (the login password, never the device secret).
+    if (method === 'POST' && path === '/v1/super/setup') {
+      const ip = clientIp(req);
+      if (authFailLimit.isBlocked(ip)) throw new HttpError(429, 'Too many attempts, try again later');
+      const body = (await readJson(req)) as { code?: unknown; username?: unknown; password?: unknown };
+      const expected = await setupCode();
+      if (!expected) throw new HttpError(409, 'The owner account already exists. Sign in instead.');
+      if (typeof body.code !== 'string' || body.code.trim() !== expected) {
+        authFailLimit.allow(ip);
+        throw new HttpError(401, 'Wrong setup code. It is in the server log.');
+      }
+      if (typeof body.username !== 'string' || !ID_RE.test(body.username)) {
+        throw new HttpError(400, 'ID must be 3-32 characters: a-z, 0-9, _ or .');
+      }
+      checkNewPassword(body.password);
+      const hash = hashPassword(body.password as string);
+      if (!(await db.getUser(body.username))) await db.createPendingUser(body.username, hash);
+      await db.setPassword(body.username, hash, false);
+      await db.setMeta('super_admins', JSON.stringify([body.username]));
+      await db.setMeta('setup_code', '');
+      await audit(body.username, 'super.setup', body.username, 'owner account created');
+      return send(204);
+    }
     if (path === '/v1/super/session') {
       if (method === 'DELETE') {
         const t = String(req.headers.authorization ?? '').replace(/^Bearer /, '');
@@ -659,7 +692,7 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
         openRegistration: config.openRegistration,
         certKey: toBase64((await certKey).pub),
         ...(config.publicUrl ? { serverUrl: config.publicUrl } : {}),
-        needsSetup: !config.openRegistration && config.adminUsers.length > 0 && !(await superAdmins()).length,
+        needsSetup: !(await superAdmins()).length,
       };
       return send(200, pub);
     }
@@ -742,21 +775,13 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
       const setup = body.company;
       let company: Company | null = null;
       if (setup !== undefined) {
-        // First-time setup: the server owner (in ADMIN_USERS) creates the first company with their own account and
-        // becomes its admin and the super admin, who then creates the other companies.
+        // Anyone may ask for a company from the app; it stays closed until the server owner approves it.
         const code = checkCompanyCode((setup as { code?: unknown } | null)?.code);
         const name = checkCompanyName((setup as { name?: unknown } | null)?.name);
-        const companies = await listCompanies();
-        if (!(await superAdmins()).length && !companies.length) {
-          if (!config.adminUsers.includes(body.username)) {
-            throw new HttpError(403, 'Only the server owner can set it up. Ask your admin for a QR invite.');
-          }
-          company = { code, name, createdAt: Date.now() };
-        } else {
-          // Anyone may ask for a company; it stays closed until the super admin approves it.
-          if (companies.some((c) => c.code === code)) throw new HttpError(409, `The company code "${code}" is already used. Choose another.`);
-          company = { code, name, createdAt: Date.now(), status: 'pending' };
+        if ((await listCompanies()).some((c) => c.code === code)) {
+          throw new HttpError(409, `The company code "${code}" is already used. Choose another.`);
         }
+        company = { code, name, createdAt: Date.now(), status: 'pending' };
       } else if (!config.openRegistration && !config.adminUsers.includes(body.username)) {
         throw new HttpError(403, 'Sign-up is closed. Ask your admin for an ID and password, then use Log in.');
       }
@@ -771,15 +796,10 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
       if (await db.getUser(username)) throw new HttpError(409, 'username taken');
       const passHash = typeof body.loginPassword === 'string' ? hashPassword(body.loginPassword) : undefined;
       await db.createUser({ username, deviceHash: hashPassword(body.password), passHash, identityKey, spk }, opks);
-      if (company?.status === 'pending') {
+      if (company) {
         await saveCompanies([...(await listCompanies()), company]);
         await setAdmins(company.code, [username]);
         await audit(username, 'company.request', company.code, `${company.name}: waiting for approval`);
-      } else if (company) {
-        await saveCompanies([company]);
-        await setAdmins(company.code, [username]);
-        await db.setMeta('super_admins', JSON.stringify([username]));
-        await audit(username, 'company.create', company.code, `${company.name} (server set up)`);
       }
       return send(200, { ok: true, username, pending: company?.status === 'pending' });
     }
@@ -1050,12 +1070,14 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
         const username = makeUsername(body.adminId, code);
         const company = { code, name, createdAt: Date.now() };
         await saveCompanies([...list, company]);
-        await db.createPendingUser(username, hashPassword(randomBytes(24).toString('base64url')), { name: adminName });
+        // Their admin signs in with company code + ID + this temporary password (then chooses their own), or scans the QR.
+        const tempPassword = generatePassword();
+        await db.createPendingUser(username, hashPassword(tempPassword), { name: adminName });
         await setAdmins(code, [username]);
         const invite = await newInvite(username);
         await audit(me, 'company.create', code, `${name}; first admin: ${body.adminId}`);
         const info: CompanyInfo = { ...company, status: 'active', users: 1, admins: [username] };
-        return send(200, { company: info, invite, ...(await inviteExtras(req, invite)) });
+        return send(200, { company: info, invite, tempPassword, ...(await inviteExtras(req, invite)) });
       }
       if ((m = path.match(/^\/v1\/super\/companies\/([a-z0-9]{2,16})(\/users|\/invite|\/status)?$/))) {
         const company = await getCompany(m[1]!);

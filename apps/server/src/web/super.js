@@ -44,7 +44,7 @@ async function api(method, path, body) {
     headers: { ...(token ? { authorization: `Bearer ${token}` } : {}), ...(body ? { 'content-type': 'application/json' } : {}) },
     body: body ? JSON.stringify(body) : undefined,
   });
-  if (res.status === 401 && path !== '/v1/super/session') {
+  if (res.status === 401 && path !== '/v1/super/session' && path !== '/v1/super/setup') {
     saveToken(null);
     showLogin('You were signed out. Sign in again.');
     throw new Error('signed out');
@@ -58,10 +58,65 @@ const idOf = (username) => (username.lastIndexOf('-') < 0 ? username : username.
 
 // ------------------------------------------------------------------ sign in
 
+async function start() {
+  if (token) return load().catch(() => showLogin());
+  const config = await fetch('/v1/config').then((r) => r.json(), () => ({}));
+  if (config.needsSetup) showSetup();
+  else showLogin();
+}
+
+/** First visit: create the owner account. The one-time setup code is in the server log. */
+function showSetup() {
+  who.replaceChildren();
+  const err = h('div', { class: 'error', hidden: true });
+  const code = h('input', { autocomplete: 'off', autocapitalize: 'none' });
+  const id = h('input', { autocomplete: 'username', placeholder: 'e.g. harsh', autocapitalize: 'none' });
+  const pw = h('input', { type: 'password', autocomplete: 'new-password' });
+  const pw2 = h('input', { type: 'password', autocomplete: 'new-password' });
+  const btn = h('button', { class: 'primary', type: 'submit' }, 'Create owner account');
+  const form = h(
+    'form',
+    {
+      class: 'card stack',
+      onsubmit: async (e) => {
+        e.preventDefault();
+        err.hidden = true;
+        if (pw.value !== pw2.value) {
+          err.textContent = 'The two passwords are different';
+          err.hidden = false;
+          return;
+        }
+        btn.disabled = true;
+        const username = id.value.trim().toLowerCase();
+        try {
+          await api('POST', '/v1/super/setup', { code: code.value.trim(), username, password: pw.value });
+          const r = await api('POST', '/v1/super/session', { username, password: pw.value });
+          saveToken(r.token);
+          await load();
+        } catch (ex) {
+          err.textContent = ex.message;
+          err.hidden = false;
+        } finally {
+          btn.disabled = false;
+        }
+      },
+    },
+    h('h1', {}, 'Set up the owner account'),
+    h('div', { class: 'muted small' }, 'You own this CellMate server: you create the companies that may use it. You sign in here with this ID and password (no company code).'),
+    h('label', {}, 'Setup code', code, h('span', { class: 'muted small' }, 'Shown once in the server log ("Owner setup: … setup code …").')),
+    h('label', {}, 'Your ID', id),
+    h('label', {}, 'Password (at least 8 characters)', pw),
+    h('label', {}, 'Confirm password', pw2),
+    err,
+    btn,
+  );
+  app.replaceChildren(h('div', { class: 'login' }, form));
+  code.focus();
+}
+
 function showLogin(message) {
   who.replaceChildren();
   const err = h('div', { class: 'error', hidden: !message }, message || '');
-  const code = h('input', { autocomplete: 'organization', placeholder: 'e.g. acme', autocapitalize: 'none' });
   const id = h('input', { autocomplete: 'username', placeholder: 'e.g. harsh', autocapitalize: 'none' });
   const pw = h('input', { type: 'password', autocomplete: 'current-password' });
   const btn = h('button', { class: 'primary', type: 'submit' }, 'Sign in');
@@ -73,10 +128,8 @@ function showLogin(message) {
         e.preventDefault();
         err.hidden = true;
         btn.disabled = true;
-        const c = code.value.trim().toLowerCase();
-        const u = id.value.trim().toLowerCase();
         try {
-          const r = await api('POST', '/v1/super/session', { username: c ? `${u}-${c}` : u, password: pw.value });
+          const r = await api('POST', '/v1/super/session', { username: id.value.trim().toLowerCase(), password: pw.value });
           saveToken(r.token);
           pw.value = '';
           await load();
@@ -89,15 +142,14 @@ function showLogin(message) {
       },
     },
     h('h1', {}, 'Server owner sign-in'),
-    h('div', { class: 'muted small' }, 'Approve companies, add new ones and move people between them.'),
-    h('label', {}, 'Company code', code),
-    h('label', {}, 'Your ID', id),
+    h('div', { class: 'muted small' }, 'Create companies, approve requests and move people between companies.'),
+    h('label', {}, 'Owner ID', id),
     h('label', {}, 'Password', pw),
     err,
     btn,
   );
   app.replaceChildren(h('div', { class: 'login' }, form));
-  code.focus();
+  id.focus();
 }
 
 async function signOut() {
@@ -116,7 +168,7 @@ function dialog(...content) {
 }
 
 /** The QR invite the person scans in the CellMate app (then they only choose a password). */
-function showInvite(title, text, r) {
+function showInvite(title, text, r, login) {
   const qr = h('div', { class: 'qr' });
   qr.innerHTML = r.qrSvg; // generated by this server from the invite code
   const copy = h('button', {}, 'Copy invite code');
@@ -127,6 +179,12 @@ function showInvite(title, text, r) {
   dialog((close) => [
     h('div', { class: 'title' }, title),
     h('div', { class: 'note' }, text),
+    login
+      ? h('div', { class: 'code' }, `Company code: ${login.code}
+Admin ID: ${login.id}
+Temporary password: ${login.password}`)
+      : null,
+    login ? h('div', { class: 'muted small' }, 'They sign in with these in the CellMate app and must then choose their own password. Or they scan this QR:') : null,
     h('div', { class: 'row center' }, qr),
     h('div', { class: 'muted small' }, `Works once, until ${new Date(r.invite?.expires ?? r.expires).toLocaleString()}. Anyone with it can set up the account: show it in person or send it privately.`),
     h('div', { class: 'code' }, r.code),
@@ -307,10 +365,14 @@ function newCompany() {
     async ([name, code, adminId, adminName]) => {
       const r = await api('POST', '/v1/super/companies', { name, code: code.toLowerCase(), adminId: adminId.toLowerCase(), adminName });
       await load();
-      showInvite(`${name} created`, `Give this QR to ${adminName || adminId}. They scan it in the CellMate app and choose a password, then add their own people.`, r);
+      showInvite(
+        `${name} created`,
+        `Send these to ${adminName || adminId} privately. After signing in they add their own people from the Admin page of the app.`,
+        r,
+        { code: code.toLowerCase(), id: adminId.toLowerCase(), password: r.tempPassword },
+      );
     },
   );
 }
 
-if (token) load().catch(() => showLogin());
-else showLogin();
+void start();

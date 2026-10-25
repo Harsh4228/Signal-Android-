@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useState, type FormEvent } from 'react';
 import { ArrowLeft, Building2, CircleAlert, KeyRound, LockKeyhole, QrCode } from 'lucide-react';
 import { MIN_PASSWORD_LENGTH, MustChangePasswordError, makeUsername, normalizeServerUrl, parseInviteCode, shortId } from '@meetme/core';
 import { client } from '../messenger';
@@ -33,20 +33,9 @@ export function Register({ onDone, moved }: { onDone: () => void; moved?: boolea
   const [newPw2, setNewPw2] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [needsSetup, setNeedsSetup] = useState(false);
   const invite = mode === 'join' ? parseInviteCode(code) : null;
   const choosing = mode === 'join' || mode === 'company' || mustChange;
 
-  useEffect(() => {
-    let live = true;
-    client
-      .getPublicConfig(server)
-      .then((c) => live && setNeedsSetup(!!c.needsSetup))
-      .catch(() => {});
-    return () => {
-      live = false;
-    };
-  }, [server]);
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -61,7 +50,7 @@ export function Register({ onDone, moved }: { onDone: () => void; moved?: boolea
       const id = username.trim().toLowerCase();
       const co = company.trim().toLowerCase();
       if (mode === 'join') await client.join(code, newPw);
-      else if (mode === 'company') await client.setupServer(url, { companyCode: co, companyName, id, password: newPw });
+      else if (mode === 'company') await client.requestCompany(url, { companyCode: co, companyName, id, password: newPw });
       else await client.login(url, makeUsername(id, co), password, mustChange ? newPw : undefined);
       onDone();
     } catch (err) {
@@ -93,18 +82,14 @@ export function Register({ onDone, moved }: { onDone: () => void; moved?: boolea
       ? 'Join CellMate'
       : mode === 'login'
         ? 'Sign in to CellMate'
-        : needsSetup
-          ? 'Set up CellMate'
-          : 'Register your company';
+        : 'Register your company';
   const intro = moved
     ? 'Paste the invite code from your new admin and choose a password. Your chats and files stay on this computer.'
     : mode === 'join'
       ? 'Your admin created your account and gave you a QR code. On a computer, paste its invite code below.'
       : mode === 'login'
         ? 'Sign in with your company code, your ID and your password.'
-        : needsSetup
-          ? 'Create the first company. You become its admin and the owner of this server.'
-          : 'Ask for your own company. You can use it as soon as the server owner approves it.';
+        : 'Ask for your own company. You can use it as soon as the server owner approves it.';
 
   return (
     <div className="register">
@@ -213,9 +198,7 @@ export function Register({ onDone, moved }: { onDone: () => void; moved?: boolea
             : mode === 'join'
               ? 'Set password and join'
               : mode === 'company'
-                ? needsSetup
-                  ? 'Set up the server'
-                  : 'Send request'
+                ? 'Send request'
                 : mustChange
                   ? 'Save password and sign in'
                   : 'Sign in'}
@@ -235,7 +218,7 @@ export function Register({ onDone, moved }: { onDone: () => void; moved?: boolea
             )}
             {mode !== 'company' && (
               <a href="#" onClick={(e) => (e.preventDefault(), switchTo('company'))} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                <Building2 size={14} /> {needsSetup ? 'Owner? Set up this server' : 'Register your company'}
+                <Building2 size={14} /> Register your company
               </a>
             )}
           </p>

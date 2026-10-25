@@ -54,6 +54,21 @@ export async function startTestServer(cfg: Omit<ServerConfig, 'dbPath'>, extra: 
       raw.close();
       return rows;
     },
+    /** A server-wide value (meta table), read straight from the database. */
+    async meta(key: string): Promise<string | undefined> {
+      if (pgUrl) {
+        const c = new pg.Client({ connectionString });
+        await c.connect();
+        const rows = (await c.query('SELECT v FROM meta WHERE k = $1', [key])).rows as { v: string }[];
+        await c.end();
+        return rows[0]?.v;
+      }
+      const { DatabaseSync } = await import('node:sqlite');
+      const raw = new DatabaseSync(join(dir, 'test.db'));
+      const row = raw.prepare('SELECT v FROM meta WHERE k = ?').get(key) as { v: string } | undefined;
+      raw.close();
+      return row?.v;
+    },
     /** Every stored envelope body, read straight from the database. */
     async queueBodies(): Promise<string[]> {
       if (pgUrl) {

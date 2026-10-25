@@ -32,21 +32,9 @@ export function RegisterScreen({ onDone, moved }: { onDone: () => void; moved?: 
   const [newPw2, setNewPw2] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  /** Nobody has set the server up yet: "Register your company" makes the first company and its owner. */
-  const [needsSetup, setNeedsSetup] = useState(false);
   const invite = mode === 'join' ? parseInviteCode(code) : null;
   const choosing = (mode === 'join' && !!invite) || mode === 'company' || mustChange;
 
-  useEffect(() => {
-    let live = true;
-    client
-      .getPublicConfig(server)
-      .then((c) => live && setNeedsSetup(!!c.needsSetup))
-      .catch(() => {});
-    return () => {
-      live = false;
-    };
-  }, [server]);
 
   async function submit() {
     setError(null);
@@ -60,7 +48,7 @@ export function RegisterScreen({ onDone, moved }: { onDone: () => void; moved?: 
       const id = username.trim().toLowerCase();
       const co = company.trim().toLowerCase();
       if (mode === 'join') await client.join(code, newPw);
-      else if (mode === 'company') await client.setupServer(url, { companyCode: co, companyName, id, password: newPw });
+      else if (mode === 'company') await client.requestCompany(url, { companyCode: co, companyName, id, password: newPw });
       else await client.login(url, makeUsername(id, co), password, mustChange ? newPw : undefined);
       onDone();
     } catch (e) {
@@ -115,18 +103,14 @@ export function RegisterScreen({ onDone, moved }: { onDone: () => void; moved?: 
       ? 'Join CellMate'
       : mode === 'login'
         ? 'Sign in to CellMate'
-        : needsSetup
-          ? 'Set up CellMate'
-          : 'Register your company';
+        : 'Register your company';
   const intro = moved
     ? 'Scan the QR code from your new admin and choose a password. Your chats and files stay on this phone.'
     : mode === 'join'
       ? 'Scan the QR code your admin gave you, then choose your password.'
       : mode === 'login'
         ? 'Sign in with your company code, your ID and your password.'
-        : needsSetup
-          ? 'Create the first company. You become its admin and the owner of this server.'
-          : 'Ask for your own company. You can use it as soon as the server owner approves it.';
+        : 'Ask for your own company. You can use it as soon as the server owner approves it.';
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.surface }}>
@@ -209,9 +193,7 @@ export function RegisterScreen({ onDone, moved }: { onDone: () => void; moved?: 
                   : mode === 'join'
                     ? 'Set password and join'
                     : mode === 'company'
-                      ? needsSetup
-                        ? 'Set up the server'
-                        : 'Send request'
+                      ? 'Send request'
                       : mustChange
                         ? 'Save password and sign in'
                         : 'Sign in'
@@ -229,7 +211,7 @@ export function RegisterScreen({ onDone, moved }: { onDone: () => void; moved?: 
               {mode !== 'join' && <Link icon={QrCode} onPress={() => switchTo('join')} text="I have a QR invite" />}
               {mode !== 'login' && <Link icon={ArrowLeft} onPress={() => switchTo('login')} text="I already have a password: sign in" />}
               {mode !== 'company' && (
-                <Link icon={Building2} onPress={() => switchTo('company')} text={needsSetup ? 'Owner? Set up this server' : 'Register your company'} />
+                <Link icon={Building2} onPress={() => switchTo('company')} text='Register your company' />
               )}
             </View>
           )}

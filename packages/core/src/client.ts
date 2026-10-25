@@ -29,8 +29,6 @@ import {
   MIN_PASSWORD_LENGTH,
   makeUsername,
   shortId,
-  type CompanyInfo,
-  type NewCompanyRequest,
   type RegisterRequest,
   type AdminStats,
   type AdminUser,
@@ -667,10 +665,10 @@ export class MessengerClient extends Emitter<Events> {
   }
 
   /**
-   * First-time setup of a company server by its owner: creates the company and my account in it. I become its
-   * admin and the super admin, who adds the other companies. Afterwards I sign in with company code, ID and password.
+   * Ask the server owner for a company: creates the company (waiting for approval) and my account as its admin.
+   * Until the owner approves it the app shows 'pending'; then I sign in with company code, ID and password.
    */
-  async setupServer(serverUrl: string, input: { companyCode: string; companyName: string; id: string; password: string }): Promise<void> {
+  async requestCompany(serverUrl: string, input: { companyCode: string; companyName: string; id: string; password: string }): Promise<void> {
     const code = input.companyCode.trim().toLowerCase();
     if (!COMPANY_CODE_RE.test(code)) throw new Error('Company code: 2-16 characters, a-z and 0-9 only');
     await this.registerAccount(serverUrl, input.id, {
@@ -927,59 +925,6 @@ export class MessengerClient extends Emitter<Events> {
   /** Admin: make someone an admin of our company too, or take it away (a company keeps at least one admin). */
   async setUserAdmin(username: string, admin: boolean): Promise<void> {
     await this.http('PUT', `/v1/admin/users/${encodeURIComponent(username)}/admin`, { admin });
-  }
-
-  // ------------------------------------------------------------------ super admin: companies
-
-  async listCompanies(): Promise<CompanyInfo[]> {
-    return (await this.http<{ companies: CompanyInfo[] }>('GET', '/v1/super/companies')).companies;
-  }
-
-  /** A new company and its first admin. Returns the admin's one-time QR invite (show it with inviteCode()). */
-  async createCompany(req: NewCompanyRequest): Promise<{ company: CompanyInfo; invite: InviteResponse }> {
-    const body: NewCompanyRequest = {
-      code: req.code.trim().toLowerCase(),
-      name: req.name.trim(),
-      adminId: req.adminId.trim().toLowerCase(),
-      adminName: req.adminName?.trim() || undefined,
-    };
-    return this.http('POST', '/v1/super/companies', body);
-  }
-
-  /** Approve a company that asked to join (or let a suspended one back in): its people can use the server. */
-  async approveCompany(code: string): Promise<void> {
-    await this.http('PUT', `/v1/super/companies/${encodeURIComponent(code)}/status`, { status: 'active' });
-  }
-
-  /** Close a company: its people are signed out and can't connect until it is approved again. Nothing is deleted. */
-  async suspendCompany(code: string): Promise<void> {
-    await this.http('PUT', `/v1/super/companies/${encodeURIComponent(code)}/status`, { status: 'suspended' });
-  }
-
-  /** Turn down a company that asked to join: it and the account made with it are deleted. */
-  async rejectCompany(code: string): Promise<void> {
-    await this.http('DELETE', `/v1/super/companies/${encodeURIComponent(code)}`);
-  }
-
-  async renameCompany(code: string, name: string): Promise<void> {
-    await this.http('PUT', `/v1/super/companies/${encodeURIComponent(code)}`, { name: name.trim() });
-  }
-
-  async listCompanyUsers(code: string): Promise<{ username: string; name: string; active: boolean; admin: boolean; banned: boolean; moved: boolean }[]> {
-    return (await this.http<{ users: never[] }>('GET', `/v1/super/companies/${encodeURIComponent(code)}/users`)).users;
-  }
-
-  /** A new QR invite for someone in a company (e.g. its admin lost their phone). */
-  companyInvite(code: string, username: string): Promise<InviteResponse> {
-    return this.http('POST', `/v1/super/companies/${encodeURIComponent(code)}/invite`, { username });
-  }
-
-  /**
-   * Move a person to another company (`id`: their ID there, default the same). Their old account is kept, closed;
-   * moving them back opens it again with its groups and settings. Returns the QR invite for the new account.
-   */
-  async transferUser(username: string, to: string, id?: string): Promise<{ username: string; invite: InviteResponse; returning: boolean }> {
-    return this.http('POST', '/v1/super/transfer', { username, to: to.trim().toLowerCase(), id: id?.trim().toLowerCase() || undefined });
   }
 
   /** Admin: a user's work mobile number and email ('' clears it). */
