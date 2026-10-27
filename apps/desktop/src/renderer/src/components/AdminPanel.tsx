@@ -503,7 +503,7 @@ function DepartmentEditor({
   }
 
   return (
-    <form className="row dept-edit" onSubmit={save} onKeyDown={(e) => e.key === 'Escape' && onDone(false)}>
+    <form className="row dept-edit" onSubmit={save} onKeyDown={(e) => e.key === 'Escape' && (e.preventDefault(), onDone(false))}>
       <DepartmentPicker value={value} onChange={setValue} departments={departments} />
       <button className="primary" disabled={busy}>
         Save
@@ -847,7 +847,7 @@ function DepartmentsTab({
                   <input
                     value={newName}
                     onChange={(e) => setNewName(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Escape' && setRenaming(null)}
+                    onKeyDown={(e) => e.key === 'Escape' && (e.preventDefault(), setRenaming(null))}
                     maxLength={MAX_DEPARTMENT}
                     autoFocus
                   />

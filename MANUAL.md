@@ -7,6 +7,19 @@ Run every command in **PowerShell** inside the project folder:
 cd C:\Users\princ\OneDrive\Desktop\Signal\meetme
 ```
 
+## Quick: everything in one command
+
+Commit your changes, then:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\release.ps1
+```
+
+It runs typecheck + tests, raises the version (1.1.1 → 1.1.2, versionCode +1), commits, tags, pushes to every
+GitHub remote, redeploys the server (only if server/core/infra changed), builds the APK and the Windows installer.
+`-Version 1.2.0` picks the number; `-SkipServer`, `-SkipApk`, `-SkipDesktop` leave a step out.
+The steps below are the same thing by hand.
+
 ## What each change needs
 
 | You changed… | Do these steps |

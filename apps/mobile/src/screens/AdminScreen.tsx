@@ -46,7 +46,7 @@ import {
 import { pickFile } from '../files';
 import { client, useClient } from '../messenger';
 import { colors, s } from '../theme';
-import { Avatar, Banner, Button, Field, Header, IconButton, errorText, shortTime } from '../ui';
+import { Avatar, Banner, Button, Field, Header, IconButton, errorText, shortTime, useBack } from '../ui';
 import type { Route } from '../App';
 
 type Tab = 'overview' | 'users' | 'departments' | 'groups' | 'activity' | 'settings';
@@ -74,6 +74,7 @@ type InviteShare = { invite: InviteResponse; name: string; renewed: boolean };
 
 /** The QR invite: the person scans it in CellMate and only chooses a password. */
 function InviteCard({ share, onDone }: { share: InviteShare; onDone: () => void }) {
+  useBack(onDone);
   const [server, setServer] = useState(client.account?.serverUrl ?? '');
   const [svg, setSvg] = useState<string | null>(null);
   const code = inviteCode(server || 'http://localhost', share.invite);
@@ -109,6 +110,7 @@ function InviteCard({ share, onDone }: { share: InviteShare; onDone: () => void 
 
 /** Admin: change a user's name, photo, mobile and email (users can't change these themselves). */
 function ProfileEditor({ user, onDone, onToast }: { user: AdminUser; onDone: (changed: boolean) => void; onToast: Toast }) {
+  useBack(() => onDone(false));
   const [name, setName] = useState(user.name);
   const [phone, setPhone] = useState(user.phone);
   const [email, setEmail] = useState(user.email);
@@ -583,6 +585,7 @@ function DepartmentEditor({
   onDone: (changed: boolean) => void;
   onToast: Toast;
 }) {
+  useBack(() => onDone(false));
   const [value, setValue] = useState(user.departments);
   const [busy, setBusy] = useState(false);
 
@@ -624,6 +627,7 @@ function CreateUser({
   onCreated: (s: InviteShare) => void;
   onToast: Toast;
 }) {
+  useBack(onCancel);
   const [id, setId] = useState('');
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
@@ -706,6 +710,7 @@ function DepartmentsTab({
   const [name, setName] = useState('');
   const [renaming, setRenaming] = useState<string | null>(null);
   const [newName, setNewName] = useState('');
+  useBack(renaming ? () => setRenaming(null) : null);
   const [busy, setBusy] = useState(false);
 
   const members = (d: string) => (users ?? []).filter((u) => u.departments.includes(d)).length;
@@ -939,6 +944,7 @@ function GroupEditor({
   onCancel: () => void;
   onSaved: (g: GroupInfo) => void;
 }) {
+  useBack(onCancel);
   const me = client.account?.username ?? '';
   const [name, setName] = useState(group?.name ?? '');
   const [members, setMembers] = useState<Set<string>>(() => new Set(group?.members ?? [me]));

@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
-import { Ban, Bell, CircleDashed, EllipsisVertical, Lock, Megaphone, ShoppingBag, Star, MessageSquarePlus, Search, Settings as SettingsIcon, ShieldCheck, UserPlus } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { Ban, Bell, CircleDashed, EllipsisVertical, Lock, Megaphone, ShoppingBag, Star, MessageSquarePlus, Search, Settings as SettingsIcon, ShieldCheck } from 'lucide-react';
 import { MessengerClient, isGroupKey } from '@meetme/core';
 import { appLock, client, useClient, useLock } from '../messenger';
 import { Broadcast } from './Broadcast';
@@ -9,11 +9,12 @@ import { StatusPanel } from './Status';
 import { StarredPanel } from './ChatExtras';
 import { CatalogPanel } from './Catalog';
 import { Avatar, ChatAvatar, Logo, errorText, shortTime, typingText } from './ui';
+import { Directory } from './Directory';
 
 export function Sidebar({ onSettings, onError }: { onSettings: () => void; onError: (m: string) => void }) {
   const c = useClient();
   const lock = useLock();
-  const [adding, setAdding] = useState('');
+  const [newChat, setNewChat] = useState(false);
   const [filter, setFilter] = useState('');
   const [broadcasting, setBroadcasting] = useState(false);
   const [managing, setManaging] = useState(false);
@@ -31,7 +32,7 @@ export function Sidebar({ onSettings, onError }: { onSettings: () => void; onErr
   useEffect(() => {
     if (!more) return;
     const onDown = (e: MouseEvent) => !moreRef.current?.contains(e.target as Node) && setMore(false);
-    const onKey = (e: globalThis.KeyboardEvent) => e.key === 'Escape' && setMore(false);
+    const onKey = (e: globalThis.KeyboardEvent) => e.key === 'Escape' && (e.preventDefault(), setMore(false));
     document.addEventListener('mousedown', onDown);
     document.addEventListener('keydown', onKey);
     return () => {
@@ -40,63 +41,13 @@ export function Sidebar({ onSettings, onError }: { onSettings: () => void; onErr
     };
   }, [more]);
 
-  const [matches, setMatches] = useState<string[]>([]);
-  const [highlight, setHighlight] = useState(-1);
-  const [showMatches, setShowMatches] = useState(false);
-
-  // Suggest usernames as you type (debounced so each keystroke isn't a request).
-  useEffect(() => {
-    const q = adding.trim().toLowerCase();
-    if (!q) {
-      setMatches([]);
-      return;
-    }
-    let stale = false;
-    const t = setTimeout(() => {
-      client
-        .searchUsers(q)
-        .then((users) => {
-          if (stale) return;
-          setMatches(users);
-          setHighlight(-1);
-        })
-        .catch(() => !stale && setMatches([]));
-    }, 200);
-    return () => {
-      stale = true;
-      clearTimeout(t);
-    };
-  }, [adding]);
-
   async function open(name: string) {
-    name = name.trim().toLowerCase();
-    if (!name) return;
     try {
       await client.addContact(name);
-      setAdding('');
-      setMatches([]);
+      setNewChat(false);
       client.setActiveChat(name);
     } catch (err) {
       onError(errorText(err));
-    }
-  }
-
-  function add(e: FormEvent) {
-    e.preventDefault();
-    void open(highlight >= 0 && matches[highlight] ? matches[highlight] : adding);
-  }
-
-  function onAddKey(e: KeyboardEvent<HTMLInputElement>) {
-    if (!matches.length) return;
-    if (e.key === 'ArrowDown') {
-      e.preventDefault();
-      setShowMatches(true);
-      setHighlight((h) => (h + 1) % matches.length);
-    } else if (e.key === 'ArrowUp') {
-      e.preventDefault();
-      setHighlight((h) => (h <= 0 ? matches.length - 1 : h - 1));
-    } else if (e.key === 'Escape') {
-      setShowMatches(false);
     }
   }
 
@@ -115,6 +66,9 @@ export function Sidebar({ onSettings, onError }: { onSettings: () => void; onErr
           CellMate
         </div>
         <div className="actions">
+          <button className={`icon ${newChat ? 'active' : ''}`} title="New chat" onClick={() => setNewChat((v) => !v)}>
+            <MessageSquarePlus size={19} />
+          </button>
           <button className="icon dot-host" title="Status" onClick={() => setShowStatus(true)}>
             <CircleDashed size={19} />
             {c.unseenStatusCount > 0 && <span className="dot" />}
@@ -180,39 +134,13 @@ export function Sidebar({ onSettings, onError }: { onSettings: () => void; onErr
         </div>
       )}
 
-      <form onSubmit={add} className="add">
-        <UserPlus size={16} className="add-icon" />
-        <input
-          value={adding}
-          onChange={(e) => {
-            setAdding(e.target.value);
-            setShowMatches(true);
-          }}
-          onKeyDown={onAddKey}
-          onFocus={() => setShowMatches(true)}
-          onBlur={() => setShowMatches(false)}
-          placeholder="Start a chat by username"
-        />
-        {showMatches && matches.length > 0 && (
-          <ul className="suggest">
-            {matches.map((u, i) => (
-              <li
-                key={u}
-                className={i === highlight ? 'active' : ''}
-                // mousedown, not click: it fires before the input's blur hides the list
-                onMouseDown={(e) => {
-                  e.preventDefault();
-                  void open(u);
-                }}
-                onMouseEnter={() => setHighlight(i)}
-              >
-                <Avatar name={u} size="sm" />
-                <span>{client.displayName(u)}</span>
-              </li>
-            ))}
-          </ul>
-        )}
-      </form>
+      {newChat ? (
+        <Directory onOpen={(u) => void open(u)} onBack={() => setNewChat(false)} />
+      ) : c.chatKeys().length === 0 ? (
+        // First login: everyone is listed at once, no need to search for names.
+        <Directory onOpen={(u) => void open(u)} />
+      ) : (
+        <>
       {c.chatKeys().length > 6 && (
         <div className="add">
           <Search size={16} className="add-icon" />
@@ -225,7 +153,6 @@ export function Sidebar({ onSettings, onError }: { onSettings: () => void; onErr
           <li className="none">
             <MessageSquarePlus size={28} color="var(--faint)" />
             <div>{q ? 'No chats match' : 'No conversations yet'}</div>
-            {!q && <div className="small">Type a username above to start a secure chat.</div>}
           </li>
         )}
         {sorted.map((key) => {
@@ -262,6 +189,8 @@ export function Sidebar({ onSettings, onError }: { onSettings: () => void; onErr
           );
         })}
       </ul>
+        </>
+      )}
 
       <div className="me">
         <Avatar name={c.account!.username} size="sm" />

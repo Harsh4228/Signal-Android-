@@ -147,9 +147,11 @@ export function ChatView({ peer, onError }: { peer: string; onError: (m: string)
       e.preventDefault();
       void send();
     } else if (e.key === 'Escape' && editing) {
+      e.preventDefault();
       setEditing(null);
       setText('');
     } else if (e.key === 'Escape' && replyTo) {
+      e.preventDefault();
       setReplyTo(null);
     }
   }
@@ -310,7 +312,7 @@ export function ChatView({ peer, onError }: { peer: string; onError: (m: string)
         <div className="chat-search">
           <div className="search">
             <Search size={16} />
-            <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search messages" autoFocus onKeyDown={(e) => e.key === 'Escape' && setSearching(false)} />
+            <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search messages" autoFocus onKeyDown={(e) => e.key === 'Escape' && (e.preventDefault(), setSearching(false))} />
           </div>
           {query.trim() && (
             <ul className="search-results">

@@ -10,6 +10,13 @@ import type { PushKind } from '@meetme/core';
  * anything encrypted, so Google and Apple learn only that *someone* sent this device *something*.
  * The app opens, connects to the CellMate server and decrypts as usual.
  */
+/**
+ * Stored in front of the token when the app draws its own incoming call screen (Android with Answer /
+ * Decline over the lock screen). Its call wake-ups are then silent data pushes that start the app,
+ * instead of a plain "Incoming call" notification. Older apps keep the plain one.
+ */
+export const CALL_UI_PREFIX = 'call-ui:';
+
 export interface PushSender {
   /** 'invalid' = the token is no longer valid (app uninstalled / reinstalled) and should be forgotten. */
   send(token: string, kind: PushKind): Promise<'ok' | 'invalid' | 'error'>;
@@ -80,7 +87,9 @@ export class FcmSender implements PushSender {
     return j.access_token;
   }
 
-  async send(token: string, kind: PushKind): Promise<'ok' | 'invalid' | 'error'> {
+  async send(stored: string, kind: PushKind): Promise<'ok' | 'invalid' | 'error'> {
+    const callUi = stored.startsWith(CALL_UI_PREFIX);
+    const token = callUi ? stored.slice(CALL_UI_PREFIX.length) : stored;
     const call = kind === 'call';
     const body = call ? 'Incoming call' : 'New message';
     const message = {
@@ -90,13 +99,17 @@ export class FcmSender implements PushSender {
         priority: 'HIGH',
         ttl: call ? '45s' : '86400s',
         // Same tag = one notification that gets replaced, not a pile of them.
-        notification: {
-          title: 'CellMate',
-          body,
-          tag: call ? 'meetme-call' : 'meetme-message',
-          channel_id: call ? 'calls' : 'messages',
-          visibility: 'PRIVATE',
-        },
+        ...(call && callUi
+          ? {}
+          : {
+              notification: {
+                title: 'CellMate',
+                body,
+                tag: call ? 'meetme-call' : 'meetme-message',
+                channel_id: call ? 'calls' : 'messages',
+                visibility: 'PRIVATE',
+              },
+            }),
       },
       apns: {
         headers: {

@@ -281,6 +281,8 @@ export type PushKind = 'message' | 'call';
 /** PUT /v1/push: this device's Firebase Cloud Messaging token (Android and iOS). */
 export interface PushTokenRequest {
   token: string;
+  /** The app shows its own incoming call screen (Android): send call wake-ups as silent data pushes. */
+  callUi?: boolean;
 }
 
 // ---- WebSocket frames ----
@@ -307,7 +309,11 @@ export type ServerFrame =
   | { type: 'pong' };
 
 // ---- decrypted payloads (only clients ever see these) ----
-export type CallAction = 'offer' | 'answer' | 'ice' | 'hangup' | 'reject' | 'busy';
+/**
+ * offer/answer start a call; reoffer/reanswer change it while it runs (camera turned on, network change);
+ * ringing = the callee's device is ringing; media = my mute / camera state, shown to the other person.
+ */
+export type CallAction = 'offer' | 'answer' | 'ice' | 'hangup' | 'reject' | 'busy' | 'ringing' | 'reoffer' | 'reanswer' | 'media';
 
 /** `g` = group id: the message belongs to that group chat (each member gets their own encrypted copy). */
 export type Payload =
@@ -366,6 +372,8 @@ export type Payload =
       video?: boolean;
       sdp?: string;
       candidate?: { candidate: string; sdpMid: string | null; sdpMLineIndex: number | null };
+      muted?: boolean;
+      cameraOff?: boolean;
     };
 
 export type Rsvp = 'yes' | 'maybe' | 'no';

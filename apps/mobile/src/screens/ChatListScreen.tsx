@@ -1,52 +1,17 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { FlatList, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
-import { Ban, Bell, CircleDashed, EllipsisVertical, Megaphone, ShoppingBag, Star, MessageSquarePlus, Search, Settings, ShieldCheck, UserPlus } from 'lucide-react-native';
+import { Ban, Bell, CircleDashed, EllipsisVertical, Megaphone, ShoppingBag, Star, MessageSquarePlus, Search, Settings, ShieldCheck } from 'lucide-react-native';
 import { MessengerClient, isGroupKey } from '@meetme/core';
 import { client, useClient } from '../messenger';
 import { colors, s } from '../theme';
-import { Avatar, Banner, ChatAvatar, Header, IconButton, Logo, Sheet, errorText, shortTime, typingText } from '../ui';
+import { Banner, ChatAvatar, Header, IconButton, Logo, Sheet, shortTime, typingText } from '../ui';
+import { DirectoryList, openDirectChat } from './DirectoryScreen';
 import type { Route } from '../App';
 
 export function ChatListScreen({ navigate, onError }: { navigate: (r: Route) => void; onError: (m: string) => void }) {
   const c = useClient();
-  const [adding, setAdding] = useState('');
   const [filter, setFilter] = useState('');
   const [more, setMore] = useState(false);
-
-  const [matches, setMatches] = useState<string[]>([]);
-
-  // Suggest usernames as you type (debounced so each keystroke isn't a request).
-  useEffect(() => {
-    const q = adding.trim().toLowerCase();
-    if (!q) {
-      setMatches([]);
-      return;
-    }
-    let stale = false;
-    const t = setTimeout(() => {
-      client
-        .searchUsers(q)
-        .then((users) => !stale && setMatches(users))
-        .catch(() => !stale && setMatches([]));
-    }, 200);
-    return () => {
-      stale = true;
-      clearTimeout(t);
-    };
-  }, [adding]);
-
-  async function add(picked?: string) {
-    const name = (picked ?? adding).trim().toLowerCase();
-    if (!name) return;
-    try {
-      await client.addContact(name);
-      setAdding('');
-      setMatches([]);
-      navigate({ name: 'chat', peer: name });
-    } catch (e) {
-      onError(errorText(e));
-    }
-  }
 
   const q = filter.trim().toLowerCase();
   const all = c.chatKeys();
@@ -101,34 +66,6 @@ export function ChatListScreen({ navigate, onError }: { navigate: (r: Route) => 
         </View>
       )}
 
-      <View style={styles.search}>
-        <UserPlus size={18} color={colors.faint} />
-        <TextInput
-          style={styles.searchInput}
-          value={adding}
-          onChangeText={setAdding}
-          placeholder="Start a chat by username"
-          placeholderTextColor={colors.faint}
-          autoCapitalize="none"
-          autoCorrect={false}
-          onSubmitEditing={() => add()}
-          returnKeyType="go"
-        />
-      </View>
-      {matches.length > 0 && (
-        <View style={styles.suggest}>
-          {matches.map((u) => (
-            <Pressable
-              key={u}
-              onPress={() => add(u)}
-              style={({ pressed }) => [styles.suggestItem, pressed && { backgroundColor: colors.bg }]}
-            >
-              <Avatar name={u} size={32} />
-              <Text style={{ color: colors.text, fontSize: 15 }}>{client.displayName(u)}</Text>
-            </Pressable>
-          ))}
-        </View>
-      )}
       {all.length > 6 && (
         <View style={[styles.search, { marginTop: 0 }]}>
           <Search size={18} color={colors.faint} />
@@ -149,13 +86,14 @@ export function ChatListScreen({ navigate, onError }: { navigate: (r: Route) => 
         keyExtractor={(n) => n}
         contentContainerStyle={{ paddingBottom: 24, flexGrow: 1 }}
         ListEmptyComponent={
-          <View style={[s.center, { gap: 8 }]}>
-            <View style={styles.emptyIcon}>
-              <MessageSquarePlus size={28} color={colors.accent} />
+          q ? (
+            <View style={[s.center, { gap: 8 }]}>
+              <Text style={s.title}>No chats match</Text>
             </View>
-            <Text style={s.title}>{q ? 'No chats match' : 'No conversations yet'}</Text>
-            {!q && <Text style={[s.muted, { textAlign: 'center' }]}>Type a username above to start a secure chat.</Text>}
-          </View>
+          ) : (
+            // First login: show everyone at once, no need to search for names.
+            <DirectoryList embedded onOpen={(u) => void openDirectChat(u, navigate, onError)} />
+          )
         }
         renderItem={({ item: key }) => {
           const last = c.lastMessage(key);
@@ -208,6 +146,15 @@ export function ChatListScreen({ navigate, onError }: { navigate: (r: Route) => 
           );
         }}
       />
+      {all.length > 0 && (
+        <Pressable
+          onPress={() => navigate({ name: 'contacts' })}
+          accessibilityLabel="New chat"
+          style={({ pressed }) => [styles.fab, pressed && { opacity: 0.85 }]}
+        >
+          <MessageSquarePlus size={24} color="#fff" />
+        </Pressable>
+      )}
       {more && (
         <Sheet
           onClose={() => setMore(false)}
@@ -239,17 +186,22 @@ const styles = StyleSheet.create({
     backgroundColor: colors.bg,
   },
   searchInput: { flex: 1, color: colors.text, fontSize: 15, paddingVertical: 11 },
-  suggest: {
-    marginHorizontal: 12,
-    marginTop: -6,
-    marginBottom: 8,
-    paddingVertical: 4,
-    borderRadius: 12,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.lineStrong,
-    backgroundColor: colors.surface,
+  fab: {
+    position: 'absolute',
+    right: 18,
+    bottom: 22,
+    width: 58,
+    height: 58,
+    borderRadius: 18,
+    backgroundColor: colors.accent,
+    alignItems: 'center',
+    justifyContent: 'center',
+    elevation: 4,
+    shadowColor: '#000',
+    shadowOpacity: 0.18,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 3 },
   },
-  suggestItem: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 12, paddingVertical: 8 },
   item: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingLeft: 16 },
   itemBody: {
     flex: 1,
@@ -266,14 +218,5 @@ const styles = StyleSheet.create({
     backgroundColor: colors.accent,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  emptyIcon: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-    backgroundColor: colors.accentSoft,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 6,
   },
 });

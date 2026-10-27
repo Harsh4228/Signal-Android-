@@ -34,7 +34,11 @@ if (-not (Test-Path "$Work\apps\mobile\node_modules")) {
 }
 
 Write-Host '2/3 Building (10-20 minutes; close Chrome and other big programs)'
-$env:JAVA_HOME = 'C:\Program Files\Android\Android Studio\jbr'
+# Java 17: Android Studio's own copy, or the portable one in %LOCALAPPDATA%\Android\jdk (PC without Android Studio).
+$jdk = @('C:\Program Files\Android\Android Studio\jbr', "$env:LOCALAPPDATA\Android\jdk", $env:JAVA_HOME) |
+  Where-Object { $_ -and (Test-Path "$_\bin\java.exe") } | Select-Object -First 1
+if (-not $jdk) { throw 'Java 17 not found: install Android Studio, or put a JDK 17 in %LOCALAPPDATA%\Android\jdk' }
+$env:JAVA_HOME = $jdk
 $env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
 $env:Path = "C:\Program Files\nodejs;$env:JAVA_HOME\bin;$env:Path"
 $env:MEETME_UPLOAD_STORE_FILE = $jks

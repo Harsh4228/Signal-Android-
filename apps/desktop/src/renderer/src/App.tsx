@@ -11,6 +11,26 @@ import { NoticePopup } from './components/Notices';
 import { Logo } from './components/ui';
 
 /**
+ * Esc closes the topmost popup, like its ✕ (each popup's backdrop closes it when clicked). It runs after the
+ * other Esc handlers: one that already used the key (cancel an edit, close a viewer) calls preventDefault.
+ * Popups that must be answered (a new notice) have no closing backdrop, so Esc leaves them open.
+ */
+function useEscapeClosesPopup() {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      setTimeout(() => {
+        if (e.defaultPrevented) return;
+        const layers = document.querySelectorAll<HTMLElement>('.modal-bg, .viewer');
+        layers[layers.length - 1]?.click();
+      });
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+}
+
+/**
  * Desktop auto-lock: "immediately" locks when the window loses focus; otherwise the app locks after
  * the chosen time without any keyboard / mouse activity (or with the window hidden).
  */
@@ -49,6 +69,7 @@ export function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   useAutoLock();
+  useEscapeClosesPopup();
 
   useEffect(() => {
     Promise.all([client.init(), appLock.load()]).then(([registered]) => {

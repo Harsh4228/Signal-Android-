@@ -146,3 +146,29 @@ test('offline recipients get a content-free push; online ones and receipts do no
   await sleep(600);
   assert.equal(received.length, 2, 'invalid token was dropped');
 });
+
+test('apps with their own call screen get silent call pushes; messages still show a notification', async () => {
+  const caller = await newClient('carol');
+  const dana = await newClient('dana');
+  const TOKEN = 'dana-device-token-0123456789abcdef';
+  await dana.setPushToken(TOKEN, { callUi: true });
+  await caller.addContact('dana');
+  dana.dispose();
+  await sleep(100);
+  const before = received.length;
+
+  // Call: data only, so the app wakes up and shows Answer / Decline itself.
+  await caller.sendCallSignal('dana', { k: 'call', callId: 'd1', action: 'offer', video: true, sdp: 'v=0' });
+  await waitFor(() => received.length === before + 1, 'call push');
+  const call = received.at(-1)!;
+  assert.equal(call.token, TOKEN, 'the real token goes to Google, without the marker');
+  assert.deepEqual(call.message.data, { t: 'call' });
+  const android = call.message.android as Record<string, unknown>;
+  assert.equal(android.priority, 'HIGH');
+  assert.equal(android.notification, undefined);
+
+  // Message: the usual "New message" notification.
+  await caller.sendText('dana', 'hello');
+  await waitFor(() => received.length === before + 2, 'message push');
+  assert.equal(((received.at(-1)!.message.android as Record<string, unknown>).notification as { body: string }).body, 'New message');
+});

@@ -296,7 +296,7 @@ function StatusViewer({ user, start, onClose, onToast }: { user: string; start: 
   }, [elapsed]);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape') (e.preventDefault(), onClose());
       else if (e.key === 'ArrowRight') next();
       else if (e.key === 'ArrowLeft') prev();
     };

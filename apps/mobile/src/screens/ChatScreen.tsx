@@ -55,7 +55,7 @@ import { AttachmentView } from './AttachmentView';
 import { EventView, NewEvent, NewPoll, PollView } from './PollEvent';
 import { calls, client, useClient } from '../messenger';
 import { colors, s } from '../theme';
-import { ChatAvatar, Header, IconButton, Sheet, clock, errorText, typingText, type SheetAction } from '../ui';
+import { ChatAvatar, Header, IconButton, Sheet, clock, errorText, typingText, useBack, type SheetAction } from '../ui';
 import type { Route } from '../App';
 
 function Tick({ status }: { status: NonNullable<ChatMessage['status']> }) {
@@ -89,6 +89,10 @@ export function ChatScreen({
   const [searching, setSearching] = useState(false);
   const [viewingCatalog, setViewingCatalog] = useState<string | null>(null);
   const [query, setQuery] = useState('');
+  // Back first closes search, then cancels an edit or a reply, like WhatsApp.
+  useBack(searching ? () => (setSearching(false), setQuery('')) : null);
+  useBack(replyTo ? () => setReplyTo(null) : null);
+  useBack(editing ? () => setEditing(null) : null);
   const listRef = useRef<FlatList<ChatMessage>>(null);
   const messages = c.getMessages(peer);
   const timer = c.getDisappearingTimer(peer);

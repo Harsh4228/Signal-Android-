@@ -1,8 +1,9 @@
-import { createHash, createHmac, randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, randomBytes, scrypt, timingSafeEqual, type ScryptOptions } from 'node:crypto';
 import { mkdirSync, promises as fs } from 'node:fs';
 import http from 'node:http';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
 import QRCode from 'qrcode';
 import { WebSocketServer, type WebSocket } from 'ws';
 import {
@@ -67,7 +68,7 @@ import {
 } from '@meetme/core';
 import { LocalBus, type Bus, type BusEvent } from './bus';
 import { MOVED, isActive, isOnlineRow, openSqlite, type Db, type GroupRow, type ProductPhoto, type ProductRow, type UserRow } from './db';
-import type { PushSender } from './push';
+import { CALL_UI_PREFIX, type PushSender } from './push';
 
 export interface ServerConfig {
   /** SQLite file (used when no Postgres db is passed in). Attachments go next to it unless attachmentsDir is set. */
@@ -232,17 +233,23 @@ function looksLikeImage(b: Buffer, mime: string): boolean {
 
 // ---------------------------------------------------------------- password hashing
 
-function hashPassword(pw: string): string {
+// Async scrypt runs on the libuv thread pool, so a burst of logins can't stall every other connection.
+const scryptAsync = promisify(scrypt) as (pw: string, salt: Buffer, len: number, opts: ScryptOptions) => Promise<Buffer>;
+const SCRYPT_OPTS: ScryptOptions = { N: 16384, r: 8, p: 1 };
+
+async function hashPassword(pw: string): Promise<string> {
   const salt = randomBytes(16);
-  const hash = scryptSync(pw, salt, 32, { N: 16384, r: 8, p: 1 });
+  const hash = await scryptAsync(pw, salt, 32, SCRYPT_OPTS);
   return `scrypt$${salt.toString('base64')}$${hash.toString('base64')}`;
 }
 
-function verifyPassword(pw: string, stored: string): boolean {
+async function verifyPassword(pw: string, stored: string): Promise<boolean> {
   const [, salt, hash] = stored.split('$');
   if (!salt || !hash) return false;
   const expected = Buffer.from(hash, 'base64');
-  const actual = scryptSync(pw, Buffer.from(salt, 'base64'), 32, { N: 16384, r: 8, p: 1 });
+  // timingSafeEqual throws on different lengths: a damaged stored hash must fail, not crash the request.
+  if (expected.length !== 32) return false;
+  const actual = await scryptAsync(pw, Buffer.from(salt, 'base64'), 32, SCRYPT_OPTS);
   return timingSafeEqual(expected, actual);
 }
 
@@ -310,7 +317,8 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
   const sendLimit = new RateLimiter(1200, 60_000);
 
   const clientIp = (req: http.IncomingMessage) =>
-    (config.trustProxy && String(req.headers['x-forwarded-for'] ?? '').split(',')[0]?.trim()) ||
+    // The LAST entry is the one our own proxy (Caddy) added; earlier ones come from the client and can be faked.
+    (config.trustProxy && String(req.headers['x-forwarded-for'] ?? '').split(',').pop()?.trim()) ||
     req.socket.remoteAddress ||
     'unknown';
 
@@ -324,7 +332,7 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
     if (cached && cached.until > Date.now() && cached.digest === digest) return username;
     const user = await db.getUser(username);
     // API calls are authenticated with the DEVICE secret, never with the human login password.
-    if (!user || !user.device_hash || !verifyPassword(password, user.device_hash)) {
+    if (!user || !user.device_hash || !(await verifyPassword(password, user.device_hash))) {
       authFailLimit.allow(ip);
       throw new HttpError(401, 'unauthorized');
     }
@@ -489,7 +497,7 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
   async function newInvite(username: string): Promise<InviteResponse> {
     const token = randomBytes(32).toString('base64url');
     const expires = Date.now() + INVITE_TTL_MS;
-    await db.setInvite(username, { hash: hashPassword(token), expires });
+    await db.setInvite(username, { hash: await hashPassword(token), expires });
     return { username, token, expires };
   }
 
@@ -650,7 +658,7 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
         throw new HttpError(400, 'ID must be 3-32 characters: a-z, 0-9, _ or .');
       }
       checkNewPassword(body.password);
-      const hash = hashPassword(body.password as string);
+      const hash = await hashPassword(body.password as string);
       if (!(await db.getUser(body.username))) await db.createPendingUser(body.username, hash);
       await db.setPassword(body.username, hash, false);
       await db.setMeta('super_admins', JSON.stringify([body.username]));
@@ -673,7 +681,7 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
           !!user &&
           !user.banned &&
           typeof body.password === 'string' &&
-          verifyPassword(body.password, user.pass_hash) &&
+          await verifyPassword(body.password, user.pass_hash) &&
           (await superAdmins()).includes(user.username);
         if (!ok) {
           authFailLimit.allow(ip);
@@ -702,7 +710,7 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
       if (authFailLimit.isBlocked(ip)) throw new HttpError(429, 'Too many attempts, try again later');
       const body = (await readJson(req)) as Partial<LoginRequest>;
       const user = typeof body.username === 'string' ? await db.getUser(body.username) : undefined;
-      if (!user || typeof body.password !== 'string' || !verifyPassword(body.password, user.pass_hash)) {
+      if (!user || typeof body.password !== 'string' || !(await verifyPassword(body.password, user.pass_hash))) {
         authFailLimit.allow(ip);
         throw new HttpError(401, 'Wrong ID or password');
       }
@@ -713,7 +721,7 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
       if (user.must_change) {
         if (body.newPassword === undefined) throw new HttpError(403, 'must_change');
         checkNewPassword(body.newPassword, body.password);
-        newHash = hashPassword(body.newPassword);
+        newHash = await hashPassword(body.newPassword);
       }
       if (typeof body.deviceSecret !== 'string' || body.deviceSecret.length < 32 || body.deviceSecret.length > 128) {
         throw new HttpError(400, 'invalid device secret');
@@ -721,7 +729,7 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
       const identityKey = b64Key(body.identityKey, 32, 'identityKey');
       const spk = checkSpk(identityKey, body.signedPreKey);
       const opks = checkOpks(body.oneTimePreKeys ?? []);
-      await db.activate(user.username, { deviceHash: hashPassword(body.deviceSecret), identityKey, spk }, opks);
+      await db.activate(user.username, { deviceHash: await hashPassword(body.deviceSecret), identityKey, spk }, opks);
       if (newHash) await db.setPassword(user.username, newHash, false);
       await kick(user.username, 4004, 'logged in on another device');
       await notifyGroupsOf(user.username); // new keys: group members start fresh sessions
@@ -741,7 +749,7 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
         typeof body.token === 'string' &&
         body.token.length >= 32 &&
         body.token.length <= 128 &&
-        verifyPassword(body.token, user.invite_hash);
+        await verifyPassword(body.token, user.invite_hash);
       if (!valid) {
         authFailLimit.allow(ip);
         throw new HttpError(401, 'This QR code is not valid any more. Ask your admin for a new one.');
@@ -756,8 +764,8 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
       const identityKey = b64Key(body.identityKey, 32, 'identityKey');
       const spk = checkSpk(identityKey, body.signedPreKey);
       const opks = checkOpks(body.oneTimePreKeys ?? []);
-      await db.activate(user!.username, { deviceHash: hashPassword(body.deviceSecret), identityKey, spk }, opks);
-      await db.setPassword(user!.username, hashPassword(body.newPassword as string), false);
+      await db.activate(user!.username, { deviceHash: await hashPassword(body.deviceSecret), identityKey, spk }, opks);
+      await db.setPassword(user!.username, await hashPassword(body.newPassword as string), false);
       await db.setInvite(user!.username, null);
       await kick(user!.username, 4004, 'logged in on another device');
       await notifyGroupsOf(user!.username);
@@ -794,8 +802,8 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
       const opks = checkOpks(body.oneTimePreKeys ?? []);
       const username = makeUsername(body.username, company?.code ?? '');
       if (await db.getUser(username)) throw new HttpError(409, 'username taken');
-      const passHash = typeof body.loginPassword === 'string' ? hashPassword(body.loginPassword) : undefined;
-      await db.createUser({ username, deviceHash: hashPassword(body.password), passHash, identityKey, spk }, opks);
+      const passHash = typeof body.loginPassword === 'string' ? await hashPassword(body.loginPassword) : undefined;
+      await db.createUser({ username, deviceHash: await hashPassword(body.password), passHash, identityKey, spk }, opks);
       if (company) {
         await saveCompanies([...(await listCompanies()), company]);
         await setAdmins(company.code, [username]);
@@ -869,6 +877,20 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
         .map((u) => u.username);
       return send(200, { users });
     }
+    // The company directory: everyone I can message, with their department, for the "New chat" list.
+    if (method === 'GET' && path === '/v1/directory') {
+      const users: UserProfile[] = (await companyUsers(companyOf(me)))
+        .filter((u) => u.username !== me && isActive(u) && !u.banned)
+        .map((u) => ({
+          username: u.username,
+          name: u.display_name,
+          active: true,
+          departments: u.departments,
+          phone: u.phone,
+          email: u.email,
+        }));
+      return send(200, { users });
+    }
     if (method === 'GET' && (m = path.match(/^\/v1\/users\/([a-z0-9_.]{3,32}(?:-[a-z0-9]{2,16})?)$/))) {
       const u = await colleague(me, m[1]!);
       if (!u) throw new HttpError(404, 'user not found');
@@ -902,7 +924,8 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
         if (typeof body.token !== "string" || body.token.length < 20 || body.token.length > 4096) {
           throw new HttpError(400, 'invalid push token');
         }
-        token = body.token;
+        // Kept with the token, so it is cleared with it (new device, logout): see push.ts.
+        token = body.callUi === true ? `${CALL_UI_PREFIX}${body.token}` : body.token;
       }
       await db.setPushToken(me, token);
       return send(204);
@@ -1033,12 +1056,12 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
     if (method === 'POST' && path === '/v1/password') {
       const body = (await readJson(req)) as { oldPassword?: unknown; newPassword?: unknown };
       const user = (await await db.getUser(me))!;
-      if (typeof body.oldPassword !== 'string' || !verifyPassword(body.oldPassword, user.pass_hash)) {
+      if (typeof body.oldPassword !== 'string' || !(await verifyPassword(body.oldPassword, user.pass_hash))) {
         authFailLimit.allow(clientIp(req));
         throw new HttpError(401, 'Current password is wrong');
       }
       checkNewPassword(body.newPassword, body.oldPassword);
-      await db.setPassword(me, hashPassword(body.newPassword as string), false);
+      await db.setPassword(me, await hashPassword(body.newPassword as string), false);
       return send(204);
     }
 
@@ -1072,7 +1095,7 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
         await saveCompanies([...list, company]);
         // Their admin signs in with company code + ID + this temporary password (then chooses their own), or scans the QR.
         const tempPassword = generatePassword();
-        await db.createPendingUser(username, hashPassword(tempPassword), { name: adminName });
+        await db.createPendingUser(username, await hashPassword(tempPassword), { name: adminName });
         await setAdmins(code, [username]);
         const invite = await newInvite(username);
         await audit(me, 'company.create', code, `${name}; first admin: ${body.adminId}`);
@@ -1160,7 +1183,7 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
           await db.clearDevice(target);
           await db.setBanned(target, false);
         } else {
-          await db.createPendingUser(target, hashPassword(randomBytes(24).toString('base64url')), {
+          await db.createPendingUser(target, await hashPassword(randomBytes(24).toString('base64url')), {
             name: user.display_name,
             phone: user.phone,
             email: user.email,
@@ -1236,7 +1259,7 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
         const canShare = body.canShare === true;
         if (await db.getUser(username)) throw new HttpError(409, 'That ID already exists');
         const password = typeof body.password === 'string' ? body.password : randomBytes(24).toString('base64url');
-        await db.createPendingUser(username, hashPassword(password), { departments, canShare, phone, email, name });
+        await db.createPendingUser(username, await hashPassword(password), { departments, canShare, phone, email, name });
         if (photo) await db.setAvatar(username, { ...photo, ver: Date.now() });
         const invite = await newInvite(username);
         const detail = [name, departments.length && `departments: ${departments.join(', ')}`, phone && `mobile ${phone}`, email && `email ${email}`];
@@ -1320,7 +1343,7 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
         if (method === 'POST' && m[2] === '/password') {
           const body = (await readJson(req)) as { password?: unknown };
           checkNewPassword(body.password);
-          await db.setPassword(target.username, hashPassword(body.password as string), true);
+          await db.setPassword(target.username, await hashPassword(body.password as string), true);
           await audit(me, 'user.reset_password', target.username);
           return send(204);
         }
@@ -1335,7 +1358,7 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
             // stops working and any QR invite is cancelled. Unblocking alone doesn't let them back in; the admin
             // gives them a new QR code.
             await db.clearDevice(target.username);
-            await db.setPassword(target.username, hashPassword(randomBytes(24).toString('base64url')), true);
+            await db.setPassword(target.username, await hashPassword(randomBytes(24).toString('base64url')), true);
             await db.setInvite(target.username, null);
             await kick(target.username, 4005, 'account suspended');
           }

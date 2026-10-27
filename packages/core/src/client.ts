@@ -783,8 +783,8 @@ export class MessengerClient extends Emitter<Events> {
    * Register this device for wake-up pushes (Firebase Cloud Messaging token), or pass null to stop them.
    * Pushes never carry message content or the sender: they only say "New message" / "Incoming call".
    */
-  async setPushToken(token: string | null): Promise<void> {
-    if (token) await this.http('PUT', '/v1/push', { token } satisfies PushTokenRequest);
+  async setPushToken(token: string | null, opts: { callUi?: boolean } = {}): Promise<void> {
+    if (token) await this.http('PUT', '/v1/push', { token, ...(opts.callUi ? { callUi: true } : {}) } satisfies PushTokenRequest);
     else await this.http('DELETE', '/v1/push');
   }
 
@@ -2628,6 +2628,18 @@ export class MessengerClient extends Emitter<Events> {
   }
 
   /** Usernames starting with `prefix` (people you can message, not yourself), at most 20. */
+  /**
+   * Everyone in my company I can message, with their departments, sorted by name. Also fills the profile
+   * cache, so names show everywhere at once.
+   */
+  async listDirectory(): Promise<UserProfile[]> {
+    const { users } = await this.http<{ users: UserProfile[] }>('GET', '/v1/directory');
+    const now = Date.now();
+    for (const profile of users) this.profiles.set(profile.username, { profile, at: now, loading: false });
+    this.emit('change');
+    return users.sort((a, b) => (a.name || shortId(a.username)).localeCompare(b.name || shortId(b.username)));
+  }
+
   async searchUsers(prefix: string): Promise<string[]> {
     const q = prefix.trim().toLowerCase();
     if (!q) return [];

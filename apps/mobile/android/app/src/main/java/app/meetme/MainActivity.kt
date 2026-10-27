@@ -1,5 +1,7 @@
 package app.meetme
 
+import android.content.Intent
+import android.os.Build
 import android.os.Bundle
 import android.view.WindowManager
 import com.facebook.react.ReactActivity
@@ -14,6 +16,35 @@ class MainActivity : ReactActivity() {
     // Set before any content is drawn so no frame can ever be captured.
     window.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)
     super.onCreate(savedInstanceState)
+    handleCallIntent(intent)
+  }
+
+  override fun onNewIntent(intent: Intent) {
+    super.onNewIntent(intent)
+    setIntent(intent)
+    handleCallIntent(intent)
+  }
+
+  /** Opened from the incoming call notification: show over the lock screen and switch the screen on. */
+  private fun handleCallIntent(intent: Intent?) {
+    val action = intent?.action ?: return
+    if (action != CallNotifications.ACTION_ANSWER && action != CallNotifications.ACTION_SHOW) return
+    showOverLockScreen(true)
+    if (action == CallNotifications.ACTION_ANSWER) {
+      CallNotifications.cancel(this)
+      CallNotifications.deliver("answer")
+    }
+  }
+
+  fun showOverLockScreen(on: Boolean) {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+      setShowWhenLocked(on)
+      setTurnScreenOn(on)
+    } else {
+      @Suppress("DEPRECATION")
+      val flags = WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
+      if (on) window.addFlags(flags) else window.clearFlags(flags)
+    }
   }
 
   /**

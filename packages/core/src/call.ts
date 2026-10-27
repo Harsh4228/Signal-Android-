@@ -32,9 +32,18 @@ export interface CallState {
   cameraOff: boolean;
   startedAt: number | null;
   endReason: string | null;
+  /** Outgoing: the other phone is ringing ("Ringing…" instead of "Calling…"). */
+  ringing: boolean;
+  /** The connection dropped and is being restored ("Reconnecting…"). */
+  reconnecting: boolean;
+  /** What the other person did with their microphone / camera. */
+  peerMuted: boolean;
+  peerCameraOff: boolean;
 }
 
 const RING_TIMEOUT_MS = 45_000;
+/** How long a lost connection may take to come back before the call ends. */
+const RECONNECT_MS = 20_000;
 
 const idle = (endReason: string | null = null): CallState => ({
   status: 'idle',
@@ -47,6 +56,10 @@ const idle = (endReason: string | null = null): CallState => ({
   cameraOff: false,
   startedAt: null,
   endReason,
+  ringing: false,
+  reconnecting: false,
+  peerMuted: false,
+  peerCameraOff: false,
 });
 
 export class CallManager extends Emitter<{ change: [CallState] }> {
@@ -59,6 +72,9 @@ export class CallManager extends Emitter<{ change: [CallState] }> {
   private ringTimer: ReturnType<typeof setTimeout> | null = null;
   /** I started the current call (for the call entry in the chat). */
   private outgoing = false;
+  /** A renegotiation offer of mine is on its way (camera turned on, ICE restart). */
+  private makingOffer = false;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
     private readonly client: MessengerClient,
@@ -132,12 +148,55 @@ export class CallManager extends Emitter<{ change: [CallState] }> {
     const muted = !this.state.muted;
     this.state.localStream?.getAudioTracks().forEach((t: any) => (t.enabled = !muted));
     this.set({ muted });
+    this.sendMediaState();
   }
 
+  /** Camera on/off. In a voice call (no camera yet) this turns the camera on and makes it a video call. */
   toggleCamera(): void {
+    if (!this.state.localStream?.getVideoTracks().length) {
+      void this.enableVideo().catch((e) => console.warn('could not turn the camera on', e));
+      return;
+    }
     const cameraOff = !this.state.cameraOff;
-    this.state.localStream?.getVideoTracks().forEach((t: any) => (t.enabled = !cameraOff));
+    this.state.localStream.getVideoTracks().forEach((t: any) => (t.enabled = !cameraOff));
     this.set({ cameraOff });
+    this.sendMediaState();
+  }
+
+  private sendMediaState() {
+    if (this.state.status !== 'connecting' && this.state.status !== 'connected') return;
+    const cameraOff = this.state.cameraOff || !this.state.localStream?.getVideoTracks().length;
+    this.send({ action: 'media', muted: this.state.muted, cameraOff }).catch(() => {});
+  }
+
+  /** Voice call -> video call: add a camera track and renegotiate. */
+  private async enableVideo() {
+    const pc = this.pc;
+    if (!pc || this.state.status !== 'connected') return;
+    const cam = await this.rtc.getUserMedia({ audio: false, video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } } });
+    const track = cam.getVideoTracks()[0];
+    if (!track || this.pc !== pc) return track?.stop();
+    const local = this.state.localStream;
+    local?.addTrack?.(track);
+    pc.addTrack(track, local ?? cam);
+    this.set({ video: true, cameraOff: false, localStream: local ?? cam });
+    await this.renegotiate();
+    this.sendMediaState();
+  }
+
+  /** Send a new offer for the running call (new track, or iceRestart after a network change). */
+  private async renegotiate(iceRestart = false) {
+    const pc = this.pc;
+    if (!pc) return;
+    this.makingOffer = true;
+    try {
+      const offer = await pc.createOffer(iceRestart ? { iceRestart: true } : {});
+      if (this.pc !== pc) return;
+      await pc.setLocalDescription(offer);
+      await this.send({ action: 'reoffer', sdp: offer.sdp, video: this.state.video });
+    } finally {
+      this.makingOffer = false;
+    }
   }
 
   /** Mobile only (react-native-webrtc): switch front/back camera. */
@@ -160,6 +219,30 @@ export class CallManager extends Emitter<{ change: [CallState] }> {
         this.outgoing = false;
         this.set({ ...idle(), status: 'incoming', peer: from, callId: s.callId, video: !!s.video });
         this.ringTimer = setTimeout(() => this.cleanup('Missed call'), RING_TIMEOUT_MS);
+        this.send({ action: 'ringing' }).catch(() => {});
+        break;
+      case 'ringing':
+        if (sameCall && this.state.status === 'outgoing') this.set({ ringing: true });
+        break;
+      case 'reoffer': {
+        if (!sameCall || !this.pc || typeof s.sdp !== 'string') return;
+        // Both changed something at the same moment: the caller's offer wins, the callee answers it.
+        const collision = this.makingOffer || this.pc.signalingState !== 'stable';
+        if (collision && this.outgoing) return;
+        await this.pc.setRemoteDescription({ type: 'offer', sdp: s.sdp });
+        const answer = await this.pc.createAnswer();
+        await this.pc.setLocalDescription(answer);
+        await this.send({ action: 'reanswer', sdp: answer.sdp });
+        // They turned their camera on: it is a video call now (mine stays off until I turn it on).
+        if (s.video && !this.state.video) this.set({ video: true, cameraOff: true });
+        break;
+      }
+      case 'reanswer':
+        if (!sameCall || !this.pc || typeof s.sdp !== 'string' || this.pc.signalingState !== 'have-local-offer') return;
+        await this.pc.setRemoteDescription({ type: 'answer', sdp: s.sdp });
+        break;
+      case 'media':
+        if (sameCall) this.set({ peerMuted: !!s.muted, peerCameraOff: !!s.cameraOff });
         break;
       case 'answer':
         if (!sameCall || this.state.status !== 'outgoing' || typeof s.sdp !== 'string') return;
@@ -211,14 +294,23 @@ export class CallManager extends Emitter<{ change: [CallState] }> {
     });
     pc.addEventListener('track', (e: any) => {
       const stream = e.streams?.[0];
-      if (stream) this.set({ remoteStream: stream });
+      // A camera track added later arrives on the same stream: set it again so the screen redraws.
+      if (stream) this.set({ remoteStream: stream, ...(e.track?.kind === 'video' ? { video: true } : {}) });
     });
     pc.addEventListener('connectionstatechange', () => {
       if (this.pc !== pc) return;
-      if (pc.connectionState === 'connected' && this.state.status !== 'connected') {
-        this.set({ status: 'connected', startedAt: Date.now() });
-      } else if (pc.connectionState === 'failed') {
+      const st = pc.connectionState;
+      if (st === 'connected') {
+        this.clearReconnect();
+        if (this.state.status !== 'connected') this.set({ status: 'connected', startedAt: Date.now() });
+        else if (this.state.reconnecting) this.set({ reconnecting: false });
+      } else if (st === 'failed' && this.state.status !== 'connected') {
         void this.hangup('Connection failed');
+      } else if ((st === 'disconnected' || st === 'failed') && this.state.status === 'connected') {
+        // Network change (Wi-Fi -> mobile data) or a short drop: keep the call and try to restore it.
+        if (!this.state.reconnecting) this.set({ reconnecting: true });
+        if (!this.reconnectTimer) this.reconnectTimer = setTimeout(() => void this.hangup('Connection lost'), RECONNECT_MS);
+        if (st === 'failed' && this.outgoing) void this.renegotiate(true).catch(() => {});
       }
     });
     return pc;
@@ -228,6 +320,11 @@ export class CallManager extends Emitter<{ change: [CallState] }> {
     const list = this.pendingCandidates;
     this.pendingCandidates = [];
     for (const c of list) await this.pc?.addIceCandidate(c).catch(() => {});
+  }
+
+  private clearReconnect() {
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = null;
   }
 
   private clearRing() {
@@ -266,6 +363,8 @@ export class CallManager extends Emitter<{ change: [CallState] }> {
     const peer = this.state.peer;
     if (log && peer) this.client.addCallLog(peer, log);
     this.clearRing();
+    this.clearReconnect();
+    this.makingOffer = false;
     this.state.localStream?.getTracks().forEach((t: any) => t.stop());
     try {
       this.pc?.close();

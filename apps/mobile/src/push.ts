@@ -8,6 +8,7 @@ import {
   requestPermission,
 } from '@react-native-firebase/messaging';
 import type { MessengerClient } from '@meetme/core';
+import { nativeCallUi } from './callNotify';
 
 /**
  * Wake-up pushes. The server sends a push only when a message is waiting and this phone is offline;
@@ -35,9 +36,9 @@ export async function registerPush(client: MessengerClient): Promise<void> {
     }
     const status = await requestPermission(messaging);
     if (status !== AuthorizationStatus.AUTHORIZED && status !== AuthorizationStatus.PROVISIONAL) return;
-    await client.setPushToken(await getToken(messaging));
+    await client.setPushToken(await getToken(messaging), { callUi: nativeCallUi });
     registered = true;
-    offRefresh = onTokenRefresh(messaging, (token) => void client.setPushToken(token).catch(() => {}));
+    offRefresh = onTokenRefresh(messaging, (token) => void client.setPushToken(token, { callUi: nativeCallUi }).catch(() => {}));
   } catch (e) {
     console.warn('push registration failed', e);
   }

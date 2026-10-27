@@ -1,4 +1,4 @@
-import { useEffect, type ReactNode } from 'react';
+import { useEffect, useRef, type ReactNode } from 'react';
 import {
   ActivityIndicator,
   BackHandler,
@@ -301,6 +301,21 @@ export function Row({
   );
 }
 
+/**
+ * The phone's Back button closes this panel (instead of leaving the whole screen) while it is shown.
+ * The newest listener wins, so a panel opened on top of another one closes first.
+ */
+export function useBack(onBack: (() => void) | null | undefined) {
+  const ref = useRef(onBack);
+  ref.current = onBack;
+  const active = !!onBack;
+  useEffect(() => {
+    if (!active) return;
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => (ref.current?.(), true));
+    return () => sub.remove();
+  }, [active]);
+}
+
 export type SheetAction = { icon: LucideIcon; label: string; onPress: () => void };
 
 /**
@@ -308,10 +323,7 @@ export type SheetAction = { icon: LucideIcon; label: string; onPress: () => void
  * window that FLAG_SECURE does not cover), so screenshots stay blocked.
  */
 export function Sheet({ title, actions, onClose }: { title?: string; actions: SheetAction[]; onClose: () => void }) {
-  useEffect(() => {
-    const sub = BackHandler.addEventListener('hardwareBackPress', () => (onClose(), true));
-    return () => sub.remove();
-  }, [onClose]);
+  useBack(onClose);
   return (
     <View style={StyleSheet.absoluteFill}>
       <Pressable style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(16,24,40,0.4)' }]} onPress={onClose} />

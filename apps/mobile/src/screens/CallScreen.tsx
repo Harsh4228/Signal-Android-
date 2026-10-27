@@ -1,12 +1,34 @@
-import { useEffect, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { useEffect, useRef, useState } from 'react';
+import { Animated, PanResponder, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { RTCView } from 'react-native-webrtc';
-import { Lock, Mic, MicOff, Phone, PhoneOff, SwitchCamera, Video, VideoOff, Volume1, Volume2, type LucideIcon } from 'lucide-react-native';
+import {
+  ChevronDown,
+  Lock,
+  MessageSquareText,
+  Mic,
+  MicOff,
+  Phone,
+  PhoneOff,
+  SwitchCamera,
+  Video,
+  VideoOff,
+  Volume2,
+  type LucideIcon,
+} from 'lucide-react-native';
 import { calls, client, setSpeaker, useCall, useSpeaker } from '../messenger';
-import { colors, s } from '../theme';
-import { Avatar } from '../ui';
+import { Avatar, Sheet, errorText, useBack } from '../ui';
 
-function useDuration(startedAt: number | null) {
+const BG = '#0b141a';
+const PANEL = '#1f2c33';
+const FG = '#e9edef';
+const FG_MUTED = '#8696a0';
+const RED = '#f15c6d';
+const GREEN = '#00a884';
+
+/** Quick answers when you can't pick up, like WhatsApp's "Decline with message". */
+export const QUICK_REPLIES = ["Can't talk now. What's up?", "I'll call you right back.", "I'll call you later.", "Can't talk now. Call me later?"];
+
+export function useDuration(startedAt: number | null) {
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
     if (!startedAt) return;
@@ -15,145 +37,272 @@ function useDuration(startedAt: number | null) {
   }, [startedAt]);
   if (!startedAt) return '';
   const sec = Math.floor((now - startedAt) / 1000);
-  return `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
+  const h = Math.floor(sec / 3600);
+  const mm = String(Math.floor((sec % 3600) / 60)).padStart(h ? 2 : 1, '0');
+  return `${h ? `${h}:` : ''}${mm}:${String(sec % 60).padStart(2, '0')}`;
 }
 
-function Btn({
+/** "Calling…", "Ringing…", "Reconnecting…" or the running time. */
+export function useCallLabel() {
+  const call = useCall();
+  const duration = useDuration(call.startedAt);
+  if (call.status === 'incoming') return `Incoming ${call.video ? 'video' : 'voice'} call`;
+  if (call.status === 'outgoing') return call.ringing ? 'Ringing…' : 'Calling…';
+  if (call.status === 'connecting') return 'Connecting…';
+  return call.reconnecting ? 'Reconnecting…' : duration;
+}
+
+function RoundButton({
   icon: Icon,
   label,
   onPress,
-  kind = 'normal',
+  on,
+  color,
+  big,
 }: {
   icon: LucideIcon;
   label: string;
   onPress: () => void;
-  kind?: 'normal' | 'on' | 'hangup' | 'accept';
+  on?: boolean;
+  color?: string;
+  big?: boolean;
 }) {
-  const bg = kind === 'hangup' ? colors.danger : kind === 'accept' ? colors.online : kind === 'on' ? colors.text : colors.hover;
-  const fg = kind === 'normal' ? colors.text2 : '#fff';
+  const size = big ? 68 : 56;
+  const bg = color ?? (on ? FG : 'rgba(255,255,255,0.12)');
+  const fg = color ? '#fff' : on ? BG : FG;
   return (
-    <View style={{ alignItems: 'center', gap: 6 }}>
-      <Pressable onPress={onPress} accessibilityLabel={label} style={[styles.btn, { backgroundColor: bg }]}>
-        <Icon size={24} color={fg} strokeWidth={2} />
+    <View style={styles.btnWrap}>
+      <Pressable
+        onPress={onPress}
+        accessibilityLabel={label}
+        style={({ pressed }) => [{ width: size, height: size, borderRadius: size / 2, backgroundColor: bg }, styles.btn, pressed && { opacity: 0.75 }]}
+      >
+        <Icon size={big ? 30 : 24} color={fg} strokeWidth={2} />
       </Pressable>
-      <Text style={[s.muted, { fontSize: 12 }]}>{label}</Text>
+      <Text style={styles.btnLabel}>{label}</Text>
     </View>
   );
 }
 
-export function CallScreen() {
+/** My own camera in a small corner window: drag it anywhere, tap it to swap with the big picture. */
+function Pip({ streamURL, mirror, onPress }: { streamURL: string; mirror: boolean; onPress: () => void }) {
+  const { width, height } = useWindowDimensions();
+  const at = useRef({ x: width - 124, y: 72 });
+  const pos = useRef(new Animated.ValueXY(at.current)).current;
+  const pan = useRef(
+    PanResponder.create({
+      onMoveShouldSetPanResponder: (_, g) => Math.abs(g.dx) + Math.abs(g.dy) > 6,
+      onPanResponderMove: (_, g) => pos.setValue({ x: at.current.x + g.dx, y: at.current.y + g.dy }),
+      onPanResponderRelease: (_, g) => {
+        // Snap to the nearest side, like WhatsApp.
+        const x = at.current.x + g.dx < width / 2 - 54 ? 16 : width - 124;
+        const y = Math.min(Math.max(at.current.y + g.dy, 56), height - 320);
+        at.current = { x, y };
+        Animated.spring(pos, { toValue: at.current, useNativeDriver: false }).start();
+      },
+    }),
+  ).current;
+  return (
+    <Animated.View style={[styles.pip, { left: pos.x, top: pos.y }]} {...pan.panHandlers}>
+      <Pressable onPress={onPress} style={StyleSheet.absoluteFill}>
+        <RTCView streamURL={streamURL} style={StyleSheet.absoluteFill} objectFit="cover" mirror={mirror} zOrder={1} />
+      </Pressable>
+    </Animated.View>
+  );
+}
+
+export function CallScreen({ onMinimize }: { onMinimize: () => void }) {
   const call = useCall();
   const speaker = useSpeaker();
-  const duration = useDuration(call.startedAt);
-  const hasVideo = call.video && !!call.remoteStream;
-  const label =
-    call.status === 'incoming'
-      ? `Incoming ${call.video ? 'video' : 'voice'} call`
-      : call.status === 'outgoing'
-        ? 'Ringing…'
-        : call.status === 'connecting'
-          ? 'Connecting…'
-          : duration;
+  const label = useCallLabel();
+  const [controls, setControls] = useState(true);
+  const [swapped, setSwapped] = useState(false);
+  const [replying, setReplying] = useState(false);
+  useBack(onMinimize);
+
+  const name = call.peer ? client.displayName(call.peer) : '';
+  const localVideo = call.video && !!call.localStream && !call.cameraOff && call.localStream.getVideoTracks().length > 0;
+  const remoteVideo = call.video && !!call.remoteStream && !call.peerCameraOff && call.remoteStream.getVideoTracks().length > 0;
+  const bigLocal = swapped && localVideo && remoteVideo;
+  const big = bigLocal ? call.localStream : remoteVideo ? call.remoteStream : null;
+  const small = bigLocal ? call.remoteStream : localVideo ? call.localStream : null;
+  const showControls = controls || !big;
+
+  // A video picture with nothing on top: tap it to show / hide the buttons.
+  useEffect(() => {
+    if (!big || !controls || call.status !== 'connected') return;
+    const t = setTimeout(() => setControls(false), 5000);
+    return () => clearTimeout(t);
+  }, [big, controls, call.status]);
+
+  async function declineWith(text: string) {
+    const peer = call.peer;
+    setReplying(false);
+    await calls.reject();
+    if (peer) await client.sendText(peer, text).catch((e) => console.warn('quick reply failed', errorText(e)));
+  }
 
   return (
-    <View style={[StyleSheet.absoluteFill, { backgroundColor: colors.bg }]}>
-      {hasVideo ? (
-        <RTCView streamURL={call.remoteStream!.toURL()} style={StyleSheet.absoluteFill} objectFit="cover" />
+    <View style={[StyleSheet.absoluteFill, { backgroundColor: BG }]}>
+      {big ? (
+        <Pressable style={StyleSheet.absoluteFill} onPress={() => setControls((v) => !v)}>
+          <RTCView streamURL={big.toURL()} style={StyleSheet.absoluteFill} objectFit="cover" mirror={bigLocal} />
+        </Pressable>
       ) : (
-        <View style={[s.center, { paddingBottom: 120 }]}>
-          <Avatar name={call.peer ?? '?'} size={120} />
+        <View style={styles.center}>
+          <Avatar name={call.peer ?? '?'} size={128} />
         </View>
       )}
-      {call.video && call.localStream && !call.cameraOff && (
-        <RTCView streamURL={call.localStream.toURL()} style={styles.local} objectFit="cover" mirror zOrder={1} />
+      {small && <Pip streamURL={small.toURL()} mirror={!bigLocal} onPress={() => setSwapped((v) => !v)} />}
+
+      {showControls && (
+        <View style={styles.top} pointerEvents="box-none">
+          <Pressable onPress={onMinimize} accessibilityLabel="Back to chats" hitSlop={12} style={styles.topBtn}>
+            <ChevronDown size={26} color={FG} />
+          </Pressable>
+          <View style={styles.e2e}>
+            <Lock size={12} color={FG_MUTED} />
+            <Text style={{ color: FG_MUTED, fontSize: 12 }}>End-to-end encrypted</Text>
+          </View>
+          {localVideo && call.status !== 'incoming' ? (
+            <Pressable onPress={() => calls.switchCamera()} accessibilityLabel="Flip camera" hitSlop={12} style={styles.topBtn}>
+              <SwitchCamera size={22} color={FG} />
+            </Pressable>
+          ) : (
+            <View style={styles.topBtn} />
+          )}
+        </View>
       )}
 
-      <View style={[styles.info, hasVideo && styles.infoOnVideo]}>
-        <Text style={[s.h1, { fontSize: 22 }]}>{call.peer ? client.displayName(call.peer) : ''}</Text>
-        <View style={[s.row, { gap: 5, marginTop: 4 }]}>
-          <Lock size={13} color={colors.muted} />
-          <Text style={s.muted}>{label}</Text>
+      {(showControls || !big) && (
+        <View style={[styles.info, big && styles.infoOnVideo]} pointerEvents="none">
+          <Text style={styles.name} numberOfLines={1}>
+            {name}
+          </Text>
+          <Text style={[styles.status, call.reconnecting && { color: '#ffd279' }]}>{label}</Text>
+          {call.peerMuted && call.status === 'connected' && (
+            <View style={styles.chip}>
+              <MicOff size={13} color={FG} />
+              <Text style={{ color: FG, fontSize: 12 }}>{name.split(' ')[0]} muted</Text>
+            </View>
+          )}
         </View>
-      </View>
+      )}
 
-      <View style={styles.controls}>
-        {call.status === 'incoming' ? (
-          <>
-            <Btn icon={PhoneOff} label="Decline" kind="hangup" onPress={() => void calls.reject()} />
-            <Btn icon={call.video ? Video : Phone} label="Accept" kind="accept" onPress={() => void calls.accept()} />
-          </>
-        ) : (
-          <>
-            <Btn
-              icon={call.muted ? MicOff : Mic}
-              label={call.muted ? 'Unmute' : 'Mute'}
-              kind={call.muted ? 'on' : 'normal'}
-              onPress={() => calls.toggleMute()}
+      {call.status === 'incoming' ? (
+        <View style={styles.incoming}>
+          <Pressable onPress={() => setReplying(true)} style={styles.message} accessibilityLabel="Decline with message">
+            <MessageSquareText size={18} color={FG} />
+            <Text style={{ color: FG, fontSize: 14 }}>Message</Text>
+          </Pressable>
+          <View style={styles.incomingRow}>
+            <RoundButton big icon={PhoneOff} label="Decline" color={RED} onPress={() => void calls.reject()} />
+            <RoundButton big icon={call.video ? Video : Phone} label="Accept" color={GREEN} onPress={() => void calls.accept()} />
+          </View>
+        </View>
+      ) : (
+        showControls && (
+          <View style={styles.controls}>
+            <RoundButton icon={Volume2} label="Speaker" on={speaker} onPress={() => setSpeaker(!speaker)} />
+            <RoundButton
+              icon={localVideo ? Video : VideoOff}
+              label="Camera"
+              on={localVideo}
+              onPress={() => calls.toggleCamera()}
             />
-            <Btn
-              icon={speaker ? Volume2 : Volume1}
-              label="Speaker"
-              kind={speaker ? 'on' : 'normal'}
-              onPress={() => setSpeaker(!speaker)}
-            />
-            {call.video && (
-              <Btn
-                icon={call.cameraOff ? VideoOff : Video}
-                label="Camera"
-                kind={call.cameraOff ? 'on' : 'normal'}
-                onPress={() => calls.toggleCamera()}
-              />
-            )}
-            {call.video && <Btn icon={SwitchCamera} label="Flip" onPress={() => calls.switchCamera()} />}
-            <Btn icon={PhoneOff} label="End" kind="hangup" onPress={() => void calls.hangup()} />
-          </>
-        )}
-      </View>
+            <RoundButton icon={call.muted ? MicOff : Mic} label={call.muted ? 'Unmute' : 'Mute'} on={call.muted} onPress={() => calls.toggleMute()} />
+            <RoundButton icon={PhoneOff} label="End" color={RED} onPress={() => void calls.hangup()} />
+          </View>
+        )
+      )}
+
+      {replying && (
+        <Sheet
+          title={`Reply to ${name}`}
+          onClose={() => setReplying(false)}
+          actions={QUICK_REPLIES.map((text) => ({ icon: MessageSquareText, label: text, onPress: () => void declineWith(text) }))}
+        />
+      )}
     </View>
+  );
+}
+
+/** Thin green bar over the app while a call runs in the background ("Tap to return to call"). */
+export function CallBar({ onPress }: { onPress: () => void }) {
+  const call = useCall();
+  const label = useCallLabel();
+  const name = call.peer ? client.displayName(call.peer) : '';
+  return (
+    <Pressable onPress={onPress} style={styles.bar} accessibilityLabel="Return to call">
+      {call.video ? <Video size={16} color="#fff" /> : <Phone size={16} color="#fff" />}
+      <Text style={{ color: '#fff', fontWeight: '600', flex: 1 }} numberOfLines={1}>
+        {call.status === 'incoming' ? `${name} is calling · tap to answer` : `${name} · ${label} · tap to return`}
+      </Text>
+    </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
-  local: {
+  center: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingBottom: 140 },
+  top: {
     position: 'absolute',
-    right: 16,
-    top: 24,
-    width: 108,
-    height: 156,
-    borderRadius: 14,
-    overflow: 'hidden',
-    borderWidth: 2,
-    borderColor: '#fff',
+    top: 8,
+    left: 8,
+    right: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
   },
-  info: { position: 'absolute', top: '52%', left: 0, right: 0, alignItems: 'center' },
-  infoOnVideo: {
-    top: 24,
-    left: 16,
-    right: undefined,
-    alignItems: 'flex-start',
-    backgroundColor: 'rgba(255,255,255,0.92)',
-    paddingHorizontal: 14,
-    paddingVertical: 10,
+  topBtn: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
+  e2e: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  info: { position: 'absolute', top: '56%', left: 24, right: 24, alignItems: 'center', gap: 6 },
+  infoOnVideo: { top: 60, backgroundColor: 'rgba(11,20,26,0.55)', borderRadius: 14, paddingVertical: 8, alignSelf: 'center' },
+  name: { color: FG, fontSize: 26, fontWeight: '600' },
+  status: { color: FG_MUTED, fontSize: 15 },
+  chip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
     borderRadius: 14,
+    backgroundColor: 'rgba(255,255,255,0.14)',
   },
+  pip: { position: 'absolute', width: 108, height: 160, borderRadius: 14, overflow: 'hidden', backgroundColor: PANEL, elevation: 6 },
   controls: {
     position: 'absolute',
-    bottom: 32,
-    left: 16,
-    right: 16,
+    bottom: 0,
+    left: 0,
+    right: 0,
     flexDirection: 'row',
     justifyContent: 'space-evenly',
-    backgroundColor: colors.surface,
-    borderRadius: 24,
-    paddingVertical: 16,
-    borderWidth: 1,
-    borderColor: colors.line,
+    paddingTop: 18,
+    paddingBottom: 28,
+    backgroundColor: PANEL,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
   },
-  btn: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
+  incoming: { position: 'absolute', bottom: 40, left: 0, right: 0, alignItems: 'center', gap: 28 },
+  incomingRow: { flexDirection: 'row', justifyContent: 'space-around', alignSelf: 'stretch' },
+  message: {
+    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
+    gap: 8,
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+    borderRadius: 22,
+    backgroundColor: 'rgba(255,255,255,0.12)',
+  },
+  btnWrap: { alignItems: 'center', gap: 6, minWidth: 64 },
+  btn: { alignItems: 'center', justifyContent: 'center' },
+  btnLabel: { color: FG_MUTED, fontSize: 12 },
+  bar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    backgroundColor: GREEN,
   },
 });

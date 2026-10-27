@@ -3,17 +3,19 @@ import { ActivityIndicator, AppState, BackHandler, KeyboardAvoidingView, StatusB
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { CaptureEventType, CaptureProtection } from 'react-native-capture-protection';
 import { Info } from 'lucide-react-native';
-import { appLock, client, useCall, useClient, useLock } from './messenger';
+import { appLock, client, startClient, useCall, useClient, useLock } from './messenger';
+import { setupCallNotifications } from './callNotify';
 import { colors, s } from './theme';
 import { Logo } from './ui';
 import { registerPush } from './push';
 import { RegisterScreen } from './screens/RegisterScreen';
 import { ChatListScreen } from './screens/ChatListScreen';
+import { DirectoryScreen } from './screens/DirectoryScreen';
 import { ChatScreen } from './screens/ChatScreen';
 import { ChatInfoScreen } from './screens/ChatInfoScreen';
 import { SettingsScreen } from './screens/SettingsScreen';
 import { PendingScreen } from './screens/PendingScreen';
-import { CallScreen } from './screens/CallScreen';
+import { CallBar, CallScreen } from './screens/CallScreen';
 import { BroadcastScreen } from './screens/BroadcastScreen';
 import { MediaViewerHost } from './screens/AttachmentView';
 import { AdminScreen } from './screens/AdminScreen';
@@ -26,6 +28,7 @@ import { CatalogScreen, StarredScreen } from './screens/ChatExtras';
 
 export type Route =
   | { name: 'list' }
+  | { name: 'contacts' }
   | { name: 'chat'; peer: string }
   | { name: 'info'; peer: string }
   | { name: 'media'; peer: string }
@@ -48,6 +51,11 @@ export default function App() {
   const [ready, setReady] = useState(false);
   const [route, setRoute] = useState<Route>({ name: 'list' });
   const [toast, setToast] = useState<string | null>(null);
+  /** The call screen is minimised (back to the chats while the call goes on). A new call always shows it again. */
+  const [callHidden, setCallHidden] = useState(false);
+  useEffect(() => {
+    if (call.status === 'idle' || call.status === 'incoming') setCallHidden(false);
+  }, [call.status]);
 
   useEffect(() => {
     // Block screenshots, screen recording and the app-switcher preview (iOS + Android).
@@ -61,10 +69,8 @@ export default function App() {
       if (type === CaptureEventType.CAPTURED && client.activeChat) client.notifyScreenshot(client.activeChat);
     });
 
-    Promise.all([client.init(), appLock.load()]).then(([registered]) => {
-      if (registered) client.connect();
-      setReady(true);
-    });
+    setupCallNotifications();
+    void startClient().then(() => setReady(true));
     const offErr = client.on('error', setToast);
     const appState = AppState.addEventListener('change', (st) => {
       if (st === 'active') appLock.onForeground();
@@ -100,7 +106,8 @@ export default function App() {
 
   useEffect(() => {
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
-      if (route.name === 'info') setRoute({ name: 'chat', peer: route.peer });
+      if (call.status !== 'idle' && !callHidden) setCallHidden(true);
+      else if (route.name === 'info') setRoute({ name: 'chat', peer: route.peer });
       else if (route.name === 'media') setRoute({ name: 'info', peer: route.peer });
       else if (route.name === 'notice-new') setRoute({ name: 'notices' });
       else if (route.name === 'status-new' || route.name === 'status-view') setRoute({ name: 'status' });
@@ -109,7 +116,7 @@ export default function App() {
       return true;
     });
     return () => sub.remove();
-  }, [route]);
+  }, [route, call.status, callHidden]);
 
   let screen;
   if (!ready) {
@@ -133,6 +140,8 @@ export default function App() {
     screen = <AdminScreen navigate={setRoute} onToast={setToast} />;
   } else if (route.name === 'broadcast') {
     screen = <BroadcastScreen navigate={setRoute} onDone={setToast} />;
+  } else if (route.name === 'contacts') {
+    screen = <DirectoryScreen navigate={setRoute} onError={setToast} />;
   } else if (route.name === 'starred') {
     screen = <StarredScreen navigate={setRoute} />;
   } else if (route.name === 'catalog') {
@@ -160,13 +169,15 @@ export default function App() {
       <StatusBar barStyle="dark-content" />
       <SafeAreaView style={[s.fill, { backgroundColor: colors.surface }]} edges={['top', 'bottom']}>
         {/* Android draws edge-to-edge, so the window no longer shrinks for the keyboard: lift the screen ourselves. */}
+        {call.status !== 'idle' && callHidden && !lock.locked && <CallBar onPress={() => setCallHidden(false)} />}
         <KeyboardAvoidingView style={s.fill} behavior="padding">
           {screen}
         </KeyboardAvoidingView>
         <MediaViewerHost onToast={setToast} />
-        {call.status !== 'idle' && <CallScreen />}
         {ready && c.account && !lock.locked && call.status === 'idle' && <NoticePopup />}
         {ready && c.account && lock.locked && <LockScreen />}
+        {/* Above the lock screen, like WhatsApp: a call can be answered without unlocking the app first. */}
+        {call.status !== 'idle' && !callHidden && <CallScreen onMinimize={() => setCallHidden(true)} />}
         {toast && (
           <View
             style={{

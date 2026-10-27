@@ -1,6 +1,7 @@
 import { useEffect, useReducer } from 'react';
 import { AppLock, CallManager, MessengerClient, type CallState } from '@meetme/core';
 import { browserStore } from './browserStore';
+import { updateRinger } from './ringer';
 
 // The dev renderer opened in a plain browser (no Electron preload) gets a per-tab store instead.
 if (!window.meetme && import.meta.env.DEV) window.meetme = { platform: 'web', store: browserStore() };
@@ -19,6 +20,7 @@ export const calls = new CallManager(client, {
   RTCPeerConnection: window.RTCPeerConnection,
   getUserMedia: (c) => navigator.mediaDevices.getUserMedia(c as MediaStreamConstraints),
 });
+calls.on('change', updateRinger);
 
 /** Re-render whenever the client state changes. */
 export function useClient(): MessengerClient {
