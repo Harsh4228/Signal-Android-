@@ -33,6 +33,21 @@ import {
   companyOf,
   makeUsername,
   shortId,
+  ALL_RIGHTS,
+  FEATURE_KEYS,
+  MAX_BACKUP_CHARS,
+  MAX_HELP_CONTACTS,
+  MAX_HELP_FIELD,
+  PAGE_SIZE,
+  resolveRight,
+  type Feature,
+  type HelpContact,
+  type HistoryBackup,
+  type MyRights,
+  type Page,
+  type RightChange,
+  type RightRule,
+  type Rights,
   type CompanyInfo,
   type NewCompanyRequest,
   type AdminStats,
@@ -183,6 +198,7 @@ const toGroupInfo = (g: GroupRow): GroupInfo => ({
   name: g.name,
   members: g.members,
   senders: g.senders,
+  admins: g.admins.filter((u) => g.members.includes(u)),
   createdBy: g.created_by,
   createdAt: Number(g.created_at),
 });
@@ -376,9 +392,22 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
   const setAdmins = (company: string, list: string[]) =>
     db.setMeta(metaKey('admins', company), JSON.stringify(sortNames([...new Set(list)])));
   const isAdminUser = async (u: string) => (await adminsOf(companyOf(u))).includes(u);
+  /**
+   * The company's main admin (who set it up): other admins can't remove them or take their admin role away.
+   * Companies from before this was stored: the admin whose account is oldest.
+   */
+  async function ownerOf(company: string): Promise<string | null> {
+    if (!company) return null;
+    const stored = await db.getMeta(metaKey('owner', company));
+    const admins = await adminsOf(company);
+    if (stored && admins.includes(stored)) return stored;
+    const rows = (await Promise.all(admins.map((a) => db.getUser(a)))).filter((u): u is UserRow => !!u);
+    rows.sort((a, b) => Number(a.created_at) - Number(b.created_at));
+    return rows[0]?.username ?? null;
+  }
   const superAdmins = async () => parseList(await db.getMeta('super_admins'));
   const sameCompany = (a: string, b: string) => companyOf(a) === companyOf(b);
-  const companyUsers = async (company: string) => (await db.listUsers()).filter((u) => companyOf(u.username) === company);
+  const companyUsers = (company: string) => db.companyUsers(company);
   /** Another account, but only if it is in my company: other companies don't exist for me. */
   const colleague = async (me: string, username: string) => (sameCompany(me, username) ? db.getUser(username) : undefined);
   /** Why the people of this account's company can't use the server now (null = they can). */
@@ -468,6 +497,97 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
       return { ...defaultPolicy, ...(JSON.parse((await db.getMeta(metaKey('policy', company))) ?? '{}') as Partial<Policy>) };
     } catch {
       return defaultPolicy;
+    }
+  }
+
+  // ---- rights: rules per company (JSON in meta). The old company switches (policy) are the company rules of
+  // editDelete / clearHistory, so older apps keep working. ----
+  async function getRules(company: string): Promise<RightRule[]> {
+    let rules: RightRule[] = [];
+    try {
+      const list = JSON.parse((await db.getMeta(metaKey('rights', company))) ?? '[]') as unknown;
+      if (Array.isArray(list)) rules = (list as RightRule[]).filter((r) => FEATURE_KEYS.includes(r.feature));
+    } catch {
+      /* damaged: no rules */
+    }
+    const policy = await getPolicy(company);
+    for (const [feature, allow] of [['editDelete', policy.allowEditDelete], ['clearHistory', policy.allowClearHistory]] as const) {
+      if (!rules.some((r) => r.feature === feature && r.scope === 'company')) {
+        rules.push({ feature, scope: 'company', target: '', member: '', allow, setBy: '', setAt: 0 });
+      }
+    }
+    return rules;
+  }
+  async function saveRules(company: string, rules: RightRule[]) {
+    await db.setMeta(metaKey('rights', company), JSON.stringify(rules));
+    // Keep the old switches in step for apps that only know those.
+    const policy = { ...(await getPolicy(company)) };
+    for (const [feature, key] of [['editDelete', 'allowEditDelete'], ['clearHistory', 'allowClearHistory']] as const) {
+      const rule = rules.find((r) => r.feature === feature && r.scope === 'company');
+      if (rule) policy[key] = rule.allow;
+    }
+    await db.setMeta(metaKey('policy', company), JSON.stringify(policy));
+  }
+
+  /** What this person may do: everywhere, and where a group's chat differs. Company admins may do everything. */
+  async function rightsOf(user: UserRow, rules?: RightRule[], groups?: GroupRow[]): Promise<MyRights> {
+    if (await isAdminUser(user.username)) return { all: { ...ALL_RIGHTS }, groups: {} };
+    const co = companyOf(user.username);
+    rules ??= await getRules(co);
+    const who = { username: user.username, departments: user.departments };
+    const all = Object.fromEntries(FEATURE_KEYS.map((f) => [f, resolveRight(rules, f, who)])) as Rights;
+    const out: MyRights = { all, groups: {} };
+    for (const g of groups ?? (await db.groupsOf(user.username))) {
+      const diff: Partial<Rights> = {};
+      for (const f of FEATURE_KEYS) {
+        const v = resolveRight(rules, f, who, g.id);
+        if (v !== all[f]) diff[f] = v;
+      }
+      if (Object.keys(diff).length) out.groups[g.id] = diff;
+    }
+    return out;
+  }
+
+  /** Group admins: members the company admins (or other group admins) put in charge of the group. */
+  const groupAdminsOf = (g: GroupRow) => g.admins.filter((u) => g.members.includes(u));
+  async function mayManageGroup(me: string, g: GroupRow): Promise<boolean> {
+    if (companyOf(g.created_by) !== companyOf(me)) return false;
+    return (await isAdminUser(me)) || groupAdminsOf(g).includes(me);
+  }
+
+  /** Checks one rule change; group admins may only change rules of their own group. */
+  async function checkRightChange(me: string, raw: unknown): Promise<RightChange> {
+    const b = (raw ?? {}) as Partial<RightChange>;
+    if (!FEATURE_KEYS.includes(b.feature as Feature)) throw new HttpError(400, 'Unknown function');
+    if (b.allow !== null && typeof b.allow !== 'boolean') throw new HttpError(400, 'allow must be true, false or null');
+    const co = companyOf(me);
+    const target = typeof b.target === 'string' ? b.target.trim() : '';
+    const member = typeof b.member === 'string' ? b.member.trim().toLowerCase() : '';
+    const admin = await isAdminUser(me);
+    switch (b.scope) {
+      case 'company':
+        if (!admin) throw new HttpError(403, 'Only company admins can change company-wide rights');
+        return { feature: b.feature!, scope: 'company', target: '', member: '', allow: b.allow! };
+      case 'department': {
+        if (!admin) throw new HttpError(403, 'Only company admins can change department rights');
+        const dept = (await getDepartments(co)).find((d) => sameName(d, target));
+        if (!dept) throw new HttpError(404, 'department not found');
+        return { feature: b.feature!, scope: 'department', target: dept, member: '', allow: b.allow! };
+      }
+      case 'user': {
+        if (!admin) throw new HttpError(403, 'Only company admins can change a person’s rights everywhere');
+        const u = await colleague(me, target);
+        if (!u) throw new HttpError(404, 'user not found');
+        return { feature: b.feature!, scope: 'user', target: u.username, member: '', allow: b.allow! };
+      }
+      case 'group': {
+        const g = GROUP_ID_RE.test(target) ? await db.getGroup(target) : undefined;
+        if (!g || !(await mayManageGroup(me, g))) throw new HttpError(404, 'group not found');
+        if (member && !g.members.includes(member)) throw new HttpError(400, `${shortId(member)} is not in this group`);
+        return { feature: b.feature!, scope: 'group', target: g.id, member, allow: b.allow! };
+      }
+      default:
+        throw new HttpError(400, 'scope must be company, department, group or user');
     }
   }
 
@@ -562,6 +682,72 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
   /** Groups of a company: those its admins made. */
   const companyGroups = async (company: string) => (await db.listGroups()).filter((g) => companyOf(g.created_by) === company);
 
+  /** Group admins: a list of members ([] = none). */
+  function checkGroupAdmins(v: unknown, members: string[]): string[] {
+    if (v === undefined || v === null) return [];
+    if (!Array.isArray(v)) throw new HttpError(400, 'admins must be a list of IDs');
+    return [...new Set(v.map((u) => String(u).trim().toLowerCase()))].filter((u) => members.includes(u)).sort();
+  }
+
+  /** Change a group (company admin or group admin): name, members, senders, group admins. Fields left out stay. */
+  async function updateGroupFrom(me: string, group: GroupRow, raw: unknown): Promise<GroupInfo> {
+    const co = companyOf(group.created_by);
+    const body = (raw ?? {}) as { name?: unknown; members?: unknown; senders?: unknown; admins?: unknown };
+    const name = body.name === undefined ? undefined : checkGroupName(body.name);
+    const members = body.members === undefined ? undefined : await existingMembers(checkMemberList(body.members), co);
+    const finalMembers = members ?? group.members;
+    // Not sent: keep the current rule, minus anyone who left the group.
+    const senders =
+      body.senders !== undefined ? checkSenders(body.senders, finalMembers) : group.senders && group.senders.filter((u) => finalMembers.includes(u));
+    const admins = body.admins !== undefined ? checkGroupAdmins(body.admins, finalMembers) : group.admins.filter((u) => finalMembers.includes(u));
+    // A group admin can't take the group away from themselves by mistake (a company admin can).
+    if (!(await isAdminUser(me)) && !admins.includes(me)) throw new HttpError(400, 'You would no longer be able to manage this group');
+    await db.updateGroup(group.id, { name, members, senders, admins });
+    const details: string[] = [];
+    if (name !== undefined && name !== group.name) details.push(`renamed from "${group.name}"`);
+    if (members) {
+      const added = members.filter((u) => !group.members.includes(u));
+      const removed = group.members.filter((u) => !members.includes(u));
+      if (added.length) details.push(`added: ${added.join(', ')}`);
+      if (removed.length) details.push(`removed: ${removed.join(', ')}`);
+    }
+    if (JSON.stringify(senders) !== JSON.stringify(group.senders)) {
+      details.push(senders ? `only these can send: ${senders.join(', ') || 'admins'}` : 'everyone can send');
+    }
+    if (JSON.stringify(admins) !== JSON.stringify(group.admins)) details.push(`group admins: ${admins.join(', ') || 'none'}`);
+    await audit(me, 'group.update', name ?? group.name, details.join('; '));
+    await notify([...new Set([...group.members, ...(members ?? [])])], 'groups');
+    return toGroupInfo((await db.getGroup(group.id))!);
+  }
+
+  // ---- help desk contacts (JSON in meta, per company) ----
+  async function getHelpDesk(company: string): Promise<HelpContact[]> {
+    try {
+      const list = JSON.parse((await db.getMeta(metaKey('helpdesk', company))) ?? '[]') as unknown;
+      return Array.isArray(list) ? (list as HelpContact[]) : [];
+    } catch {
+      return [];
+    }
+  }
+  function checkHelpContacts(v: unknown, company: string): HelpContact[] {
+    if (!Array.isArray(v) || v.length > MAX_HELP_CONTACTS) throw new HttpError(400, `Up to ${MAX_HELP_CONTACTS} contacts`);
+    return v.map((raw) => {
+      const c = (raw ?? {}) as Record<string, unknown>;
+      const field = (k: string) => {
+        const s = c[k] === undefined || c[k] === null ? '' : c[k];
+        if (typeof s !== 'string' || s.trim().length > MAX_HELP_FIELD) throw new HttpError(400, `${k}: at most ${MAX_HELP_FIELD} characters`);
+        return s.trim().replace(/\s+/g, ' ');
+      };
+      const title = field('title');
+      if (!title) throw new HttpError(400, 'Every contact needs a title, e.g. "IT support"');
+      const { phone, email } = checkContactInfo(c.phone, c.email);
+      const username = field('username').toLowerCase();
+      if (username && (!USERNAME_RE.test(username) || companyOf(username) !== company)) throw new HttpError(400, `Unknown ID: ${username}`);
+      const id = typeof c.id === 'string' && /^[0-9a-f]{16}$/.test(c.id) ? c.id : randomBytes(8).toString('hex');
+      return { id, title, name: field('name'), department: field('department'), phone, email, hours: field('hours'), username };
+    });
+  }
+
   /** For the web page: the invite as a code to send and as a QR picture. */
   async function inviteExtras(req: http.IncomingMessage, invite: InviteResponse) {
     const proto = config.trustProxy ? String(req.headers['x-forwarded-proto'] ?? 'http').split(',')[0] : 'http';
@@ -612,6 +798,7 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
   mkdirSync(attachmentsDir, { recursive: true });
   const attachmentFile = (id: string) => join(attachmentsDir, `${id}.bin`);
   const uploadLimit = new RateLimiter(120, 3600_000);
+  const backupLimit = new RateLimiter(60, 3600_000);
 
   function iceConfig(username: string): IceConfigResponse {
     const iceServers: IceConfigResponse['iceServers'] = [];
@@ -807,6 +994,7 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
       if (company) {
         await saveCompanies([...(await listCompanies()), company]);
         await setAdmins(company.code, [username]);
+        await db.setMeta(metaKey('owner', company.code), username);
         await audit(username, 'company.request', company.code, `${company.name}: waiting for approval`);
       }
       return send(200, { ok: true, username, pending: company?.status === 'pending' });
@@ -879,7 +1067,10 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
     }
     // The company directory: everyone I can message, with their department, for the "New chat" list.
     if (method === 'GET' && path === '/v1/directory') {
-      const users: UserProfile[] = (await companyUsers(companyOf(me)))
+      const co = companyOf(me);
+      const rules = await getRules(co);
+      const admins = await adminsOf(co);
+      const users: UserProfile[] = (await companyUsers(co))
         .filter((u) => u.username !== me && isActive(u) && !u.banned)
         .map((u) => ({
           username: u.username,
@@ -888,6 +1079,7 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
           departments: u.departments,
           phone: u.phone,
           email: u.email,
+          editDelete: admins.includes(u.username) || resolveRight(rules, 'editDelete', { username: u.username, departments: u.departments }),
         }));
       return send(200, { users });
     }
@@ -903,6 +1095,9 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
         departments: u.departments,
         phone: u.phone,
         email: u.email,
+        editDelete:
+          (await isAdminUser(u.username)) ||
+          resolveRight(await getRules(companyOf(me)), 'editDelete', { username: u.username, departments: u.departments }),
       };
       return send(200, profile);
     }
@@ -964,6 +1159,7 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
         name: user.display_name,
         company: await companyInfo(companyOf(me)),
         isSuper: (await superAdmins()).includes(me),
+        rights: await rightsOf(user),
       };
       return send(200, me_);
     }
@@ -1053,6 +1249,80 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
       const groups = (await db.groupsOf(me)).map((g) => ({ ...toGroupInfo(g), members: g.members.filter((u) => reachable.has(u)) }));
       return send(200, { groups });
     }
+
+    // ---- rights: company admins manage all of them, group admins those of their own groups ----
+    if (path === '/v1/rights') {
+      const co = companyOf(me);
+      if (method === 'GET') {
+        const group = url.searchParams.get('group');
+        const rules = await getRules(co);
+        if (group) {
+          const g = GROUP_ID_RE.test(group) ? await db.getGroup(group) : undefined;
+          if (!g || !(await mayManageGroup(me, g))) throw new HttpError(404, 'group not found');
+          return send(200, { rules: rules.filter((r) => r.scope === 'group' && r.target === g.id) });
+        }
+        if (!(await isAdminUser(me))) throw new HttpError(403, 'admin only');
+        return send(200, { rules });
+      }
+      if (method === 'PUT') {
+        const change = await checkRightChange(me, await readJson(req));
+        const same = (r: RightRule) =>
+          r.feature === change.feature && r.scope === change.scope && r.target === change.target && r.member === (change.member ?? '');
+        const stored = (await getRules(co)).filter((r) => !same(r));
+        if (change.allow !== null) {
+          stored.push({ ...change, member: change.member ?? '', allow: change.allow, setBy: me, setAt: Date.now() });
+        }
+        await saveRules(co, stored);
+        const who = change.scope === 'company' ? 'everyone' : [change.scope, change.target && shortId(change.target), change.member && shortId(change.member)].filter(Boolean).join(' ');
+        const state = change.allow === null ? 'back to default' : change.allow ? 'allowed' : 'blocked';
+        await audit(me, 'rights.update', change.feature, `${who}: ${state}`);
+        const g = change.scope === 'group' ? await db.getGroup(change.target) : undefined;
+        await notify(g ? g.members : (await companyUsers(co)).map((u) => u.username), 'policy');
+        return send(200, { rules: (await getRules(co)).filter((r) => !g || (r.scope === 'group' && r.target === g.id)) });
+      }
+    }
+
+    // A group admin (or company admin) changes the group: name, members, who may send, who else is group admin.
+    if (method === 'PUT' && (m = path.match(/^\/v1\/groups\/([0-9a-f]{16})$/))) {
+      const group = await db.getGroup(m[1]!);
+      if (!group || !(await mayManageGroup(me, group))) throw new HttpError(404, 'group not found');
+      const updated = await updateGroupFrom(me, group, await readJson(req));
+      return send(200, updated);
+    }
+
+    // ---- help desk: whom to call for what; everyone may read it, company admins edit it ----
+    if (method === 'GET' && path === '/v1/helpdesk') {
+      return send(200, { contacts: await getHelpDesk(companyOf(me)) });
+    }
+
+    // ---- my chat history backup: ciphertext only (see HistoryBackup) ----
+    if (path === '/v1/backup') {
+      if (method === 'GET') {
+        const b = await db.getBackup(me);
+        if (!b) throw new HttpError(404, 'no backup');
+        res.writeHead(200, { 'content-type': 'application/json' });
+        return res.end(b.data);
+      }
+      if (method === 'PUT') {
+        if (!backupLimit.allow(me)) throw new HttpError(429, 'too many backups');
+        const text = await readBody(req, MAX_BACKUP_CHARS + 4096);
+        let b: Partial<HistoryBackup>;
+        try {
+          b = JSON.parse(text) as Partial<HistoryBackup>;
+        } catch {
+          throw new HttpError(400, 'invalid json');
+        }
+        const b64 = (v: unknown) => typeof v === 'string' && /^[A-Za-z0-9+/]*={0,2}$/.test(v);
+        if (!b64(b.data) || !b64(b.wrap) || !b64(b.salt) || !Number.isInteger(b.v)) throw new HttpError(400, 'invalid backup');
+        const clean: HistoryBackup = { data: b.data!, wrap: b.wrap!, salt: b.salt!, v: b.v!, updatedAt: Date.now() };
+        await db.putBackup(me, JSON.stringify(clean));
+        return send(200, { updatedAt: clean.updatedAt });
+      }
+      if (method === 'DELETE') {
+        await db.deleteBackup(me);
+        return send(204);
+      }
+    }
     if (method === 'POST' && path === '/v1/password') {
       const body = (await readJson(req)) as { oldPassword?: unknown; newPassword?: unknown };
       const user = (await await db.getUser(me))!;
@@ -1097,6 +1367,7 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
         const tempPassword = generatePassword();
         await db.createPendingUser(username, await hashPassword(tempPassword), { name: adminName });
         await setAdmins(code, [username]);
+        await db.setMeta(metaKey('owner', code), username);
         const invite = await newInvite(username);
         await audit(me, 'company.create', code, `${name}; first admin: ${body.adminId}`);
         const info: CompanyInfo = { ...company, status: 'active', users: 1, admins: [username] };
@@ -1210,10 +1481,12 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
 
       if (method === 'GET' && path === '/v1/admin/users') {
         const admins = await adminsOf(co);
+        const owner = await ownerOf(co);
         const users: AdminUser[] = (await companyUsers(co)).map((u) => ({
           username: u.username,
           active: isActive(u),
           admin: admins.includes(u.username),
+          ...(u.username === owner ? { owner: true } : {}),
           mustChangePassword: !!u.must_change,
           banned: u.banned === 1,
           ...(u.banned === MOVED ? { moved: true } : {}),
@@ -1271,6 +1544,11 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
         if (!target) throw new HttpError(404, 'user not found');
         if (target.banned === MOVED && m[2] && method !== 'GET') {
           throw new HttpError(400, `${shortId(target.username)} was moved to another company`);
+        }
+        // Only the main admin may change themselves this way; other admins can't remove them or demote them.
+        const owner = await ownerOf(co);
+        if (owner && target.username === owner && me !== owner && ((method === 'PUT' && m[2] === '/admin') || (method === 'DELETE' && !m[2]))) {
+          throw new HttpError(403, 'Only the main admin can change the main admin’s account');
         }
         // Make someone an admin of the company, or take it away. A company always keeps at least one admin.
         if (method === 'PUT' && m[2] === '/admin') {
@@ -1338,6 +1616,7 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
           const departments = await checkDepartments(co, body.departments);
           await db.setDepartments(target.username, departments);
           await audit(me, 'user.department', target.username, departments.join(', ') || 'none');
+          await notify([target.username], 'policy'); // department rights may differ
           return send(204);
         }
         if (method === 'POST' && m[2] === '/password') {
@@ -1410,12 +1689,15 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
           if (list.some((d) => d !== found && sameName(d, name))) throw new HttpError(409, `"${name}" already exists`);
           await replaceDepartment(co, found, name);
           await saveDepartments(co, list.map((d) => (d === found ? name : d)));
+          await saveRules(co, (await getRules(co)).map((r) => (r.scope === 'department' && r.target === found ? { ...r, target: name } : r)));
           await audit(me, 'department.rename', name, `was: ${found}`);
           return send(200, { departments: await getDepartments(co) });
         }
         if (method === 'DELETE') {
           await replaceDepartment(co, found, null); // its people are kept, just not in this department
           await saveDepartments(co, list.filter((d) => d !== found));
+          await saveRules(co, (await getRules(co)).filter((r) => !(r.scope === 'department' && r.target === found)));
+          await notify((await companyUsers(co)).map((u) => u.username), 'policy');
           await audit(me, 'department.delete', found);
           return send(200, { departments: await getDepartments(co) });
         }
@@ -1436,10 +1718,22 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
         return send(200, stats);
       }
       if (method === 'GET' && path === '/v1/admin/audit') {
-        const limit = Math.min(500, Math.max(1, Number(url.searchParams.get('limit')) || 200));
-        // The log is shared; each company sees what its own admins did.
-        const entries: AuditEntry[] = (await db.listAudit(co ? 2000 : limit)).filter((e) => companyOf(e.actor) === co).slice(0, limit);
-        return send(200, { entries });
+        // Pages, newest first: ?limit=50&before=<id of the last entry seen>. Each company sees what its own people did.
+        const limit = Math.min(500, Math.max(1, Number(url.searchParams.get('limit')) || PAGE_SIZE));
+        const before = Number(url.searchParams.get('before')) || undefined;
+        const entries: AuditEntry[] = await db.listAudit({ limit, before, company: co });
+        const page: Page<AuditEntry> & { entries: AuditEntry[] } = {
+          items: entries,
+          entries, // older apps read this
+          next: entries.length === limit ? entries[entries.length - 1]!.id : null,
+        };
+        return send(200, page);
+      }
+      if (method === 'PUT' && path === '/v1/admin/helpdesk') {
+        const contacts = checkHelpContacts(((await readJson(req)) as { contacts?: unknown }).contacts, co);
+        await db.setMeta(metaKey('helpdesk', co), JSON.stringify(contacts));
+        await audit(me, 'helpdesk.update', 'help desk', `${contacts.length} contacts`);
+        return send(200, { contacts });
       }
       if (path === '/v1/admin/settings') {
         if (method === 'GET') return send(200, await getPolicy(co));
@@ -1453,6 +1747,11 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
           const policy: Policy = { ...(await getPolicy(co)) };
           for (const k of given) policy[k] = body[k] as boolean;
           await db.setMeta(metaKey('policy', co), JSON.stringify(policy));
+          // The same switches are the company rules of the rights system.
+          const feature = { allowEditDelete: 'editDelete', allowClearHistory: 'clearHistory' } as const;
+          const rules = (await getRules(co)).filter((r) => !(r.scope === 'company' && given.some((k) => feature[k] === r.feature)));
+          for (const k of given) rules.push({ feature: feature[k], scope: 'company', target: '', member: '', allow: policy[k], setBy: me, setAt: Date.now() });
+          await saveRules(co, rules);
           const label = { allowEditDelete: 'edit/delete messages', allowClearHistory: 'clear chat history' };
           const detail = given.map((k) => `${label[k]}: ${policy[k] ? 'on' : 'off'}`).join(', ');
           await audit(me, 'settings.update', 'policy', detail);
@@ -1466,12 +1765,13 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
         return send(200, { groups: (await companyGroups(co)).map(toGroupInfo) });
       }
       if (method === 'POST' && path === '/v1/admin/groups') {
-        const body = (await readJson(req)) as { name?: unknown; members?: unknown; senders?: unknown };
+        const body = (await readJson(req)) as { name?: unknown; members?: unknown; senders?: unknown; admins?: unknown };
         const name = checkGroupName(body.name);
         const members = await existingMembers(checkMemberList(body.members ?? []), co);
         const senders = checkSenders(body.senders, members);
+        const admins = checkGroupAdmins(body.admins, members);
         const id = randomBytes(8).toString('hex');
-        await db.createGroup({ id, name, createdBy: me, members, senders });
+        await db.createGroup({ id, name, createdBy: me, members, senders, admins });
         const who = senders ? `; only these can send: ${senders.join(', ') || 'admins'}` : '';
         await audit(me, 'group.create', name, `members: ${members.join(', ') || 'none'}${who}`);
         await notify(members, 'groups');
@@ -1480,32 +1780,7 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
       if ((m = path.match(/^\/v1\/admin\/groups\/([0-9a-f]+)$/)) && GROUP_ID_RE.test(m[1]!)) {
         const group = await db.getGroup(m[1]!);
         if (!group || companyOf(group.created_by) !== co) throw new HttpError(404, 'group not found');
-        if (method === 'PUT') {
-          const body = (await readJson(req)) as { name?: unknown; members?: unknown; senders?: unknown };
-          const name = body.name === undefined ? undefined : checkGroupName(body.name);
-          const members = body.members === undefined ? undefined : await existingMembers(checkMemberList(body.members), co);
-          const finalMembers = members ?? group.members;
-          // Not sent: keep the current rule, minus anyone who left the group.
-          const senders =
-            body.senders !== undefined
-              ? checkSenders(body.senders, finalMembers)
-              : group.senders && group.senders.filter((u) => finalMembers.includes(u));
-          await db.updateGroup(group.id, { name, members, senders });
-          const details: string[] = [];
-          if (name !== undefined && name !== group.name) details.push(`renamed from "${group.name}"`);
-          if (members) {
-            const added = members.filter((u) => !group.members.includes(u));
-            const removed = group.members.filter((u) => !members.includes(u));
-            if (added.length) details.push(`added: ${added.join(', ')}`);
-            if (removed.length) details.push(`removed: ${removed.join(', ')}`);
-          }
-          if (JSON.stringify(senders) !== JSON.stringify(group.senders)) {
-            details.push(senders ? `only these can send: ${senders.join(', ') || 'admins'}` : 'everyone can send');
-          }
-          await audit(me, 'group.update', name ?? group.name, details.join('; '));
-          await notify([...new Set([...group.members, ...(members ?? [])])], 'groups');
-          return send(200, toGroupInfo((await db.getGroup(group.id))!));
-        }
+        if (method === 'PUT') return send(200, await updateGroupFrom(me, group, await readJson(req)));
         if (method === 'DELETE') {
           await db.deleteGroup(group.id);
           await audit(me, 'group.delete', group.name);
@@ -1699,14 +1974,16 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
         }
         clearTimeout(authTimer);
         const preKeyCount = await db.countOneTimePreKeys(me);
+        const meRow = (await db.getUser(me))!;
         frame(ws, {
           type: 'ready',
           preKeyCount,
           isAdmin: await isAdminUser(me),
           admins: await adminsOf(companyOf(me)),
           policy: await getPolicy(companyOf(me)),
-          canShare: canShare((await db.getUser(me))!),
-          avatar: (await db.getUser(me))!.avatar_ver,
+          canShare: canShare(meRow),
+          avatar: meRow.avatar_ver,
+          rights: await rightsOf(meRow),
         });
         // Queued envelopes first, THEN register as online (new messages are delivered directly from then
         // on), then check the queue once more for anything that arrived in between. deliver() skips repeats.

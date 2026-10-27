@@ -3,11 +3,14 @@ import pg from 'pg';
 import type { Bus, BusEvent } from './bus';
 import {
   bannedValue,
+  companyOfActor,
+  companyPattern,
   parseDepartments,
   parseSenders,
   toProduct,
   type AuditRow,
   type AvatarRow,
+  type BackupRow,
   type Db,
   type Envelope,
   type GroupRow,
@@ -71,6 +74,7 @@ const SCHEMA = `
     created_at BIGINT NOT NULL
   );
   ALTER TABLE chat_groups ADD COLUMN IF NOT EXISTS senders TEXT;
+  ALTER TABLE chat_groups ADD COLUMN IF NOT EXISTS admins TEXT;
   CREATE TABLE IF NOT EXISTS chat_group_members (
     group_id TEXT NOT NULL REFERENCES chat_groups(id) ON DELETE CASCADE,
     username TEXT NOT NULL REFERENCES users(username) ON DELETE CASCADE,
@@ -99,6 +103,18 @@ const SCHEMA = `
     action TEXT NOT NULL,
     target TEXT NOT NULL,
     detail TEXT NOT NULL
+  );
+  DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'audit_log' AND column_name = 'company') THEN
+      ALTER TABLE audit_log ADD COLUMN company TEXT NOT NULL DEFAULT '';
+      UPDATE audit_log SET company = regexp_replace(actor, '^.*-', '') WHERE actor LIKE '%-%';
+    END IF;
+  END $$;
+  CREATE INDEX IF NOT EXISTS audit_log_company ON audit_log(company, id);
+  CREATE TABLE IF NOT EXISTS backups (
+    username   TEXT PRIMARY KEY REFERENCES users(username) ON DELETE CASCADE,
+    data       TEXT NOT NULL,
+    updated_at BIGINT NOT NULL
   );
   CREATE TABLE IF NOT EXISTS one_time_prekeys (
     username TEXT NOT NULL REFERENCES users(username) ON DELETE CASCADE,
@@ -129,15 +145,16 @@ const toUser = (r: RawUser): UserRow => ({
 
 // One query per list: members are aggregated in SQL.
 const GROUP_SELECT = `
-  SELECT g.id, g.name, g.created_by, g.created_at, g.senders,
+  SELECT g.id, g.name, g.created_by, g.created_at, g.senders, g.admins,
          COALESCE(ARRAY_AGG(m.username ORDER BY m.username) FILTER (WHERE m.username IS NOT NULL), '{}') AS members
   FROM chat_groups g LEFT JOIN chat_group_members m ON m.group_id = g.id`;
-type RawGroup = Omit<GroupRow, 'senders'> & { senders: string | null };
+type RawGroup = Omit<GroupRow, 'senders' | 'admins'> & { senders: string | null; admins: string | null };
 const toGroup = (r: RawGroup): GroupRow => ({
   ...r,
   created_at: Number(r.created_at),
   members: r.members ?? [],
   senders: parseSenders(r.senders),
+  admins: parseSenders(r.admins) ?? [],
 });
 
 const toEnvelope = (r: { id: string | number; sender: string; body: string; ts: string | number }): Envelope => ({
@@ -204,6 +221,14 @@ export async function openPostgres(connectionString: string): Promise<{ db: Db; 
       return r && toUser(r);
     },
     listUsers: async () => ((await pool.query('SELECT * FROM users ORDER BY username')).rows as RawUser[]).map(toUser),
+    companyUsers: async (company) =>
+      (
+        (
+          company
+            ? await pool.query('SELECT * FROM users WHERE username LIKE $1 ORDER BY username', [companyPattern(company)])
+            : await pool.query("SELECT * FROM users WHERE username NOT LIKE '%-%' ORDER BY username")
+        ).rows as RawUser[]
+      ).map(toUser),
     createUser: (u, opks) =>
       tx(async (c) => {
         await c.query(
@@ -376,6 +401,7 @@ export async function openPostgres(connectionString: string): Promise<{ db: Db; 
         ]);
         await setMembers(c, g.id, g.members);
         await c.query('UPDATE chat_groups SET senders = $1 WHERE id = $2', [g.senders && JSON.stringify(g.senders), g.id]);
+        if (g.admins?.length) await c.query('UPDATE chat_groups SET admins = $1 WHERE id = $2', [JSON.stringify(g.admins), g.id]);
       }),
     updateGroup: (id, changes) =>
       tx(async (c) => {
@@ -383,6 +409,9 @@ export async function openPostgres(connectionString: string): Promise<{ db: Db; 
         if (changes.members) await setMembers(c, id, changes.members);
         if (changes.senders !== undefined) {
           await c.query('UPDATE chat_groups SET senders = $1 WHERE id = $2', [changes.senders && JSON.stringify(changes.senders), id]);
+        }
+        if (changes.admins !== undefined) {
+          await c.query('UPDATE chat_groups SET admins = $1 WHERE id = $2', [JSON.stringify(changes.admins), id]);
         }
       }),
     async deleteGroup(id) {
@@ -421,20 +450,38 @@ export async function openPostgres(connectionString: string): Promise<{ db: Db; 
     },
     getProductPhoto: (id) => one<ProductPhoto>('SELECT mime, data FROM product_photos WHERE id = $1', [id]),
     async addAudit(e) {
-      await pool.query('INSERT INTO audit_log (ts, actor, action, target, detail) VALUES ($1, $2, $3, $4, $5)', [
+      await pool.query('INSERT INTO audit_log (ts, actor, action, target, detail, company) VALUES ($1, $2, $3, $4, $5, $6)', [
         e.ts,
         e.actor,
         e.action,
         e.target,
         e.detail,
+        companyOfActor(e.actor),
       ]);
     },
-    listAudit: async (limit) =>
-      ((await pool.query('SELECT * FROM audit_log ORDER BY id DESC LIMIT $1', [limit])).rows as AuditRow[]).map((r) => ({
-        ...r,
-        id: Number(r.id),
-        ts: Number(r.ts),
-      })),
+    listAudit: async ({ limit, before, company }) =>
+      (
+        (
+          await pool.query(
+            'SELECT id, ts, actor, action, target, detail FROM audit_log WHERE company = $1 AND id < $2 ORDER BY id DESC LIMIT $3',
+            [company, before ?? Number.MAX_SAFE_INTEGER, limit],
+          )
+        ).rows as AuditRow[]
+      ).map((r) => ({ ...r, id: Number(r.id), ts: Number(r.ts) })),
+    async getBackup(username) {
+      const r = await one<BackupRow>('SELECT data, updated_at FROM backups WHERE username = $1', [username]);
+      return r && { data: r.data, updated_at: Number(r.updated_at) };
+    },
+    async putBackup(username, data) {
+      await pool.query(
+        `INSERT INTO backups (username, data, updated_at) VALUES ($1, $2, $3)
+         ON CONFLICT (username) DO UPDATE SET data = EXCLUDED.data, updated_at = EXCLUDED.updated_at`,
+        [username, data, Date.now()],
+      );
+    },
+    async deleteBackup(username) {
+      await pool.query('DELETE FROM backups WHERE username = $1', [username]);
+    },
     async close() {
       await bus.close();
       await pool.end();

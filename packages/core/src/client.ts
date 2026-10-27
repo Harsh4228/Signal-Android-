@@ -35,6 +35,15 @@ import {
   type AttachmentPointer,
   type AuditEntry,
   type ClientFrame,
+  DEFAULT_RIGHTS,
+  type Feature,
+  type HelpContact,
+  type HelpContactInput,
+  type MyRights,
+  type Page,
+  type RightChange,
+  type RightRule,
+  type Rights,
   type GroupInfo,
   type LoginRequest,
   type MeResponse,
@@ -587,6 +596,8 @@ export class MessengerClient extends Emitter<Events> {
   /** Group chats I am in (managed by the admin). */
   groups: GroupInfo[] = [];
   policy: Policy = DEFAULT_POLICY;
+  /** What I may do (see can()). */
+  rights: MyRights = { all: { ...DEFAULT_RIGHTS }, groups: {} };
   /** Suspended by the admin: the app stays signed in but cannot connect until unbanned. */
   banned = false;
   /**
@@ -966,7 +977,9 @@ export class MessengerClient extends Emitter<Events> {
    * Share a file on to another chat (1:1 or group), freshly encrypted for it. Everyone may do this: files can
    * move between chats inside the app, but the apps offer no way to save or share them outside it.
    */
-  async forwardAttachment(to: string, a: Attachment): Promise<void> {
+  async forwardAttachment(to: string, a: Attachment, from?: string): Promise<void> {
+    if (!this.can('forward', from)) throw new Error('Your admin has turned off forwarding');
+    if (!this.can('sendFiles', to)) throw new Error('Your admin has turned off sending files there');
     if (!a.data) throw new Error('The file is not available');
     await this.sendMessage(to, '', { file: { name: a.name, mime: a.mime, data: a.data }, forwarded: true });
   }
@@ -1019,6 +1032,46 @@ export class MessengerClient extends Emitter<Events> {
     return (await this.http<{ entries: AuditEntry[] }>('GET', `/v1/admin/audit?limit=${limit}`)).entries;
   }
 
+  /** One page of the activity log, newest first. Pass the previous page's `next` to get the one after it. */
+  async getAuditPage(before?: number | null, limit = 50): Promise<Page<AuditEntry>> {
+    const q = `limit=${limit}${before ? `&before=${before}` : ''}`;
+    const r = await this.http<Partial<Page<AuditEntry>> & { entries?: AuditEntry[] }>('GET', `/v1/admin/audit?${q}`);
+    const items = r.items ?? r.entries ?? [];
+    // Older servers send everything at once, without `next`.
+    return { items, next: r.next === undefined ? null : r.next };
+  }
+
+  // ------------------------------------------------------------------ rights
+
+  /** Company admin: every rule. With `groupId`: that group's rules (its group admins may read them too). */
+  async getRightRules(groupId?: string): Promise<RightRule[]> {
+    return (await this.http<{ rules: RightRule[] }>('GET', `/v1/rights${groupId ? `?group=${groupId}` : ''}`)).rules;
+  }
+
+  /** Allow / block a function for someone, or with allow null go back to what applies above it. */
+  async setRight(change: RightChange): Promise<RightRule[]> {
+    return (await this.http<{ rules: RightRule[] }>('PUT', '/v1/rights', change)).rules;
+  }
+
+  /** Group admins (and company admins): change a group's name, members, senders or group admins. */
+  async updateMyGroup(id: string, changes: { name?: string; members?: string[]; senders?: string[] | null; admins?: string[] }): Promise<GroupInfo> {
+    const g = await this.http<GroupInfo>('PUT', `/v1/groups/${id}`, changes);
+    await this.loadGroups().catch(() => {});
+    return g;
+  }
+
+  // ------------------------------------------------------------------ help desk
+
+  /** Whom to contact for what (the company admin keeps the list). */
+  async getHelpDesk(): Promise<HelpContact[]> {
+    return (await this.http<{ contacts: HelpContact[] }>('GET', '/v1/helpdesk')).contacts;
+  }
+
+  /** Company admin: replace the help desk list. */
+  async setHelpDesk(contacts: (HelpContactInput & { id?: string })[]): Promise<HelpContact[]> {
+    return (await this.http<{ contacts: HelpContact[] }>('PUT', '/v1/admin/helpdesk', { contacts })).contacts;
+  }
+
   /** Every group on the server, including ones the admin is not in. */
   async listAllGroups(): Promise<GroupInfo[]> {
     return (await this.http<{ groups: GroupInfo[] }>('GET', '/v1/admin/groups')).groups;
@@ -1029,7 +1082,8 @@ export class MessengerClient extends Emitter<Events> {
     return this.http<GroupInfo>('POST', '/v1/admin/groups', { name, members, senders });
   }
 
-  updateGroup(id: string, changes: { name?: string; members?: string[]; senders?: string[] | null }): Promise<GroupInfo> {
+  /** `admins`: the group's own admins (members who may manage it). */
+  updateGroup(id: string, changes: { name?: string; members?: string[]; senders?: string[] | null; admins?: string[] }): Promise<GroupInfo> {
     return this.http<GroupInfo>('PUT', `/v1/admin/groups/${encodeURIComponent(id)}`, changes);
   }
 
@@ -1161,6 +1215,7 @@ export class MessengerClient extends Emitter<Events> {
         if (this.account) this.noteAvatar(this.account.username, f.avatar ?? null);
         this.admins = Array.isArray(f.admins) ? f.admins : [];
         this.policy = { ...DEFAULT_POLICY, ...f.policy };
+        this.setRights(f.rights);
         this.banned = false;
         this.moved = false;
         this.pending = false;
@@ -1177,7 +1232,8 @@ export class MessengerClient extends Emitter<Events> {
         break;
       case 'refresh':
         if (f.what === 'groups') await this.loadGroups().catch((e) => console.warn('groups unavailable', e));
-        if (f.what === 'policy') await this.loadMe();
+        // Group changes can change my rights inside those groups too.
+        await this.loadMe();
         break;
       case 'envelope':
         if (!f.from && isSealed(f.body)) {
@@ -1260,7 +1316,31 @@ export class MessengerClient extends Emitter<Events> {
     this.admins = Array.isArray(me.admins) ? me.admins : [];
     this.company = me.company ?? null;
     this.isSuper = !!me.isSuper;
+    this.setRights(me.rights);
     this.emit('change');
+  }
+
+  /** Older servers send no rights: then the defaults apply, with the old company switches. */
+  private setRights(r: MyRights | undefined) {
+    const base: Rights = { ...DEFAULT_RIGHTS, editDelete: this.policy.allowEditDelete, clearHistory: this.policy.allowClearHistory };
+    this.rights = r && typeof r === 'object' && r.all ? { all: { ...base, ...r.all }, groups: r.groups ?? {} } : { all: base, groups: {} };
+  }
+
+  /**
+   * May I use this function, in this chat (a group's chat may differ)? Company admins always may.
+   * The apps hide or block what is not allowed.
+   */
+  can(feature: Feature, chat?: string | null): boolean {
+    if (this.isAdmin) return true;
+    const g = chat && isGroupKey(chat) ? this.rights.groups[groupIdOf(chat)] : undefined;
+    return g?.[feature] ?? this.rights.all[feature];
+  }
+
+  /** May I manage this group (company admin, or one of its group admins)? */
+  isGroupAdmin(key: string): boolean {
+    const g = this.groupOf(key);
+    const me = this.account?.username;
+    return !!g && !!me && (this.isAdmin || (g.admins ?? []).includes(me));
   }
 
   private async maintainKeys(serverCount: number) {
@@ -1340,7 +1420,7 @@ export class MessengerClient extends Emitter<Events> {
 
   /** Edits and deletes for everyone: from admins always, from others only when the admin allows it. */
   private mayEditDelete(user: string): boolean {
-    return this.admins.includes(user) || this.policy.allowEditDelete;
+    return this.admins.includes(user) || this.policy.allowEditDelete || !!this.profiles.get(user)?.profile?.editDelete;
   }
 
   /** Disappearing-message timers: from admins always, from others only when the admin allows clearing history. */
@@ -1750,6 +1830,7 @@ export class MessengerClient extends Emitter<Events> {
 
   /** Send a photo / PDF / file / voice message (with an optional caption). */
   async sendFile(peer: string, file: OutgoingFile, caption = '', opts: { replyTo?: ChatMessage } = {}): Promise<void> {
+    if (!this.can('sendFiles', peer)) throw new Error('Your admin has turned off sending photos and files');
     await this.sendMessage(peer, caption, { file, replyTo: opts.replyTo && this.quoteOf(opts.replyTo) });
   }
 
@@ -1780,6 +1861,8 @@ export class MessengerClient extends Emitter<Events> {
    */
   async forwardMessage(to: string, m: ChatMessage): Promise<void> {
     if (m.deleted || m.system || m.call || m.poll || m.event) throw new Error("This message can't be forwarded");
+    if (!this.can('forward', m.peer)) throw new Error('Your admin has turned off forwarding');
+    if (m.attachment && !this.can('sendFiles', to)) throw new Error('Your admin has turned off sending files there');
     if (m.attachment && !m.attachment.data) throw new Error('The file is not available');
     const a = m.attachment;
     await this.sendMessage(to, m.text, {
@@ -2194,6 +2277,7 @@ export class MessengerClient extends Emitter<Events> {
    * end-to-end encrypted copy (a photo is uploaded once, encrypted; its key travels only inside those copies).
    */
   async postStatus(s: NewStatus): Promise<BroadcastResult> {
+    if (!this.can('postStatus')) throw new Error('Your admin has turned off posting status updates');
     const text = ('photo' in s ? (s.caption ?? '') : s.text).trim();
     if (text.length > MAX_STATUS_TEXT) throw new Error(`Status too long (max ${MAX_STATUS_TEXT} characters)`);
     if (!('photo' in s) && !text) throw new Error('Status is empty');
@@ -2385,7 +2469,7 @@ export class MessengerClient extends Emitter<Events> {
 
   /** Whether I may edit and delete-for-everyone my messages (admins always; others if the admin allows it). */
   get canEditDelete(): boolean {
-    return this.isAdmin || this.policy.allowEditDelete;
+    return this.can('editDelete', this.activeChat);
   }
 
   async editMessage(key: string, id: string, text: string): Promise<void> {
@@ -2675,7 +2759,7 @@ export class MessengerClient extends Emitter<Events> {
 
   /** Whether I may remove chat history on this device (admins always; others if the admin allows it). */
   get canClearHistory(): boolean {
-    return this.isAdmin || this.policy.allowClearHistory;
+    return this.can('clearHistory', this.activeChat);
   }
 
   /** Clears the messages and the chat's saved photos and documents. */

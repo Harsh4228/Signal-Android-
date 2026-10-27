@@ -64,6 +64,8 @@ export interface AdminUser {
   /** false = created by the admin but the employee has not logged in yet */
   active: boolean;
   admin: boolean;
+  /** The company's main admin: other admins can't remove them or take their admin role away. */
+  owner?: boolean;
   mustChangePassword: boolean;
   /** Suspended by an admin: cannot log in, send or receive until unbanned. */
   banned: boolean;
@@ -135,6 +137,8 @@ export interface UserProfile {
   departments: string[];
   phone: string;
   email: string;
+  /** May edit / delete their messages for everyone (so my app accepts their edits). */
+  editDelete?: boolean;
 }
 
 export const MAX_PHONE = 20;
@@ -155,6 +159,82 @@ export interface Policy {
 
 export const DEFAULT_POLICY: Policy = { allowEditDelete: false, allowClearHistory: false };
 
+// ---- rights: what people may do, set per company / department / group / person ----
+
+/**
+ * The protected functions. Company admins may always do everything; for everyone else the most specific rule
+ * decides: person in a group > person > group (in that group's chat) > department > company > the default here.
+ */
+export const FEATURES = {
+  download: { label: 'Save files to the device', hint: 'Download photos, PDFs and documents out of CellMate', default: false },
+  screenshot: { label: 'Screenshots', hint: 'Take screenshots and screen recordings of chats', default: false },
+  copy: { label: 'Copy messages', hint: 'Copy message text to the clipboard', default: false },
+  forward: { label: 'Forward', hint: 'Forward messages and files to other chats', default: true },
+  sendFiles: { label: 'Send photos & files', hint: 'Attach photos, videos and documents', default: true },
+  voiceCall: { label: 'Voice calls', hint: 'Start voice calls', default: true },
+  videoCall: { label: 'Video calls', hint: 'Start video calls', default: true },
+  editDelete: { label: 'Edit & delete for everyone', hint: 'Change or remove own messages after sending', default: false },
+  clearHistory: { label: 'Clear history', hint: 'Clear chats, delete messages for me, disappearing messages', default: false },
+  postStatus: { label: 'Post status', hint: 'Share status updates with colleagues', default: true },
+} as const;
+export type Feature = keyof typeof FEATURES;
+export const FEATURE_KEYS = Object.keys(FEATURES) as Feature[];
+export type Rights = Record<Feature, boolean>;
+export const DEFAULT_RIGHTS: Rights = Object.fromEntries(FEATURE_KEYS.map((f) => [f, FEATURES[f].default])) as Rights;
+export const ALL_RIGHTS: Rights = Object.fromEntries(FEATURE_KEYS.map((f) => [f, true])) as Rights;
+
+/** Who a rule is for. `member` narrows a group rule to one person in that group (set by the group's admins). */
+export type RightScope = 'company' | 'department' | 'group' | 'user';
+export interface RightRule {
+  feature: Feature;
+  scope: RightScope;
+  /** department name / group id / username; '' for the company. */
+  target: string;
+  /** Only with scope 'group': one member of the group ('' = everyone in it). */
+  member: string;
+  allow: boolean;
+  setBy: string;
+  setAt: number;
+}
+/** PUT /v1/rights: add or change a rule; allow null removes it. */
+export type RightChange = Pick<RightRule, 'feature' | 'scope' | 'target'> & { member?: string; allow: boolean | null };
+
+/** My rights: `all` everywhere, `groups` = differences inside a group's chat. */
+export interface MyRights {
+  all: Rights;
+  groups: Record<string, Partial<Rights>>;
+}
+
+/**
+ * The effective right for one person. `groupId` = the chat it is used in (group rules only count there).
+ * Pure, so the server and tests share it.
+ */
+export function resolveRight(
+  rules: RightRule[],
+  feature: Feature,
+  who: { username: string; departments: string[] },
+  groupId?: string,
+): boolean {
+  const r = rules.filter((x) => x.feature === feature);
+  const pick = (f: (x: RightRule) => boolean) => r.filter(f);
+  const decide = (list: RightRule[]) => (list.length ? list.some((x) => x.allow) : undefined);
+  if (groupId) {
+    const inGroup = decide(pick((x) => x.scope === 'group' && x.target === groupId && x.member === who.username));
+    if (inGroup !== undefined) return inGroup;
+  }
+  const person = decide(pick((x) => x.scope === 'user' && x.target === who.username));
+  if (person !== undefined) return person;
+  if (groupId) {
+    const group = decide(pick((x) => x.scope === 'group' && x.target === groupId && !x.member));
+    if (group !== undefined) return group;
+  }
+  // Several departments: allowed if any of them allows it.
+  const dept = decide(pick((x) => x.scope === 'department' && who.departments.includes(x.target)));
+  if (dept !== undefined) return dept;
+  const company = decide(pick((x) => x.scope === 'company'));
+  return company ?? FEATURES[feature].default;
+}
+
 /** A group chat. The server knows only the name and the members; messages are end-to-end encrypted per member. */
 export interface GroupInfo {
   id: string;
@@ -165,6 +245,8 @@ export interface GroupInfo {
    * Members' apps enforce it (the server can't read group messages): messages from others are dropped.
    */
   senders: string[] | null;
+  /** Group admins: members who may change the group (name, members, who sends) and its rights. */
+  admins?: string[];
   createdBy: string;
   createdAt: number;
 }
@@ -262,6 +344,8 @@ export interface MeResponse {
   company?: { code: string; name: string } | null;
   /** May manage companies and move people between them. */
   isSuper?: boolean;
+  /** What I may do (missing on older servers: the defaults apply). */
+  rights?: MyRights;
 }
 
 export interface UploadKeysRequest {
@@ -300,7 +384,16 @@ export type ClientFrame =
   | { type: 'ping' };
 
 export type ServerFrame =
-  | { type: 'ready'; preKeyCount: number; isAdmin?: boolean; admins?: string[]; policy?: Policy; canShare?: boolean; avatar?: number | null }
+  | {
+      type: 'ready';
+      preKeyCount: number;
+      isAdmin?: boolean;
+      admins?: string[];
+      policy?: Policy;
+      canShare?: boolean;
+      avatar?: number | null;
+      rights?: MyRights;
+    }
   | { type: 'envelope'; id: number; from: string; body: string; ts: number }
   | { type: 'sent'; ref: string; ts: number }
   | { type: 'error'; ref?: string; code: string; message: string }
@@ -461,3 +554,53 @@ export interface AttachmentPointer {
   mime: string;
   size: number;
 }
+
+// ---- help desk: whom to contact, set by the company admin, shown to everyone behind the help icon ----
+
+export interface HelpContact {
+  id: string;
+  /** e.g. "IT support", "HR", "Accounts". */
+  title: string;
+  /** A person's name or a team ('' = none). */
+  name: string;
+  /** Which department it serves ('' = everyone). */
+  department: string;
+  phone: string;
+  email: string;
+  /** e.g. "Mon-Fri 9:00-18:00" ('' = none). */
+  hours: string;
+  /** Also a colleague to chat with in CellMate ('' = none). */
+  username: string;
+}
+export type HelpContactInput = Omit<HelpContact, 'id'>;
+export const MAX_HELP_CONTACTS = 100;
+export const MAX_HELP_FIELD = 120;
+
+// ---- chat history backup: end-to-end encrypted, so a new device or a re-login gets the old chats back ----
+
+/**
+ * PUT / GET /v1/backup. `data` is ciphertext the server can't read: history encrypted with a random backup key,
+ * and that key encrypted with a key made from the person's login password (`wrap`), so only they can open it.
+ */
+export interface HistoryBackup {
+  /** base64: nonce + ciphertext of the history. */
+  data: string;
+  /** base64: nonce + backup key encrypted with the password key. */
+  wrap: string;
+  /** base64 salt for the password key (scrypt). */
+  salt: string;
+  /** Format version. */
+  v: number;
+  updatedAt: number;
+}
+/** Largest backup the server keeps (base64 characters). */
+export const MAX_BACKUP_CHARS = 24 * 1024 * 1024;
+
+// ---- pages: long lists come in pages, newest first ----
+
+/** A page of a long list. `next` = pass as `before` to get the following page; null = that was the last one. */
+export interface Page<T> {
+  items: T[];
+  next: number | null;
+}
+export const PAGE_SIZE = 50;

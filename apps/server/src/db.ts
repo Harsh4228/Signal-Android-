@@ -61,8 +61,18 @@ export type GroupRow = {
   created_at: number;
   members: string[];
   senders: string[] | null;
+  /** Group admins (members who manage the group); [] = only the company admins. */
+  admins: string[];
 };
 export type AuditRow = { id: number; ts: number; actor: string; action: string; target: string; detail: string };
+/** A page of the audit log: newest first, entries older than efore (an id), of one company. */
+export type AuditQuery = { limit: number; before?: number; company: string };
+export type BackupRow = { data: string; updated_at: number };
+
+/** SQL LIKE pattern for the accounts of a company ('' = accounts without a company part). */
+export const companyPattern = (company: string) => `%-${company}`;
+/** The company an audit entry belongs to: its actor's (the part after '-'; '' = none). */
+export const companyOfActor = (actor: string) => (actor.includes('-') ? actor.slice(actor.lastIndexOf('-') + 1) : '');
 /**
  * A product in someone's catalog (like WhatsApp Business: every user has their own). photo_ver = when the photo
  * last changed (null = no photo); the image is stored separately.
@@ -119,6 +129,8 @@ export const isOnlineRow = (u: UserRow, now = Date.now()) => !!u.online_at && no
 export interface Db {
   getUser(username: string): Promise<UserRow | undefined>;
   listUsers(): Promise<UserRow[]>;
+  /** The accounts of one company ('' = accounts without a company part), A-Z. */
+  companyUsers(company: string): Promise<UserRow[]>;
   /** Self-registration (open servers / the admin's own first account). No passHash = log in with the device secret only. */
   createUser(u: { username: string; deviceHash: string; passHash?: string; identityKey: string; spk: Spk }, opks: Opk[]): Promise<void>;
   /** Admin creates an employee: login password only, no keys until the employee logs in. */
@@ -167,8 +179,8 @@ export interface Db {
   listGroups(): Promise<GroupRow[]>;
   groupsOf(username: string): Promise<GroupRow[]>;
   getGroup(id: string): Promise<GroupRow | undefined>;
-  createGroup(g: { id: string; name: string; createdBy: string; members: string[]; senders: string[] | null }): Promise<void>;
-  updateGroup(id: string, changes: { name?: string; members?: string[]; senders?: string[] | null }): Promise<void>;
+  createGroup(g: { id: string; name: string; createdBy: string; members: string[]; senders: string[] | null; admins?: string[] }): Promise<void>;
+  updateGroup(id: string, changes: { name?: string; members?: string[]; senders?: string[] | null; admins?: string[] }): Promise<void>;
   deleteGroup(id: string): Promise<void>;
   // ---- catalogs: every user has their own ----
   listProducts(owner: string): Promise<ProductRow[]>;
@@ -181,7 +193,11 @@ export interface Db {
   getProductPhoto(id: string): Promise<ProductPhoto | undefined>;
   // ---- audit log of admin actions ----
   addAudit(e: Omit<AuditRow, 'id'>): Promise<void>;
-  listAudit(limit: number): Promise<AuditRow[]>;
+  listAudit(q: AuditQuery): Promise<AuditRow[]>;
+  // ---- end-to-end encrypted chat history backups (one per person; the server can't read them) ----
+  getBackup(username: string): Promise<BackupRow | undefined>;
+  putBackup(username: string, data: string): Promise<void>;
+  deleteBackup(username: string): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -245,6 +261,11 @@ export function openSqlite(file: string): Db {
       mime TEXT NOT NULL,
       data TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS backups (
+      username   TEXT PRIMARY KEY REFERENCES users(username) ON DELETE CASCADE,
+      data       TEXT NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS audit_log (
       id     INTEGER PRIMARY KEY AUTOINCREMENT,
       ts     INTEGER NOT NULL,
@@ -288,12 +309,21 @@ export function openSqlite(file: string): Db {
   db.exec('CREATE INDEX IF NOT EXISTS products_owner ON products(owner)');
   const groupCols = (db.prepare('PRAGMA table_info(chat_groups)').all() as { name: string }[]).map((c) => c.name);
   if (!groupCols.includes('senders')) db.exec('ALTER TABLE chat_groups ADD COLUMN senders TEXT'); // JSON list, NULL = everyone
+  if (!groupCols.includes('admins')) db.exec('ALTER TABLE chat_groups ADD COLUMN admins TEXT'); // JSON list, NULL = none
+  const auditCols = (db.prepare('PRAGMA table_info(audit_log)').all() as { name: string }[]).map((c) => c.name);
+  if (!auditCols.includes('company')) {
+    db.exec("ALTER TABLE audit_log ADD COLUMN company TEXT NOT NULL DEFAULT ''");
+    db.exec("UPDATE audit_log SET company = substr(actor, instr(actor, '-') + 1) WHERE instr(actor, '-') > 0");
+  }
+  db.exec('CREATE INDEX IF NOT EXISTS audit_log_company ON audit_log(company, id)');
   // A crash leaves users "online"; the 75 s freshness check hides that, this just tidies up.
   db.exec('UPDATE users SET online_at = NULL');
 
   const q = {
     getUser: db.prepare('SELECT * FROM users WHERE username = ?'),
     listUsers: db.prepare('SELECT * FROM users ORDER BY username'),
+    companyUsers: db.prepare('SELECT * FROM users WHERE username LIKE ? ORDER BY username'),
+    noCompanyUsers: db.prepare("SELECT * FROM users WHERE username NOT LIKE '%-%' ORDER BY username"),
     insertUser: db.prepare(
       `INSERT INTO users (username, pass_hash, device_hash, must_change, identity_key, spk_id, spk_pub, spk_sig, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -345,6 +375,7 @@ export function openSqlite(file: string): Db {
     insertGroup: db.prepare('INSERT INTO chat_groups (id, name, created_by, created_at) VALUES (?, ?, ?, ?)'),
     renameGroup: db.prepare('UPDATE chat_groups SET name = ? WHERE id = ?'),
     setSenders: db.prepare('UPDATE chat_groups SET senders = ? WHERE id = ?'),
+    setGroupAdmins: db.prepare('UPDATE chat_groups SET admins = ? WHERE id = ?'),
     deleteGroup: db.prepare('DELETE FROM chat_groups WHERE id = ?'),
     clearMembers: db.prepare('DELETE FROM chat_group_members WHERE group_id = ?'),
     // Users deleted meanwhile are skipped instead of failing the whole change.
@@ -367,15 +398,21 @@ export function openSqlite(file: string): Db {
     deleteProductPhoto: db.prepare('DELETE FROM product_photos WHERE id = ?'),
     getProductPhoto: db.prepare('SELECT mime, data FROM product_photos WHERE id = ?'),
     deleteProduct: db.prepare('DELETE FROM products WHERE id = ?'),
-    addAudit: db.prepare('INSERT INTO audit_log (ts, actor, action, target, detail) VALUES (?, ?, ?, ?, ?)'),
-    listAudit: db.prepare('SELECT * FROM audit_log ORDER BY id DESC LIMIT ?'),
+    addAudit: db.prepare('INSERT INTO audit_log (ts, actor, action, target, detail, company) VALUES (?, ?, ?, ?, ?, ?)'),
+    auditOf: db.prepare('SELECT id, ts, actor, action, target, detail FROM audit_log WHERE company = ? AND id < ? ORDER BY id DESC LIMIT ?'),
+    getBackup: db.prepare('SELECT data, updated_at FROM backups WHERE username = ?'),
+    putBackup: db.prepare(
+      'INSERT INTO backups (username, data, updated_at) VALUES (?, ?, ?) ON CONFLICT(username) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at',
+    ),
+    deleteBackup: db.prepare('DELETE FROM backups WHERE username = ?'),
   };
 
-  type GroupBase = Omit<GroupRow, 'members' | 'senders'> & { senders: string | null };
+  type GroupBase = Omit<GroupRow, 'members' | 'senders' | 'admins'> & { senders: string | null; admins: string | null };
   const withMembers = (g: GroupBase): GroupRow => ({
     ...g,
     members: (q.members.all(g.id) as { username: string }[]).map((r) => r.username),
     senders: parseSenders(g.senders),
+    admins: parseSenders(g.admins) ?? [],
   });
   const setMembers = (id: string, members: string[]) => {
     q.clearMembers.run(id);
@@ -400,6 +437,8 @@ export function openSqlite(file: string): Db {
       return r && toUser(r);
     },
     listUsers: async () => (q.listUsers.all() as unknown as RawUser[]).map(toUser),
+    companyUsers: async (company) =>
+      ((company ? q.companyUsers.all(companyPattern(company)) : q.noCompanyUsers.all()) as unknown as RawUser[]).map(toUser),
     async createUser(u, opks) {
       tx(() => {
         q.insertUser.run(u.username, u.passHash ?? u.deviceHash, u.deviceHash, 0, u.identityKey, u.spk.id, u.spk.pub, u.spk.sig, Date.now());
@@ -516,6 +555,7 @@ export function openSqlite(file: string): Db {
         q.insertGroup.run(g.id, g.name, g.createdBy, Date.now());
         setMembers(g.id, g.members);
         q.setSenders.run(g.senders && JSON.stringify(g.senders), g.id);
+        if (g.admins?.length) q.setGroupAdmins.run(JSON.stringify(g.admins), g.id);
       });
     },
     async updateGroup(id, changes) {
@@ -523,6 +563,7 @@ export function openSqlite(file: string): Db {
         if (changes.name !== undefined) q.renameGroup.run(changes.name, id);
         if (changes.members) setMembers(id, changes.members);
         if (changes.senders !== undefined) q.setSenders.run(changes.senders && JSON.stringify(changes.senders), id);
+        if (changes.admins !== undefined) q.setGroupAdmins.run(JSON.stringify(changes.admins), id);
       });
     },
     async deleteGroup(id) {
@@ -549,9 +590,22 @@ export function openSqlite(file: string): Db {
     },
     getProductPhoto: async (id) => q.getProductPhoto.get(id) as ProductPhoto | undefined,
     async addAudit(e) {
-      q.addAudit.run(e.ts, e.actor, e.action, e.target, e.detail);
+      q.addAudit.run(e.ts, e.actor, e.action, e.target, e.detail, companyOfActor(e.actor));
     },
-    listAudit: async (limit) => q.listAudit.all(limit) as unknown as AuditRow[],
+    listAudit: async ({ limit, before, company }) => {
+      const b = before ?? Number.MAX_SAFE_INTEGER;
+      return q.auditOf.all(company, b, limit) as unknown as AuditRow[];
+    },
+    async getBackup(username) {
+      const r = q.getBackup.get(username) as BackupRow | undefined;
+      return r && { data: r.data, updated_at: Number(r.updated_at) };
+    },
+    async putBackup(username, data) {
+      q.putBackup.run(username, data, Date.now());
+    },
+    async deleteBackup(username) {
+      q.deleteBackup.run(username);
+    },
     async close() {
       db.close();
     },

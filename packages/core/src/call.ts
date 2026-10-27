@@ -95,6 +95,9 @@ export class CallManager extends Emitter<{ change: [CallState] }> {
 
   async startCall(peer: string, video: boolean): Promise<void> {
     if (this.state.status !== 'idle') throw new Error('Already in a call');
+    if (!this.client.can(video ? 'videoCall' : 'voiceCall', peer)) {
+      throw new Error(`Your admin has turned off ${video ? 'video' : 'voice'} calls`);
+    }
     const callId = bytesToHex(randomBytes(16));
     this.outgoingCandidates = [];
     this.outgoing = true;
@@ -154,6 +157,7 @@ export class CallManager extends Emitter<{ change: [CallState] }> {
   /** Camera on/off. In a voice call (no camera yet) this turns the camera on and makes it a video call. */
   toggleCamera(): void {
     if (!this.state.localStream?.getVideoTracks().length) {
+      if (this.state.peer && !this.client.can('videoCall', this.state.peer)) return;
       void this.enableVideo().catch((e) => console.warn('could not turn the camera on', e));
       return;
     }
