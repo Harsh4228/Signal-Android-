@@ -8,12 +8,21 @@
 #
 # Setup:  cp .env.example .env   (fill it in)   then   docker compose up -d --build
 # Update: git pull   then   docker compose up -d --build
+
+# Every container keeps at most 3 x 10 MB of logs, so logs can never fill the disk.
+x-logging: &logs
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: '3'
+
 services:
   server:
     build:
       context: ..
       dockerfile: apps/server/Dockerfile
     restart: unless-stopped
+    logging: *logs
     depends_on:
       db:
         condition: service_healthy
@@ -39,6 +48,7 @@ services:
   db:
     image: postgres:17-alpine
     restart: unless-stopped
+    logging: *logs
     environment:
       POSTGRES_USER: meetme
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
@@ -62,18 +72,32 @@ services:
       PGPASSWORD: ${POSTGRES_PASSWORD}
     volumes:
       - ./backups:/backups
+    logging: *logs
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
+        tables() { psql -h db -U meetme -d meetme -tAc "select count(*) from information_schema.tables where table_schema='public'"; }
         while true; do
-          pg_dump -h db -U meetme -d meetme -Fc -f /backups/meetme-$$(date +%F).dump && echo "backup ok"
-          find /backups -name "meetme-*.dump" -mtime +14 -delete
-          sleep 86400
+          # A dump of a database without tables restores nothing: wait for the server to create them.
+          if [ "$$(tables 2>/dev/null || echo 0)" -gt 0 ]; then
+            f=/backups/meetme-$$(date +%F).dump
+            if pg_dump -h db -U meetme -d meetme -Fc -f "$$f.tmp" && [ "$$(pg_restore -l "$$f.tmp" | grep -c ' TABLE DATA ')" -gt 0 ]; then
+              mv "$$f.tmp" "$$f" && echo "backup ok: $$f ($$(du -h "$$f" | cut -f1))"
+            else
+              rm -f "$$f.tmp"; echo "backup FAILED or EMPTY: keeping the older backups, retrying in 1 hour"; sleep 3600; continue
+            fi
+            # Old dumps are only removed once today's dump worked.
+            find /backups -name "meetme-*.dump" -mtime +14 -delete
+            sleep 86400
+          else
+            echo "backup waiting: the database has no tables yet"; sleep 600
+          fi
         done
 
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
+    logging: *logs
     depends_on:
       - server
     ports:
@@ -92,6 +116,7 @@ services:
   coturn:
     image: coturn/coturn:4.6
     restart: unless-stopped
+    logging: *logs
     # TURN needs a large UDP port range; host networking is simplest and fastest.
     network_mode: host
     command:
@@ -124,6 +149,7 @@ services:
     image: rclone/rclone:1.71
     profiles: [offsite]
     restart: unless-stopped
+    logging: *logs
     environment:
       RCLONE_CONFIG_BUCKET_TYPE: s3
       RCLONE_CONFIG_BUCKET_PROVIDER: Other
