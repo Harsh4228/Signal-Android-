@@ -90,3 +90,31 @@ test('history: kept across restarts, restored on a new device, and after a passw
   assert.equal(tablet.backupLocked, false);
   assert.equal(tablet.getMessages('admin')[0]!.text, 'hello from the phone');
 });
+
+test('an account signed in before backups existed turns them on with its password; starred messages move too', async () => {
+  const admin = clients.find((c) => c.account?.username === 'admin')!;
+  const invite = await admin.inviteEmployee({ username: 'old', name: 'Old Phone' });
+  const storage = new MemoryStorage();
+  const blobs = new MemoryBlobStorage();
+  let phone = await device(storage, blobs);
+  await phone.join(inviteCode(url, invite), 'old-password-1');
+  // Like an app updated while signed in: no backup key yet.
+  await (phone as unknown as { store: { setSetting(k: string, v: unknown): Promise<void> } }).store.setSetting('backupKeys', null);
+  phone.dispose();
+  phone = await device(storage, blobs);
+  await online(phone);
+  assert.equal(phone.backupNeedsPassword, true);
+  await assert.rejects(phone.enableBackup('wrong-password'), /wrong/);
+
+  await phone.addContact('admin');
+  await phone.sendText('admin', 'keep me');
+  phone.toggleStar(phone.getMessages('admin')[0]!);
+  await phone.enableBackup('old-password-1');
+  assert.equal(phone.backupNeedsPassword, false);
+  assert.ok(phone.lastBackupAt);
+
+  const laptop = await device();
+  await laptop.login(url, 'old', 'old-password-1');
+  await waitFor(() => laptop.getMessages('admin').length === 1, 'restored');
+  assert.equal(laptop.starredMessages().length, 1);
+});

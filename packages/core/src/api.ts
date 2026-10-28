@@ -178,6 +178,7 @@ export const FEATURES = {
   editDelete: { label: 'Edit & delete for everyone', hint: 'Change or remove own messages after sending', default: false },
   clearHistory: { label: 'Clear history', hint: 'Clear chats, delete messages for me, disappearing messages', default: false },
   postStatus: { label: 'Post status', hint: 'Share status updates with colleagues', default: true },
+  profilePhoto: { label: 'Change own profile photo', hint: 'Add, change or remove their own profile picture', default: false },
 } as const;
 export type Feature = keyof typeof FEATURES;
 export const FEATURE_KEYS = Object.keys(FEATURES) as Feature[];

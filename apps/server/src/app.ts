@@ -1274,6 +1274,12 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
     // Profiles are made by the admin and locked: only admins may change their own details (employees ask the
     // admin). On a server without admins people manage their own.
     const profileLocked = (await adminsOf(companyOf(me))).length > 0 && !(await isAdminUser(me));
+    // Their own profile photo: only with the admin's "Profile photo" permission (admins always may).
+    const photoLocked =
+      profileLocked &&
+      (path === '/v1/avatar'
+        ? !resolveRight(await getRules(companyOf(me)), 'profilePhoto', { username: me, departments: (await db.getUser(me))!.departments })
+        : true);
     // My own privacy choices (not locked by the admin): About line, hide last seen.
     if (method === 'PUT' && path === '/v1/me/privacy') {
       const body = (await readJson(req)) as Partial<PrivacyRequest>;
@@ -1301,7 +1307,7 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
     // Online / last seen for a few usernames (the chat list); unknown names are left out.
     // ---- profile photos: everyone signed in may see them (they are not end-to-end encrypted) ----
     if (path === '/v1/avatar' && method === 'PUT') {
-      if (profileLocked) throw new HttpError(403, 'Only your admin can change your profile photo');
+      if (photoLocked) throw new HttpError(403, 'Only your admin can change your profile photo (or allow you to)');
       if (!uploadLimit.allow(me)) throw new HttpError(429, 'too many uploads');
       const photo = checkPhoto(await readJson(req, Math.ceil((MAX_AVATAR_BYTES * 4) / 3) + 1024));
       const ver = Date.now();
@@ -1309,7 +1315,7 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
       return send(200, { ver });
     }
     if (path === '/v1/avatar' && method === 'DELETE') {
-      if (profileLocked) throw new HttpError(403, 'Only your admin can change your profile photo');
+      if (photoLocked) throw new HttpError(403, 'Only your admin can change your profile photo (or allow you to)');
       await db.setAvatar(me, null);
       return send(204);
     }
@@ -1486,6 +1492,18 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
         await db.deleteBackup(me);
         return send(204);
       }
+    }
+    // Is this my login password? (The app needs it once to lock the chat backup.) Counts as a failed attempt if not.
+    if (method === 'POST' && path === '/v1/password/check') {
+      const ip = clientIp(req);
+      if (authFailLimit.isBlocked(ip)) throw new HttpError(429, 'Too many attempts, try again later');
+      const body = (await readJson(req)) as { password?: unknown };
+      const user = (await db.getUser(me))!;
+      if (typeof body.password !== 'string' || !(await verifyPassword(body.password, user.pass_hash))) {
+        authFailLimit.allow(ip);
+        throw new HttpError(401, 'That password is wrong');
+      }
+      return send(204);
     }
     if (method === 'POST' && path === '/v1/password') {
       const body = (await readJson(req)) as { oldPassword?: unknown; newPassword?: unknown };

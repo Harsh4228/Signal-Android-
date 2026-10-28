@@ -1,4 +1,4 @@
-import { Appearance, Platform, StyleSheet } from 'react-native';
+import { Appearance, NativeModules, Platform, StyleSheet } from 'react-native';
 
 /** Light theme. Keep in sync with apps/desktop/src/renderer/src/styles.css. */
 const LIGHT = {
@@ -55,10 +55,20 @@ const DARK: typeof LIGHT = {
 };
 
 /**
- * The phone's light / dark setting when the app starts (styles are made once; switching the phone's mode takes
- * effect the next time CellMate opens).
+ * Dark or light, chosen when the app starts (styles are made once): the Settings choice, or the phone's own mode.
  */
-export const isDark = Appearance.getColorScheme() === 'dark';
+/** Light / Dark / System (Settings > Appearance); saved on the phone, read when the app starts. */
+export type ThemeChoice = 'system' | 'light' | 'dark';
+export const themeChoice: ThemeChoice = ((NativeModules.DeviceFiles as { theme?: ThemeChoice } | undefined)?.theme ?? 'system') as ThemeChoice;
+export const isDark = themeChoice === 'dark' || (themeChoice === 'system' && Appearance.getColorScheme() === 'dark');
+
+/** Save the choice and start the app again so every screen uses the new colours. */
+export async function chooseTheme(t: ThemeChoice): Promise<void> {
+  const m = NativeModules.DeviceFiles as { setTheme?(t: string): Promise<void>; restart?(): void } | undefined;
+  if (!m?.setTheme) throw new Error('Not available on this phone');
+  await m.setTheme(t);
+  m.restart?.();
+}
 export const colors = isDark ? DARK : LIGHT;
 
 export const mono = Platform.select({ ios: 'Menlo', default: 'monospace' });

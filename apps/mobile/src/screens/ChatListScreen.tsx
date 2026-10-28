@@ -4,7 +4,7 @@ import { Archive, ArchiveRestore, BellOff, Ban, Bell, ChevronLeft, CircleDashed,
 import { MessengerClient, isGroupKey } from '@meetme/core';
 import { client, useClient } from '../messenger';
 import { colors, s } from '../theme';
-import { Banner, ChatAvatar, Header, IconButton, Logo, Sheet, shortTime, typingText } from '../ui';
+import { Banner, Button, ChatAvatar, Field, Header, IconButton, Logo, Sheet, shortTime, typingText } from '../ui';
 import { DirectoryList, openDirectChat } from './DirectoryScreen';
 import type { Route } from '../App';
 
@@ -75,6 +75,8 @@ export function ChatListScreen({ navigate, onError }: { navigate: (r: Route) => 
           </Banner>
         </View>
       )}
+
+      {c.backupNeedsPassword && <BackupPrompt onError={onError} />}
 
       {all.length > 6 && (
         <View style={[styles.search, { marginTop: 0 }]}>
@@ -274,3 +276,27 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
 });
+
+/** Signed in from before chat backups existed: one password entry turns the backup on (chats then follow to any device). */
+function BackupPrompt({ onError }: { onError: (m: string) => void }) {
+  const [pw, setPw] = useState('');
+  const [busy, setBusy] = useState(false);
+  const save = async () => {
+    setBusy(true);
+    try {
+      await client.enableBackup(pw);
+      onError('Chat backup is on: your chats now follow you to every device');
+    } catch (e) {
+      onError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <View style={{ margin: 12, marginBottom: 0, gap: 8 }}>
+      <Banner kind="warn">Turn on chat backup so your chats come back on any device you sign in to. Enter your login password once.</Banner>
+      <Field value={pw} onChangeText={setPw} placeholder="Your login password" secureTextEntry />
+      <Button variant="primary" title="Turn on chat backup" busy={busy} disabled={!pw} onPress={() => void save()} />
+    </View>
+  );
+}

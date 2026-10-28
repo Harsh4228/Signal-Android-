@@ -1367,6 +1367,8 @@ export class MessengerClient extends Emitter<Events> {
         this.pending = false;
         this.emit('change');
         void this.loadMe();
+        // Connected: write the history and back it up now (catches anything from before, e.g. an app update).
+        void this.saveHistory(true).catch(() => {});
         this.maintainKeys(f.preKeyCount).catch((e) => this.emit('error', `Key upload failed: ${e.message}`));
         this.setupSealedSender().catch((e) => console.warn('sealed sender unavailable', e));
         this.followServerMove().catch((e) => console.warn('server address check failed', e));
@@ -3269,6 +3271,22 @@ export class MessengerClient extends Emitter<Events> {
   /** When my backup was last stored on the server (ms); null = not yet. */
   lastBackupAt: number | null = null;
 
+  /**
+   * Signed in from before chat backups existed (the app never had the password): the backup is off until the
+   * password is given once (enableBackup). The apps ask for it.
+   */
+  get backupNeedsPassword(): boolean {
+    return !!this.account && this.historyLoaded && !this.backupKeys && !this.lockedBackup;
+  }
+
+  /** Turn the chat backup on with my login password (checked by the server); older backups are restored too. */
+  async enableBackup(password: string): Promise<void> {
+    await this.http('POST', '/v1/password/check', { password });
+    await this.afterSignIn(password);
+    this.emit('change');
+    await this.flushHistory().catch(() => {});
+  }
+
   /** An older backup is waiting: restore it with the old password, or start fresh. */
   get backupLocked(): boolean {
     return !!this.lockedBackup;
@@ -3292,6 +3310,11 @@ export class MessengerClient extends Emitter<Events> {
     const added = mergeSnapshot(this.chats, snap);
     for (const c of snap.contacts) if (!this.contacts.includes(c) && !isGroupKey(c)) this.contacts.push(c);
     for (const [k, n] of Object.entries(snap.unread)) if (typeof n === 'number' && !this.unread.has(k)) this.unread.set(k, n);
+    // Starred messages and notices come along too.
+    for (const st of snap.starred ?? []) if (!this.starred.some((x) => x.chat === st.chat && x.msgId === st.msgId)) this.starred.push(st);
+    for (const n of snap.notices ?? []) if (!this.notices.some((x) => x.id === n.id)) this.notices.push(n);
+    void this.store.setSetting('starred', this.starred);
+    void this.store.setSetting('notices', this.notices);
     // Pinned / archived / muted chats come along to a new device.
     for (const [k, p] of Object.entries(snap.prefs ?? {})) if (!this.chatPrefs[k] && p && typeof p === 'object') this.chatPrefs[k] = p;
     void this.store.setSetting('chatPrefs', this.chatPrefs);
@@ -3334,7 +3357,7 @@ export class MessengerClient extends Emitter<Events> {
   }
 
   private snapshot(): HistorySnapshot {
-    return { ...makeSnapshot(this.chats, this.contacts, this.unread), prefs: this.chatPrefs };
+    return { ...makeSnapshot(this.chats, this.contacts, this.unread), prefs: this.chatPrefs, starred: this.starred, notices: this.notices };
   }
 
   /** The history as last written / backed up: typing and presence changes don't touch the files. */
@@ -3348,11 +3371,11 @@ export class MessengerClient extends Emitter<Events> {
     if (!force && json === this.savedJson) return;
     await this.media.saveDoc(HISTORY_DOC, utf8(JSON.stringify(this.snapshot())));
     this.savedJson = json;
-    // At most one upload a minute while chatting.
+    // Backed up a few seconds after a change, so switching to another device right away loses nothing.
     this.backupTimer ??= setTimeout(() => {
       this.backupTimer = null;
       void this.uploadBackup().catch((e) => console.warn('backup failed', e));
-    }, 60_000);
+    }, 5000);
   }
 
   private async uploadBackup(): Promise<void> {

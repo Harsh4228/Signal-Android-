@@ -114,13 +114,7 @@ export function GroupCallScreen({ onMinimize }: { onMinimize: () => void }) {
             </Text>
           </View>
         </View>
-        {meVideo ? (
-          <Pressable onPress={() => groupCalls.switchCamera()} hitSlop={12} accessibilityLabel="Flip camera">
-            <SwitchCamera size={22} color={FG} />
-          </Pressable>
-        ) : (
-          <View style={{ width: 22 }} />
-        )}
+        <View style={{ width: 26 }} />
       </View>
       <View style={styles.grid}>
         {tiles.map((t) => (
@@ -130,6 +124,7 @@ export function GroupCallScreen({ onMinimize }: { onMinimize: () => void }) {
       <View style={styles.controls}>
         <Round icon={Volume2} label="Speaker" on={speaker} onPress={() => setSpeaker(!speaker)} />
         {s.video && <Round icon={s.cameraOff ? VideoOff : Video} label="Camera" on={!s.cameraOff} onPress={() => groupCalls.toggleCamera()} />}
+        {meVideo && <Round icon={SwitchCamera} label="Flip" onPress={() => groupCalls.switchCamera()} />}
         <Round icon={s.muted ? MicOff : Mic} label={s.muted ? 'Unmute' : 'Mute'} on={s.muted} onPress={() => groupCalls.toggleMute()} />
         <Round icon={PhoneOff} label="Leave" color={RED} onPress={() => void groupCalls.leave()} />
       </View>

@@ -3,7 +3,7 @@ import { openWithKey, randomBytes, sealWithKey } from './crypto/primitives';
 import { fromBase64, fromUtf8, toBase64, utf8 } from './encoding';
 import type { HistoryBackup } from './api';
 import { MAX_BACKUP_CHARS } from './api';
-import type { ChatMessage, ChatPrefs } from './client';
+import type { ChatMessage, ChatPrefs, Notice, StarredMessage } from './client';
 
 /**
  * Chat history that survives restarts and moves to a new device (like WhatsApp):
@@ -24,6 +24,9 @@ export interface HistorySnapshot {
   unread: Record<string, number>;
   /** Pinned / archived / muted chats. */
   prefs?: Record<string, ChatPrefs>;
+  /** Starred messages and notices. */
+  starred?: StarredMessage[];
+  notices?: Notice[];
 }
 
 /** The backup key and how it is locked with the password (kept in the device's secure store). */
@@ -77,6 +80,8 @@ export function parseSnapshot(text: string): HistorySnapshot | null {
     contacts: Array.isArray(s.contacts) ? s.contacts.filter((c): c is string => typeof c === 'string') : [],
     unread: s.unread && typeof s.unread === 'object' ? (s.unread as Record<string, number>) : {},
     prefs: s.prefs && typeof s.prefs === 'object' ? s.prefs : undefined,
+    starred: Array.isArray(s.starred) ? s.starred : undefined,
+    notices: Array.isArray(s.notices) ? s.notices : undefined,
   };
 }
 

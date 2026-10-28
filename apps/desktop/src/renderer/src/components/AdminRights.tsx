@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight, Clock, LifeBuoy, Mail, MessageSquare, Pencil, Phone, Plus, Search, ShieldCheck, Trash2, X } from 'lucide-react';
+import { ArrowDown, ArrowUp, Check, ChevronLeft, ChevronRight, Clock, LifeBuoy, Mail, MessageSquare, Pencil, Phone, Plus, Search, ShieldCheck, Trash2, X } from 'lucide-react';
 import {
   FEATURES,
   FEATURE_KEYS,
@@ -128,8 +128,10 @@ function FeatureRules({
   onToast: Toast;
 }) {
   const [busy, setBusy] = useState(false);
-  const [scope, setScope] = useState<Exclude<RightScope, 'company'>>('user');
-  const [target, setTarget] = useState('');
+  // Exceptions for several at once; 'member' = chosen people inside one group (only there).
+  const [scope, setScope] = useState<'department' | 'group' | 'user' | 'member'>('user');
+  const [picked, setPicked] = useState<string[]>([]);
+  const [inGroup, setInGroup] = useState('');
   const [query, setQuery] = useState('');
   const everyone = companyAllows(rules, feature);
   const mine = rules.filter((r) => r.feature === feature && r.scope !== 'company');
@@ -148,12 +150,24 @@ function FeatureRules({
       setBusy(false);
     }
   }
+  const nameOf = (u: string) => {
+    const x = users.find((p) => p.username === u);
+    return x?.name ? `${x.name} (${shortId(u)})` : shortId(u);
+  };
+  const choosingGroup = scope === 'member' && !inGroup;
   const options: [string, string][] =
     scope === 'department'
       ? departments.map((d) => [d, d])
-      : scope === 'group'
+      : scope === 'group' || choosingGroup
         ? groups.map((g) => [g.id, g.name])
-        : users.filter((u) => !u.admin && !u.moved).map((u) => [u.username, u.name ? `${u.name} (${shortId(u.username)})` : shortId(u.username)]);
+        : scope === 'member'
+          ? (groups.find((g) => g.id === inGroup)?.members ?? []).filter((u) => !users.find((p) => p.username === u)?.admin).map((u) => [u, nameOf(u)])
+          : users.filter((u) => !u.admin && !u.moved).map((u) => [u.username, nameOf(u.username)]);
+  const toggle = (id: string) => (choosingGroup ? setInGroup(id) : setPicked((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id])));
+  async function addAll(allow: boolean) {
+    for (const id of picked) await (scope === 'member' ? change('group', inGroup, allow, id) : change(scope, id, allow));
+    setPicked([]);
+  }
   const q = query.trim().toLowerCase();
 
   return (
@@ -192,44 +206,67 @@ function FeatureRules({
       )}
       <div className="section-title">Add exception</div>
       <div className="seg" style={{ marginBottom: 8 }}>
-        {(['department', 'group', 'user'] as const).map((sc) => (
+        {(
+          [
+            ['user', 'Person'],
+            ['department', 'Department'],
+            ['group', 'Group'],
+            ['member', 'Person in a group'],
+          ] as const
+        ).map(([sc, l]) => (
           <button
             key={sc}
             type="button"
             className={scope === sc ? 'active' : ''}
             onClick={() => {
               setScope(sc);
-              setTarget('');
+              setPicked([]);
+              setInGroup('');
             }}
           >
-            {SCOPE_LABEL[sc]}
+            {l}
           </button>
         ))}
       </div>
+      {scope === 'member' && (
+        <p className="muted small" style={{ margin: '0 0 8px' }}>
+          {inGroup ? (
+            <>
+              People in <strong>{groups.find((g) => g.id === inGroup)?.name}</strong>: they get this only inside that group.{' '}
+              <button type="button" className="link" onClick={() => (setInGroup(''), setPicked([]))}>
+                Choose another group
+              </button>
+            </>
+          ) : (
+            'First choose the group:'
+          )}
+        </p>
+      )}
       <div className="search" style={{ marginBottom: 8 }}>
         <Search size={16} />
-        <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={`Find a ${SCOPE_LABEL[scope].toLowerCase()}`} />
+        <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search" />
       </div>
       <div className="choose-list">
         {options
           .filter(([, l]) => l.toLowerCase().includes(q))
-          .slice(0, 60)
+          .slice(0, 80)
           .map(([id, l]) => (
-            <button key={id} type="button" className={target === id ? 'active' : ''} onClick={() => setTarget(id)}>
-              {l}
+            <button key={id} type="button" className={picked.includes(id) ? 'active' : ''} onClick={() => toggle(id)}>
+              {picked.includes(id) && <Check size={13} />} {l}
             </button>
           ))}
         {!options.length && <p className="muted small">Nothing to choose{scope === 'department' ? ': add departments first' : ''}.</p>}
       </div>
-      <div className="row" style={{ gap: 8, marginTop: 10 }}>
-        <button className="primary" disabled={!target || busy} onClick={() => void change(scope, target, true).then(() => setTarget(''))}>
-          Allow
-        </button>
-        <button className="danger" disabled={!target || busy} onClick={() => void change(scope, target, false).then(() => setTarget(''))}>
-          Block
-        </button>
-      </div>
-    </>
+      {!choosingGroup && (
+        <div className="row" style={{ gap: 8, marginTop: 10 }}>
+          <button className="primary" disabled={!picked.length || busy} onClick={() => void addAll(true)}>
+            Allow{picked.length > 1 ? ` for ${picked.length}` : ''}
+          </button>
+          <button className="danger" disabled={!picked.length || busy} onClick={() => void addAll(false)}>
+            Block{picked.length > 1 ? ` for ${picked.length}` : ''}
+          </button>
+        </div>
+      )}    </>
   );
 }
 

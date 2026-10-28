@@ -194,13 +194,7 @@ export function CallScreen({ onMinimize }: { onMinimize: () => void }) {
             <Lock size={12} color={FG_MUTED} />
             <Text style={{ color: FG_MUTED, fontSize: 12 }}>End-to-end encrypted</Text>
           </View>
-          {localVideo && call.status !== 'incoming' ? (
-            <Pressable onPress={() => calls.switchCamera()} accessibilityLabel="Flip camera" hitSlop={12} style={styles.topBtn}>
-              <SwitchCamera size={22} color={FG} />
-            </Pressable>
-          ) : (
-            <View style={styles.topBtn} />
-          )}
+          <View style={styles.topBtn} />
         </Animated.View>
       )}
 
@@ -237,6 +231,8 @@ export function CallScreen({ onMinimize }: { onMinimize: () => void }) {
             {(call.video || (call.peer && client.can('videoCall', call.peer))) && (
               <RoundButton icon={localVideo ? Video : VideoOff} label="Camera" on={localVideo} onPress={() => calls.toggleCamera()} />
             )}
+            {/* Like WhatsApp: flip between front and back camera from the button row. */}
+            {localVideo && <RoundButton icon={SwitchCamera} label="Flip" onPress={() => calls.switchCamera()} />}
             <RoundButton icon={call.muted ? MicOff : Mic} label={call.muted ? 'Unmute' : 'Mute'} on={call.muted} onPress={() => calls.toggleMute()} />
             <RoundButton icon={PhoneOff} label="End" color={RED} onPress={() => void calls.hangup()} />
           </Animated.View>

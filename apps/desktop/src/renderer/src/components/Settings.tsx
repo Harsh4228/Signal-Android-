@@ -107,6 +107,8 @@ export function Settings({ onClose, onToast }: { onClose: () => void; onToast: (
   const hasPhoto = !!c.account && !!c.avatarOf(c.account.username);
   // Profiles are set by the admin; only admins (or anyone on a server without admins) edit their own.
   const canEditProfile = c.isAdmin || c.admins.length === 0;
+  // The profile photo: also with the admin's "Change own profile photo" permission.
+  const canEditPhoto = canEditProfile || c.can('profilePhoto');
 
   async function changePhoto(file: File | undefined) {
     if (!file) return;
@@ -192,7 +194,7 @@ export function Settings({ onClose, onToast }: { onClose: () => void; onToast: (
         </header>
 
         <div className="account-card">
-          {canEditProfile ? (
+          {canEditPhoto ? (
             <button
               className="avatar-edit"
               title="Change profile photo"
@@ -222,7 +224,7 @@ export function Settings({ onClose, onToast }: { onClose: () => void; onToast: (
             onChange={(e) => void changePhoto(e.target.files?.[0])}
           />
         </div>
-        {canEditProfile && (
+        {canEditPhoto && (
           <>
             <div className="row" style={{ gap: 8, marginTop: 8 }}>
               <button disabled={photoBusy} onClick={() => photoInput.current?.click()}>

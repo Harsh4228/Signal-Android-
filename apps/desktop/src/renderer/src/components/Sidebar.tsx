@@ -8,7 +8,7 @@ import { NoticesPanel } from './Notices';
 import { StatusPanel } from './Status';
 import { StarredPanel } from './ChatExtras';
 import { CatalogPanel } from './Catalog';
-import { Avatar, ChatAvatar, Logo, errorText, shortTime, typingText } from './ui';
+import { Avatar, ChatAvatar, Logo, PasswordInput, errorText, shortTime, typingText } from './ui';
 import { Directory } from './Directory';
 import { HelpDeskModal } from './AdminRights';
 import { CallsPanel } from './CallsPanel';
@@ -156,6 +156,7 @@ export function Sidebar({ onSettings, onError }: { onSettings: () => void; onErr
       {panel === 'channels' && <ChannelsPanel onClose={() => setPanel(null)} onToast={onError} />}
       {panel === 'catalog' && <CatalogPanel onClose={() => setPanel(null)} onToast={onError} />}
 
+      {c.backupNeedsPassword && <BackupPrompt onError={onError} />}
       {c.banned && (
         <div className="error" style={{ margin: '0 12px 8px' }}>
           <Ban size={16} />
@@ -274,5 +275,31 @@ export function Sidebar({ onSettings, onError }: { onSettings: () => void; onErr
         </div>
       </div>
     </aside>
+  );
+}
+
+/** Signed in from before chat backups existed: one password entry turns the backup on (chats then follow to any device). */
+function BackupPrompt({ onError }: { onError: (m: string) => void }) {
+  const [pw, setPw] = useState('');
+  const [busy, setBusy] = useState(false);
+  const save = async () => {
+    setBusy(true);
+    try {
+      await client.enableBackup(pw);
+      onError('Chat backup is on: your chats now follow you to every device');
+    } catch (e) {
+      onError(errorText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <form className="notice stack" style={{ margin: '0 12px 8px' }} onSubmit={(e) => (e.preventDefault(), void save())}>
+      <span>Turn on chat backup so your chats come back on any device you sign in to. Enter your login password once.</span>
+      <PasswordInput value={pw} onChange={(e) => setPw(e.target.value)} placeholder="Your login password" autoComplete="current-password" />
+      <button className="primary" disabled={busy || !pw}>
+        Turn on chat backup
+      </button>
+    </form>
   );
 }

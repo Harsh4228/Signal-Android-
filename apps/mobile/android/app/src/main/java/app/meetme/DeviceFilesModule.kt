@@ -4,6 +4,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.ContentValues
 import android.content.Context
+import android.content.Intent
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
@@ -23,6 +24,28 @@ import java.io.File
  */
 class DeviceFilesModule(context: ReactApplicationContext) : ReactContextBaseJavaModule(context) {
   override fun getName() = "DeviceFiles"
+
+  private val prefs get() = reactApplicationContext.getSharedPreferences("cellmate", Context.MODE_PRIVATE)
+
+  /** Read once when the app starts (the colours are chosen then): "system", "light" or "dark". */
+  override fun getConstants(): MutableMap<String, Any> = mutableMapOf("theme" to (prefs.getString("theme", "system") ?: "system"))
+
+  /** Light / dark choice; it takes effect when the app starts again (see restart). */
+  @ReactMethod
+  fun setTheme(theme: String, promise: Promise) {
+    prefs.edit().putString("theme", if (theme == "light" || theme == "dark") theme else "system").apply()
+    promise.resolve(null)
+  }
+
+  /** Start CellMate again (to apply the new colours). */
+  @ReactMethod
+  fun restart() {
+    val ctx = reactApplicationContext
+    val intent = ctx.packageManager.getLaunchIntentForPackage(ctx.packageName) ?: return
+    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+    ctx.startActivity(intent)
+    Runtime.getRuntime().exit(0)
+  }
 
   @ReactMethod
   fun copyText(text: String, promise: Promise) {

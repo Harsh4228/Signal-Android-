@@ -51,6 +51,12 @@ test('company server: the admin sets photos, employees cannot, everyone sees the
   // Locked for employees.
   await assert.rejects(asha.setMyAvatar({ mime: 'image/png', data: PNG }), /Only your admin/);
   await assert.rejects(asha.removeMyAvatar(), /Only your admin/);
+  // ...unless the admin gives them the "Change own profile photo" permission.
+  await admin.setRight({ feature: 'profilePhoto', scope: 'user', target: 'asha', allow: true });
+  await asha.setMyAvatar({ mime: 'image/png', data: PNG });
+  await asha.removeMyAvatar();
+  await admin.setRight({ feature: 'profilePhoto', scope: 'user', target: 'asha', allow: null });
+  await assert.rejects(asha.setMyAvatar({ mime: 'image/png', data: PNG }), /Only your admin/);
   await assert.rejects(asha.setEmployeeAvatar('bina', { mime: 'image/png', data: PNG }), /admin only/);
 
   // The admin sets it; others pick it up with presence (the chat list refreshes it regularly).

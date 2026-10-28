@@ -233,8 +233,8 @@ function FeatureRules({
             departments={departments}
             defaultAllow={!everyone}
             onCancel={() => setAdding(false)}
-            onAdd={async (scope, target, allow) => {
-              await change(scope, target, allow);
+            onAdd={async (items, allow) => {
+              for (const it of items) await change(it.scope, it.target, allow, it.member);
               setAdding(false);
             }}
           />
@@ -246,6 +246,13 @@ function FeatureRules({
   );
 }
 
+type AddScope = 'department' | 'group' | 'user' | 'member';
+const ADD_LABEL: Record<AddScope, string> = { department: 'Department', group: 'Group', user: 'Person', member: 'Person in a group' };
+
+/**
+ * Add exceptions: one or more departments, groups or people, or chosen people inside one group (they may use it
+ * in that group only, e.g. download PDFs in "Accounts team" while their department may not).
+ */
 function AddException({
   users,
   groups,
@@ -259,39 +266,65 @@ function AddException({
   departments: string[];
   defaultAllow: boolean;
   onCancel: () => void;
-  onAdd: (scope: RightScope, target: string, allow: boolean) => Promise<void>;
+  onAdd: (items: { scope: RightScope; target: string; member?: string }[], allow: boolean) => Promise<void>;
 }) {
-  const [scope, setScope] = useState<Exclude<RightScope, 'company'>>('user');
-  const [target, setTarget] = useState('');
+  const [scope, setScope] = useState<AddScope>('user');
+  const [picked, setPicked] = useState<string[]>([]);
+  const [inGroup, setInGroup] = useState('');
   const [allow, setAllow] = useState(defaultAllow);
   const [query, setQuery] = useState('');
+  const name = (u: string) => {
+    const x = users.find((p) => p.username === u);
+    return x?.name ? `${x.name} (${shortId(u)})` : shortId(u);
+  };
   const options = useMemo((): [string, string][] => {
     if (scope === 'department') return departments.map((d) => [d, d]);
-    if (scope === 'group') return groups.map((g) => [g.id, g.name]);
-    return users.filter((u) => !u.admin && !u.moved).map((u) => [u.username, u.name ? `${u.name} (${shortId(u.username)})` : shortId(u.username)]);
-  }, [scope, users, groups, departments]);
+    if (scope === 'group' || (scope === 'member' && !inGroup)) return groups.map((g) => [g.id, g.name]);
+    if (scope === 'member') {
+      const g = groups.find((x) => x.id === inGroup);
+      return (g?.members ?? []).filter((u) => !users.find((p) => p.username === u)?.admin).map((u) => [u, name(u)]);
+    }
+    return users.filter((u) => !u.admin && !u.moved).map((u) => [u.username, name(u.username)]);
+  }, [scope, inGroup, users, groups, departments]);
   const q = query.trim().toLowerCase();
-  const shown = options.filter(([, l]) => l.toLowerCase().includes(q)).slice(0, 50);
+  const shown = options.filter(([, l]) => l.toLowerCase().includes(q)).slice(0, 80);
+  const choosingGroup = scope === 'member' && !inGroup;
+  const toggle = (id: string) => {
+    if (choosingGroup) return setInGroup(id);
+    setPicked((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
+  };
+  const add = () =>
+    onAdd(
+      picked.map((id) => (scope === 'member' ? { scope: 'group', target: inGroup, member: id } : { scope, target: id })),
+      allow,
+    );
   return (
     <View style={[s.card, { padding: 14, gap: 12 }]}>
       <View style={[s.row, { justifyContent: 'space-between' }]}>
         <Text style={s.title}>Add exception</Text>
         <IconButton icon={X} label="Cancel" onPress={onCancel} />
       </View>
-      <View style={styles.segment}>
-        {(['department', 'group', 'user'] as const).map((sc) => (
+      <View style={[styles.segment, { flexWrap: 'wrap' }]}>
+        {(['user', 'department', 'group', 'member'] as const).map((sc) => (
           <Pressable
             key={sc}
             onPress={() => {
               setScope(sc);
-              setTarget('');
+              setPicked([]);
+              setInGroup('');
             }}
-            style={[styles.segItem, scope === sc && { backgroundColor: colors.surface, borderColor: colors.accent }]}
+            style={[styles.segItem, { minWidth: '45%' }, scope === sc && { backgroundColor: colors.surface, borderColor: colors.accent }]}
           >
-            <Text style={{ color: scope === sc ? colors.accent : colors.muted, fontWeight: '600', fontSize: 13 }}>{SCOPE_LABEL[sc]}</Text>
+            <Text style={{ color: scope === sc ? colors.accent : colors.muted, fontWeight: '600', fontSize: 13 }}>{ADD_LABEL[sc]}</Text>
           </Pressable>
         ))}
       </View>
+      {scope === 'member' && (
+        <Text style={s.muted}>
+          {inGroup ? `People in "${groups.find((g) => g.id === inGroup)?.name}": they get this only inside that group.` : 'First choose the group:'}
+        </Text>
+      )}
+      {scope === 'member' && !!inGroup && <Button title="Choose another group" onPress={() => (setInGroup(''), setPicked([]))} />}
       {options.length > 8 && (
         <View style={styles.search}>
           <Search size={16} color={colors.faint} />
@@ -299,7 +332,7 @@ function AddException({
             style={{ flex: 1, color: colors.text, fontSize: 15, paddingVertical: 8 }}
             value={query}
             onChangeText={setQuery}
-            placeholder={`Find a ${SCOPE_LABEL[scope].toLowerCase()}`}
+            placeholder="Search"
             placeholderTextColor={colors.faint}
             autoCapitalize="none"
             autoCorrect={false}
@@ -308,20 +341,32 @@ function AddException({
       )}
       <View style={{ gap: 4 }}>
         {shown.length === 0 && <Text style={s.muted}>Nothing to choose{scope === 'department' ? ': add departments first' : ''}.</Text>}
-        {shown.map(([id, l]) => (
-          <Pressable key={id} onPress={() => setTarget(id)} style={[styles.option, target === id && { borderColor: colors.accent, backgroundColor: colors.accentSoft }]}>
-            <Text style={[s.text, target === id && { color: colors.accentText, fontWeight: '600' }]} numberOfLines={1}>
-              {l}
-            </Text>
-          </Pressable>
-        ))}
+        {shown.map(([id, l]) => {
+          const on = picked.includes(id);
+          return (
+            <Pressable key={id} onPress={() => toggle(id)} style={[styles.option, on && { borderColor: colors.accent, backgroundColor: colors.accentSoft }]}>
+              <Text style={[s.text, on && { color: colors.accentText, fontWeight: '600' }]} numberOfLines={1}>
+                {on ? '✓ ' : ''}
+                {l}
+              </Text>
+            </Pressable>
+          );
+        })}
       </View>
-      <Choice value={allow} onChange={(v) => setAllow(v ?? defaultAllow)} inherit={defaultAllow ? 'Allow' : 'Block'} />
-      <Button variant="primary" title={allow ? 'Allow' : 'Block'} disabled={!target} onPress={() => void onAdd(scope, target, allow)} />
+      {!choosingGroup && (
+        <>
+          <Choice value={allow} onChange={(v) => setAllow(v ?? defaultAllow)} inherit={defaultAllow ? 'Allow' : 'Block'} />
+          <Button
+            variant="primary"
+            title={`${allow ? 'Allow' : 'Block'}${picked.length > 1 ? ` for ${picked.length}` : ''}`}
+            disabled={!picked.length}
+            onPress={() => void add()}
+          />
+        </>
+      )}
     </View>
   );
 }
-
 /**
  * A group's own rights (group admins and company admins): for everyone in the group's chat, and for single members.
  * They only apply inside this group.

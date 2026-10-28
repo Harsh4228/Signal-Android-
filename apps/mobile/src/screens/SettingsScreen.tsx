@@ -5,7 +5,7 @@ import { AVATAR_MIMES, MAX_ABOUT, MAX_EMAIL, MAX_PHONE, MIN_PASSWORD_LENGTH, sho
 import { pickFile } from '../files';
 import { appLock, client, useClient, useLock } from '../messenger';
 import { resetPush } from '../push';
-import { colors, s } from '../theme';
+import { chooseTheme, colors, s, themeChoice, type ThemeChoice } from '../theme';
 import { Avatar, Banner, Button, Field, Header, Row, errorText } from '../ui';
 import type { Route } from '../App';
 
@@ -117,6 +117,8 @@ export function SettingsScreen({ navigate }: { navigate: (r: Route) => void }) {
   const lock = useLock();
   // Profiles are set by the admin; only admins (or anyone on a server without admins) edit their own.
   const canEditProfile = c.isAdmin || c.admins.length === 0;
+  // The profile photo: also with the admin's "Change own profile photo" permission.
+  const canEditPhoto = canEditProfile || c.can('profilePhoto');
   const [oldPw, setOldPw] = useState('');
   const [newPw, setNewPw] = useState('');
   const [newPw2, setNewPw2] = useState('');
@@ -174,13 +176,13 @@ export function SettingsScreen({ navigate }: { navigate: (r: Route) => void }) {
       <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40 }} keyboardShouldPersistTaps="handled">
         <View style={[s.card, s.row, { padding: 16, gap: 14 }]}>
           <Pressable
-            onPress={() => canEditProfile && photoOptions(!!c.account && !!c.avatarOf(c.account.username))}
-            disabled={!canEditProfile}
+            onPress={() => canEditPhoto && photoOptions(!!c.account && !!c.avatarOf(c.account.username))}
+            disabled={!canEditPhoto}
             accessibilityRole="button"
             accessibilityLabel="Change profile photo"
           >
             <Avatar name={c.account?.username ?? '?'} size={52} />
-            {canEditProfile && (
+            {canEditPhoto && (
             <View
               style={{
                 position: 'absolute',
@@ -206,7 +208,7 @@ export function SettingsScreen({ navigate }: { navigate: (r: Route) => void }) {
               @{c.account ? shortId(c.account.username) : ''}
               {c.company ? ` · ${c.company.name} (${c.company.code})` : ` · ${c.account?.serverUrl ?? ''}`}
             </Text>
-            {canEditProfile && (
+            {canEditPhoto && (
               <Text style={{ color: colors.accent, fontSize: 13, marginTop: 2 }}>
                 {c.account && c.avatarOf(c.account.username) ? 'Tap photo to change' : 'Tap to add a profile photo'}
               </Text>
@@ -228,6 +230,9 @@ export function SettingsScreen({ navigate }: { navigate: (r: Route) => void }) {
           />
         </View>
         <PrivacySettings />
+
+        <Text style={s.section}>Appearance</Text>
+        <ThemeSettings />
 
         {c.isSuper && (
           <>
@@ -377,6 +382,39 @@ function PrivacySettings() {
         save(() => client.setPrivacy({ hideLastSeen: v }), v ? 'Last seen hidden' : 'Last seen shown'),
       )}
       {msg && <Text style={[s.muted, { padding: 12, paddingTop: 0 }]}>{msg}</Text>}
+    </View>
+  );
+}
+/** Light, dark, or like the phone. Changing it restarts CellMate so every screen gets the new colours. */
+function ThemeSettings() {
+  const pick = (t: ThemeChoice) => {
+    if (t === themeChoice) return;
+    Alert.alert('Change appearance', 'CellMate restarts to use the new colours. Your chats stay.', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Restart',
+        // Chats are saved and backed up first, so nothing is lost by the restart.
+        onPress: () => void client.flushHistory().catch(() => {}).then(() => chooseTheme(t)).catch((e) => Alert.alert('Appearance', errorText(e))),
+      },
+    ]);
+  };
+  return (
+    <View style={[s.card, s.row, { padding: 4, gap: 4 }]}>
+      {(
+        [
+          ['system', 'Like phone'],
+          ['light', 'Light'],
+          ['dark', 'Dark'],
+        ] as [ThemeChoice, string][]
+      ).map(([t, label]) => (
+        <Pressable
+          key={t}
+          onPress={() => pick(t)}
+          style={{ flex: 1, alignItems: 'center', paddingVertical: 10, borderRadius: 10, backgroundColor: themeChoice === t ? colors.accentSoft : 'transparent' }}
+        >
+          <Text style={{ color: themeChoice === t ? colors.accentText : colors.text2, fontWeight: '600' }}>{label}</Text>
+        </Pressable>
+      ))}
     </View>
   );
 }
