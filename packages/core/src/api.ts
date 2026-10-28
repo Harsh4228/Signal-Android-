@@ -249,6 +249,10 @@ export interface GroupInfo {
   senders: string[] | null;
   /** Group admins: members who may change the group (name, members, who sends) and its rights. */
   admins?: string[];
+  /** 'channel' = one-way: anyone in the company may follow it, only its admins post. Missing = a normal group. */
+  kind?: 'group' | 'channel';
+  /** The community it belongs to (id), if any. */
+  community?: string;
   createdBy: string;
   createdAt: number;
 }
@@ -625,3 +629,22 @@ export interface Page<T> {
   next: number | null;
 }
 export const PAGE_SIZE = 50;
+// ---- communities: groups and channels the company admin puts together (e.g. a site or a project) ----
+
+export interface Community {
+  id: string;
+  name: string;
+  description: string;
+  /** Group / channel ids in it. */
+  groups: string[];
+}
+export const MAX_COMMUNITIES = 100;
+
+/** GET /v1/channels: every channel of my company, to follow or leave. */
+export interface ChannelInfo {
+  id: string;
+  name: string;
+  followers: number;
+  following: boolean;
+  community?: string;
+}

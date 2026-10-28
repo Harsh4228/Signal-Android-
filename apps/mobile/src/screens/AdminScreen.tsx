@@ -57,15 +57,17 @@ import { colors, mono, s } from '../theme';
 import { Avatar, Banner, Button, Field, Header, IconButton, Sheet, errorText, shortTime, useBack, type SheetAction } from '../ui';
 import type { Route } from '../App';
 import { HelpDeskTab } from './HelpDesk';
+import { CommunitiesTab } from './AdminCommunities';
 import { GroupRightsScreen, RightsTab } from './RightsScreen';
 
-type Tab = 'overview' | 'users' | 'departments' | 'groups' | 'rights' | 'helpdesk' | 'activity' | 'settings';
+type Tab = 'overview' | 'users' | 'departments' | 'groups' | 'communities' | 'rights' | 'helpdesk' | 'activity' | 'settings';
 type Toast = (m: string) => void;
 const TABS: [Tab, string][] = [
   ['overview', 'Overview'],
   ['users', 'Users'],
   ['departments', 'Departments'],
   ['groups', 'Groups'],
+  ['communities', 'Communities'],
   ['rights', 'Permissions'],
   ['helpdesk', 'Help desk'],
   ['activity', 'Activity'],
@@ -288,6 +290,7 @@ export function AdminScreen({ navigate, onToast }: { navigate: (r: Route) => voi
       )}
       {tab === 'departments' && <DepartmentsTab departments={departments} users={users} reload={reload} onToast={onToast} />}
       {tab === 'groups' && <GroupsTab groups={groups} users={users} reload={reload} onToast={onToast} openChat={openChat} />}
+      {tab === 'communities' && <CommunitiesTab groups={groups} onToast={onToast} />}
       {tab === 'rights' && <RightsTab users={users} groups={groups} departments={departments ?? []} onToast={onToast} />}
       {tab === 'helpdesk' && <HelpDeskTab users={users} departments={departments ?? []} onToast={onToast} />}
       {tab === 'activity' && <Activity />}
@@ -1029,6 +1032,8 @@ function GroupEditor({
   const [query, setQuery] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // New groups: a normal group, or a channel (anyone may follow it, only its admins post).
+  const [kind, setKind] = useState<'group' | 'channel'>(group?.kind === 'channel' ? 'channel' : 'group');
   const isAdminUser = (u: string) => users.some((x) => x.username === u && x.admin);
   // Admins can always send, so only the other members are offered as senders.
   const senderChoices = [...members].filter((u) => !isAdminUser(u)).sort();
@@ -1058,7 +1063,7 @@ function GroupEditor({
       onSaved(
         group
           ? await client.updateGroup(group.id, { name: name.trim(), members: list, senders: who, admins: [...groupAdmins].filter((u) => members.has(u)) })
-          : await client.createGroup(name.trim(), list, who, [...groupAdmins].filter((u) => members.has(u))),
+          : await client.createGroup(name.trim(), list, who, [...groupAdmins].filter((u) => members.has(u)), kind),
       );
     } catch (e) {
       setError(errorText(e));
@@ -1095,7 +1100,25 @@ function GroupEditor({
               style={{ flex: 1 }}
             />
           </View>
+          {!group && (
+            <>
+              <Text style={s.label}>Type</Text>
+              <Chips
+                items={[
+                  ['group', 'Group'],
+                  ['channel', 'Channel (anyone can follow)'],
+                ]}
+                value={kind}
+                onChange={(v) => setKind(v as 'group' | 'channel')}
+              />
+            </>
+          )}
+          {kind === 'channel' ? (
+            <Text style={[s.muted, { fontSize: 12 }]}>Only the group admins below (and company admins) post; followers read.</Text>
+          ) : (
           <Text style={s.label}>Who can send messages</Text>
+          )}
+          {kind === 'group' && (
           <Chips
             items={[
               ['all', 'All members'],
@@ -1104,7 +1127,8 @@ function GroupEditor({
             value={restrict ? 'some' : 'all'}
             onChange={(v) => setRestrict(v === 'some')}
           />
-          {restrict && (
+          )}
+          {restrict && kind === 'group' && (
             <View style={{ gap: 8 }}>
               <Text style={[s.muted, { fontSize: 12 }]}>
                 Tick who can send. Everyone else can only read. Admins can always send.

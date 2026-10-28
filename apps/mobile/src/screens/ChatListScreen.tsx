@@ -218,6 +218,7 @@ export function ChatListScreen({ navigate, onError }: { navigate: (r: Route) => 
                   { icon: Megaphone, label: 'New announcement', onPress: () => navigate({ name: 'broadcast' }) },
                 ]
               : []),
+            { icon: Megaphone, label: 'Channels & communities', onPress: () => navigate({ name: 'channels' }) },
             { icon: Star, label: 'Starred messages', onPress: () => navigate({ name: 'starred' }) },
             { icon: ShoppingBag, label: 'My catalog', onPress: () => navigate({ name: 'catalog' }) },
             { icon: Settings, label: 'Settings', onPress: () => navigate({ name: 'settings' }) },

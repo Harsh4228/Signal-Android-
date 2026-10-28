@@ -27,6 +27,7 @@ import { StatusComposeScreen, StatusScreen, StatusViewerScreen } from './screens
 import { CatalogScreen, StarredScreen } from './screens/ChatExtras';
 import { HelpDeskScreen } from './screens/HelpDesk';
 import { CallsScreen } from './screens/CallsScreen';
+import { ChannelsScreen } from './screens/ChannelsScreen';
 
 export type Route =
   | { name: 'list' }
@@ -46,7 +47,8 @@ export type Route =
   | { name: 'notice-new' }
   | { name: 'applock' }
   | { name: 'help' }
-  | { name: 'calls' };
+  | { name: 'calls' }
+  | { name: 'channels' };
 
 export default function App() {
   const c = useClient();
@@ -174,6 +176,8 @@ export default function App() {
     screen = <NewNoticeScreen navigate={setRoute} onDone={setToast} />;
   } else if (route.name === 'applock') {
     screen = <AppLockScreen navigate={setRoute} onToast={setToast} />;
+  } else if (route.name === 'channels') {
+    screen = <ChannelsScreen navigate={setRoute} onToast={setToast} />;
   } else if (route.name === 'calls') {
     screen = <CallsScreen navigate={setRoute} onError={setToast} />;
   } else if (route.name === 'help') {

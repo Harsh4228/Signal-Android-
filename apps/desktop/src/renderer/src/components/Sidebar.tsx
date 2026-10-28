@@ -12,6 +12,7 @@ import { Avatar, ChatAvatar, Logo, errorText, shortTime, typingText } from './ui
 import { Directory } from './Directory';
 import { HelpDeskModal } from './AdminRights';
 import { CallsPanel } from './CallsPanel';
+import { ChannelsPanel } from './Channels';
 
 export function Sidebar({ onSettings, onError }: { onSettings: () => void; onError: (m: string) => void }) {
   const c = useClient();
@@ -23,7 +24,7 @@ export function Sidebar({ onSettings, onError }: { onSettings: () => void; onErr
   const [showNotices, setShowNotices] = useState(false);
   const [showStatus, setShowStatus] = useState(false);
   const [more, setMore] = useState(false);
-  const [panel, setPanel] = useState<'starred' | 'catalog' | 'help' | 'calls' | null>(null);
+  const [panel, setPanel] = useState<'starred' | 'catalog' | 'help' | 'calls' | 'channels' | null>(null);
   const [archived, setArchived] = useState(false);
   /** Right-click menu of a chat: pin, archive, mute. */
   const [chatMenu, setChatMenu] = useState<{ key: string; x: number; y: number } | null>(null);
@@ -122,6 +123,9 @@ export function Sidebar({ onSettings, onError }: { onSettings: () => void; onErr
                   </button>
                 )}
                 {c.isAdmin && <hr />}
+                <button role="menuitem" disabled={offline} onClick={() => pick(() => setPanel('channels'))}>
+                  <Megaphone size={17} /> Channels & communities
+                </button>
                 <button role="menuitem" onClick={() => pick(() => setPanel('starred'))}>
                   <Star size={17} /> Starred messages
                 </button>
@@ -149,6 +153,7 @@ export function Sidebar({ onSettings, onError }: { onSettings: () => void; onErr
       {panel === 'starred' && <StarredPanel onClose={() => setPanel(null)} />}
       {panel === 'help' && <HelpDeskModal onClose={() => setPanel(null)} onToast={onError} />}
       {panel === 'calls' && <CallsPanel onClose={() => setPanel(null)} onError={onError} />}
+      {panel === 'channels' && <ChannelsPanel onClose={() => setPanel(null)} onToast={onError} />}
       {panel === 'catalog' && <CatalogPanel onClose={() => setPanel(null)} onToast={onError} />}
 
       {c.banned && (

@@ -39,6 +39,8 @@ import {
   type Feature,
   type HelpContact,
   type HelpContactInput,
+  type ChannelInfo,
+  type Community,
   type MyRights,
   type Page,
   type RightChange,
@@ -1170,6 +1172,32 @@ export class MessengerClient extends Emitter<Events> {
     return g;
   }
 
+  // ------------------------------------------------------------------ channels and communities
+
+  /** Every channel of my company (to follow or leave). */
+  async listChannels(): Promise<ChannelInfo[]> {
+    return (await this.http<{ channels: ChannelInfo[] }>('GET', '/v1/channels')).channels;
+  }
+
+  async followChannel(id: string, follow: boolean): Promise<void> {
+    await this.http('POST', `/v1/channels/${id}/follow`, { follow });
+    await this.loadGroups().catch(() => {});
+  }
+
+  /** Communities: groups and channels put together by the company admin. */
+  async listCommunities(): Promise<Community[]> {
+    return (await this.http<{ communities: Community[] }>('GET', '/v1/communities')).communities;
+  }
+
+  /** Company admin: replace the list of communities. */
+  async setCommunities(list: (Omit<Community, 'id'> & { id?: string })[]): Promise<Community[]> {
+    return (await this.http<{ communities: Community[] }>('PUT', '/v1/admin/communities', { communities: list })).communities;
+  }
+
+  isChannel(key: string): boolean {
+    return this.groupOf(key)?.kind === 'channel';
+  }
+
   // ------------------------------------------------------------------ help desk
 
   /** Whom to contact for what (the company admin keeps the list). */
@@ -1188,8 +1216,9 @@ export class MessengerClient extends Emitter<Events> {
   }
 
   /** `senders`: who may send (admins always may); null/omitted = every member. */
-  createGroup(name: string, members: string[], senders: string[] | null = null, admins: string[] = []): Promise<GroupInfo> {
-    return this.http<GroupInfo>('POST', '/v1/admin/groups', { name, members, senders, admins });
+  /** kind: 'channel': one-way, anyone in the company may follow it, only its admins post. */
+  createGroup(name: string, members: string[], senders: string[] | null = null, admins: string[] = [], kind: 'group' | 'channel' = 'group'): Promise<GroupInfo> {
+    return this.http<GroupInfo>('POST', '/v1/admin/groups', { name, members, senders, admins, kind });
   }
 
   /** `admins`: the group's own admins (members who may manage it). */
@@ -3540,6 +3569,7 @@ export const AUDIT_LABELS: Record<string, string> = {
   'settings.update': 'Changed settings',
   'rights.update': 'Changed permission',
   'helpdesk.update': 'Changed help desk',
+  'community.update': 'Changed communities',
   'user.admin_on': 'Made admin',
   'user.admin_off': 'Removed as admin',
 };

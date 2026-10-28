@@ -48,6 +48,9 @@ import {
   type RightChange,
   type RightRule,
   type Rights,
+  MAX_COMMUNITIES,
+  type ChannelInfo,
+  type Community,
   MAX_ABOUT,
   type PrivacyRequest,
   type CompanyInfo,
@@ -695,6 +698,31 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
   /** Groups of a company: those its admins made. */
   const companyGroups = async (company: string) => (await db.listGroups()).filter((g) => companyOf(g.created_by) === company);
 
+  // ---- channels and communities (JSON in meta, per company) ----
+  /** Which groups are channels: one-way, anyone may follow, only their admins post. */
+  async function channelIds(company: string): Promise<Set<string>> {
+    return new Set(parseList(await db.getMeta(metaKey('channels', company))));
+  }
+  async function getCommunities(company: string): Promise<Community[]> {
+    try {
+      const list = JSON.parse((await db.getMeta(metaKey('communities', company))) ?? '[]') as unknown;
+      return Array.isArray(list) ? (list as Community[]) : [];
+    } catch {
+      return [];
+    }
+  }
+  /** A group as apps see it: with whether it is a channel and which community it is in. */
+  async function infoOf(g: GroupRow, cache?: { channels: Set<string>; communities: Community[] }): Promise<GroupInfo> {
+    const co = companyOf(g.created_by);
+    const channels = cache?.channels ?? (await channelIds(co));
+    const communities = cache?.communities ?? (await getCommunities(co));
+    const community = communities.find((c) => c.groups.includes(g.id))?.id;
+    return { ...toGroupInfo(g), ...(channels.has(g.id) ? { kind: 'channel' as const } : {}), ...(community ? { community } : {}) };
+  }
+  async function infoCache(company: string) {
+    return { channels: await channelIds(company), communities: await getCommunities(company) };
+  }
+
   /** Group admins: a list of members ([] = none). */
   function checkGroupAdmins(v: unknown, members: string[]): string[] {
     if (v === undefined || v === null) return [];
@@ -713,9 +741,11 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
     const senders =
       body.senders !== undefined ? checkSenders(body.senders, finalMembers) : group.senders && group.senders.filter((u) => finalMembers.includes(u));
     const admins = body.admins !== undefined ? checkGroupAdmins(body.admins, finalMembers) : group.admins.filter((u) => finalMembers.includes(u));
+    // A channel: only its admins post (company admins always may).
+    const channel = (await channelIds(co)).has(group.id);
     // A group admin can't take the group away from themselves by mistake (a company admin can).
     if (!(await isAdminUser(me)) && !admins.includes(me)) throw new HttpError(400, 'You would no longer be able to manage this group');
-    await db.updateGroup(group.id, { name, members, senders, admins });
+    await db.updateGroup(group.id, { name, members, senders: channel ? admins : senders, admins });
     const details: string[] = [];
     if (name !== undefined && name !== group.name) details.push(`renamed from "${group.name}"`);
     if (members) {
@@ -730,7 +760,7 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
     if (JSON.stringify(admins) !== JSON.stringify(group.admins)) details.push(`group admins: ${admins.join(', ') || 'none'}`);
     await audit(me, 'group.update', name ?? group.name, details.join('; '));
     await notify([...new Set([...group.members, ...(members ?? [])])], 'groups');
-    return toGroupInfo((await db.getGroup(group.id))!);
+    return infoOf((await db.getGroup(group.id))!);
   }
 
   // ---- help desk contacts (JSON in meta, per company) ----
@@ -1348,7 +1378,10 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
     if (method === 'GET' && path === '/v1/groups') {
       // Members can only exchange messages with people who have logged in and are not suspended.
       const reachable = new Set((await companyUsers(companyOf(me))).filter((u) => isActive(u) && !u.banned).map((u) => u.username));
-      const groups = (await db.groupsOf(me)).map((g) => ({ ...toGroupInfo(g), members: g.members.filter((u) => reachable.has(u)) }));
+      const cache = await infoCache(companyOf(me));
+      const groups = await Promise.all(
+        (await db.groupsOf(me)).map(async (g) => ({ ...(await infoOf(g, cache)), members: g.members.filter((u) => reachable.has(u)) })),
+      );
       return send(200, { groups });
     }
 
@@ -1397,6 +1430,35 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
       return send(200, { contacts: await getHelpDesk(companyOf(me)) });
     }
 
+    // ---- channels: every channel of my company, to follow or leave; communities: how groups are put together ----
+    if (method === 'GET' && path === '/v1/channels') {
+      const co = companyOf(me);
+      const cache = await infoCache(co);
+      const channels: ChannelInfo[] = [];
+      for (const g of await companyGroups(co)) {
+        if (!cache.channels.has(g.id)) continue;
+        const info = await infoOf(g, cache);
+        channels.push({ id: g.id, name: g.name, followers: g.members.length, following: g.members.includes(me), ...(info.community ? { community: info.community } : {}) });
+      }
+      return send(200, { channels: channels.sort((a, b) => a.name.localeCompare(b.name)) });
+    }
+    if (method === 'POST' && (m = path.match(/^\/v1\/channels\/([0-9a-f]{16})\/follow$/))) {
+      const g = await db.getGroup(m[1]!);
+      if (!g || companyOf(g.created_by) !== companyOf(me) || !(await channelIds(companyOf(me))).has(g.id)) throw new HttpError(404, 'channel not found');
+      const follow = ((await readJson(req)) as { follow?: unknown }).follow;
+      if (typeof follow !== 'boolean') throw new HttpError(400, 'follow must be true or false');
+      if (follow && !g.members.includes(me)) {
+        if (g.members.length >= MAX_GROUP_MEMBERS) throw new HttpError(400, 'This channel is full');
+        await db.updateGroup(g.id, { members: [...g.members, me].sort() });
+      } else if (!follow && g.members.includes(me)) {
+        await db.updateGroup(g.id, { members: g.members.filter((u) => u !== me), admins: g.admins.filter((u) => u !== me), senders: (g.senders ?? []).filter((u) => u !== me) });
+      }
+      await notify([...new Set([...g.members, me])], 'groups');
+      return send(204);
+    }
+    if (method === 'GET' && path === '/v1/communities') {
+      return send(200, { communities: await getCommunities(companyOf(me)) });
+    }
     // ---- my chat history backup: ciphertext only (see HistoryBackup) ----
     if (path === '/v1/backup') {
       if (method === 'GET') {
@@ -1831,7 +1893,23 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
         };
         return send(200, page);
       }
-      if (method === 'PUT' && path === '/v1/admin/helpdesk') {
+      if (method === 'PUT' && path === '/v1/admin/communities') {
+        const raw = ((await readJson(req)) as { communities?: unknown }).communities;
+        if (!Array.isArray(raw) || raw.length > MAX_COMMUNITIES) throw new HttpError(400, `Up to ${MAX_COMMUNITIES} communities`);
+        const known = new Set((await companyGroups(co)).map((g) => g.id));
+        const list: Community[] = raw.map((c) => {
+          const x = (c ?? {}) as Record<string, unknown>;
+          const name = checkGroupName(x.name);
+          const description = typeof x.description === 'string' ? x.description.trim().slice(0, 300) : '';
+          const groups = Array.isArray(x.groups) ? [...new Set(x.groups.filter((g): g is string => typeof g === 'string' && known.has(g)))] : [];
+          const id = typeof x.id === 'string' && /^[0-9a-f]{16}$/.test(x.id) ? x.id : randomBytes(8).toString('hex');
+          return { id, name, description, groups };
+        });
+        await db.setMeta(metaKey('communities', co), JSON.stringify(list));
+        await audit(me, 'community.update', 'communities', list.map((c) => c.name).join(', ') || 'none');
+        await notify((await companyUsers(co)).map((u) => u.username), 'groups');
+        return send(200, { communities: list });
+      }      if (method === 'PUT' && path === '/v1/admin/helpdesk') {
         const contacts = checkHelpContacts(((await readJson(req)) as { contacts?: unknown }).contacts, co);
         await db.setMeta(metaKey('helpdesk', co), JSON.stringify(contacts));
         await audit(me, 'helpdesk.update', 'help desk', `${contacts.length} contacts`);
@@ -1864,20 +1942,24 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
 
       // ---- groups: only admins create them and decide who is in them ----
       if (method === 'GET' && path === '/v1/admin/groups') {
-        return send(200, { groups: (await companyGroups(co)).map(toGroupInfo) });
+        const cache = await infoCache(co);
+        return send(200, { groups: await Promise.all((await companyGroups(co)).map((g) => infoOf(g, cache))) });
       }
       if (method === 'POST' && path === '/v1/admin/groups') {
-        const body = (await readJson(req)) as { name?: unknown; members?: unknown; senders?: unknown; admins?: unknown };
+        const body = (await readJson(req)) as { name?: unknown; members?: unknown; senders?: unknown; admins?: unknown; kind?: unknown };
         const name = checkGroupName(body.name);
         const members = await existingMembers(checkMemberList(body.members ?? []), co);
-        const senders = checkSenders(body.senders, members);
         const admins = checkGroupAdmins(body.admins, members);
+        const channel = body.kind === 'channel';
+        // A channel: only its admins post.
+        const senders = channel ? admins : checkSenders(body.senders, members);
         const id = randomBytes(8).toString('hex');
         await db.createGroup({ id, name, createdBy: me, members, senders, admins });
+        if (channel) await db.setMeta(metaKey('channels', co), JSON.stringify([...(await channelIds(co)), id]));
         const who = senders ? `; only these can send: ${senders.join(', ') || 'admins'}` : '';
         await audit(me, 'group.create', name, `members: ${members.join(', ') || 'none'}${who}`);
         await notify(members, 'groups');
-        return send(200, toGroupInfo((await db.getGroup(id))!));
+        return send(200, await infoOf((await db.getGroup(id))!));
       }
       if ((m = path.match(/^\/v1\/admin\/groups\/([0-9a-f]+)$/)) && GROUP_ID_RE.test(m[1]!)) {
         const group = await db.getGroup(m[1]!);

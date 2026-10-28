@@ -55,8 +55,9 @@ import {
 import { client, useClient } from '../messenger';
 import { Avatar, errorText, shortTime } from './ui';
 import { HelpDeskTab, RightsTab } from './AdminRights';
+import { CommunitiesTab } from './Channels';
 
-type Tab = 'overview' | 'users' | 'departments' | 'groups' | 'rights' | 'helpdesk' | 'activity' | 'settings';
+type Tab = 'overview' | 'users' | 'departments' | 'groups' | 'communities' | 'rights' | 'helpdesk' | 'activity' | 'settings';
 /** A QR invite to show: for a new user, or a new one for someone who already exists. */
 type Share = { invite: InviteResponse; name: string; email?: string; renewed: boolean };
 type Toast = (m: string) => void;
@@ -66,6 +67,7 @@ const TABS: [Tab, string, typeof Users][] = [
   ['users', 'Users', Users],
   ['departments', 'Departments', Building2],
   ['groups', 'Groups', UsersRound],
+  ['communities', 'Communities', Building2],
   ['rights', 'Permissions', KeyRound],
   ['helpdesk', 'Help desk', LifeBuoy],
   ['activity', 'Activity log', ScrollText],
@@ -146,6 +148,7 @@ export function AdminPanel({ onClose, onToast }: { onClose: () => void; onToast:
           {tab === 'groups' && (
             <GroupsTab groups={groups} users={users} reload={reload} onToast={onToast} openChat={openChat} />
           )}
+          {tab === 'communities' && <CommunitiesTab groups={groups} onToast={onToast} />}
           {tab === 'rights' && <RightsTab users={users} groups={groups} departments={departments ?? []} onToast={onToast} />}
           {tab === 'helpdesk' && <HelpDeskTab users={users} departments={departments ?? []} onToast={onToast} />}
           {tab === 'activity' && <Activity />}
@@ -1093,6 +1096,8 @@ function GroupEditor({
   const [senders, setSenders] = useState<Set<string>>(() => new Set(group?.senders ?? []));
   // Group admins: members who may manage the group themselves (members, who sends, its permissions).
   const [groupAdmins, setGroupAdmins] = useState<Set<string>>(() => new Set(group?.admins ?? []));
+  // New groups: a normal group, or a channel (anyone may follow it, only its admins post).
+  const [kind, setKind] = useState<'group' | 'channel'>(group?.kind === 'channel' ? 'channel' : 'group');
   const [query, setQuery] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1125,7 +1130,7 @@ function GroupEditor({
       const who = restrict ? [...senders].filter((u) => members.has(u)) : null;
       const g = group
         ? await client.updateGroup(group.id, { name: name.trim(), members: list, senders: who, admins: [...groupAdmins].filter((u) => members.has(u)) })
-        : await client.createGroup(name.trim(), list, who, [...groupAdmins].filter((u) => members.has(u)));
+        : await client.createGroup(name.trim(), list, who, [...groupAdmins].filter((u) => members.has(u)), kind);
       onSaved(g);
     } catch (err) {
       setError(errorText(err));
@@ -1163,6 +1168,16 @@ function GroupEditor({
           </li>
         ))}
       </ul>
+      {!group && (
+        <div className="chips" style={{ margin: '4px 0 0' }}>
+          <button type="button" className={kind === 'group' ? 'active' : ''} onClick={() => setKind('group')}>
+            {kind === 'group' && <Check size={13} />} Group
+          </button>
+          <button type="button" className={kind === 'channel' ? 'active' : ''} onClick={() => setKind('channel')}>
+            {kind === 'channel' && <Check size={13} />} Channel (anyone can follow, admins post)
+          </button>
+        </div>
+      )}
       <div className="section-title" style={{ marginBottom: 0 }}>
         Who can send messages
       </div>
