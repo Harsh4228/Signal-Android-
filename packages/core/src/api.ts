@@ -453,6 +453,23 @@ export type Payload =
       /** View once: the photo / video can be opened one time, then it is gone (never saved). */
       vo?: boolean;
     }
+  /**
+   * Group call signalling (mesh: everyone connects to everyone). invite = rings the members; join / leave = I came in /
+   * went; offer / answer / ice = one connection between two participants; media = my mute / camera.
+   */
+  | {
+      k: 'gcall';
+      callId: string;
+      g: string;
+      action: 'invite' | 'join' | 'leave' | 'offer' | 'answer' | 'ice' | 'decline' | 'media';
+      video?: boolean;
+      sdp?: string;
+      candidate?: { candidate: string; sdpMid: string | null; sdpMLineIndex: number | null };
+      /** Who is in the call (invite / join), so a newcomer connects to all of them. */
+      members?: string[];
+      muted?: boolean;
+      cameraOff?: boolean;
+    }
   /** I opened view-once message `id` (goes back to its sender). */
   | { k: 'opened'; id: string; g?: string }
   /** My reaction to message `id` ('' = removed). One per person, like WhatsApp. */
@@ -629,6 +646,8 @@ export interface Page<T> {
   next: number | null;
 }
 export const PAGE_SIZE = 50;
+/** Most people in one group call (everyone sends their video to everyone). */
+export const MAX_GROUP_CALL = 8;
 // ---- communities: groups and channels the company admin puts together (e.g. a site or a project) ----
 
 export interface Community {

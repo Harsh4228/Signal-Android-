@@ -66,3 +66,10 @@ export function updateRinger(s: CallState) {
   else if (s.status === 'outgoing') start('ringback');
   else stop();
 }
+
+
+/** A group call invite rings like a call (unless a 1:1 call is ringing / running). */
+export function updateGroupRinger(status: string, oneToOneIdle: boolean) {
+  if (status === 'ringing') start('ringtone');
+  else if (oneToOneIdle && playing === 'ringtone') stop();
+}

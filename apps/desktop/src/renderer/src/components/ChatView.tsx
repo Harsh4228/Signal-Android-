@@ -57,7 +57,7 @@ const PAGE = 150;
 
 /** A short read-only message box (message info). */
 const alertInfo = (text: string) => alert(text);
-import { calls, client, useClient } from '../messenger';
+import { calls, client, groupCalls, useClient, useGroupCall } from '../messenger';
 import { ChatInfo } from './ChatInfo';
 import { AttachmentView } from './AttachmentView';
 import { EventView, NewEvent, NewPoll, PollView } from './PollEvent';
@@ -256,9 +256,12 @@ export function ChatView({ peer, onError }: { peer: string; onError: (m: string)
     }
   }
 
+  /** In a group: a group call (rings everyone); otherwise a 1:1 call. */
   function call(video: boolean) {
-    calls.startCall(peer, video).catch((err) => onError(errorText(err)));
+    (group ? groupCalls.start(peer, video) : calls.startCall(peer, video)).catch((err) => onError(errorText(err)));
   }
+  useGroupCall();
+  const ongoing = group ? groupCalls.ongoingIn(peer) : null;
 
   const typing = typingText(c.getTyping(peer), group);
   // Typing "@" in a group suggests members to mention.
@@ -323,7 +326,7 @@ export function ChatView({ peer, onError }: { peer: string; onError: (m: string)
           </div>
         </button>
         <div className="actions">
-          {!group && (
+          {!gone && !c.isChannel(peer) && (
             <>
               {c.can('voiceCall', peer) && (
                 <button className="icon" title="Voice call" disabled={!online} onClick={() => call(false)}>
@@ -352,6 +355,15 @@ export function ChatView({ peer, onError }: { peer: string; onError: (m: string)
           </button>
         </div>
       </header>
+      {ongoing && (
+        <button className="call-ongoing" onClick={() => void groupCalls.joinOngoing(peer).catch((e) => onError(errorText(e)))}>
+          {ongoing.video ? <Video size={16} /> : <Phone size={16} />}
+          <span className="grow" style={{ textAlign: 'left' }}>
+            Call in progress · {ongoing.members.map((u) => c.displayName(u)).join(', ')}
+          </span>
+          Join
+        </button>
+      )}
       {searching && (
         <div className="chat-search">
           <div className="search">

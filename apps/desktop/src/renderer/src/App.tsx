@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
 import { Hourglass, Info, LockKeyhole } from 'lucide-react';
-import { appLock, client, useCall, useClient, useLock } from './messenger';
+import { appLock, client, useCall, useClient, useGroupCall, useLock } from './messenger';
 import { Register } from './components/Register';
 import { Sidebar } from './components/Sidebar';
 import { ChatView } from './components/ChatView';
 import { CallView } from './components/CallView';
+import { GroupCallView } from './components/GroupCallView';
 import { Settings } from './components/Settings';
 import { LockScreen } from './components/LockScreen';
 import { NoticePopup } from './components/Notices';
@@ -72,6 +73,7 @@ function useAutoLock() {
 export function App() {
   const c = useClient();
   const call = useCall();
+  const groupCall = useGroupCall();
   const lock = useLock();
   const [ready, setReady] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
@@ -159,6 +161,7 @@ export function App() {
         </div>
       )}
       {call.status !== 'idle' && <CallView />}
+      {groupCall.status !== 'idle' && <GroupCallView />}
       {showSettings && <Settings onClose={() => setShowSettings(false)} onToast={setToast} />}
       {toast && (
         <div className="toast" onClick={() => setToast(null)}>

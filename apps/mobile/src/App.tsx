@@ -3,7 +3,7 @@ import { ActivityIndicator, AppState, BackHandler, KeyboardAvoidingView, StatusB
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { CaptureEventType, CaptureProtection } from 'react-native-capture-protection';
 import { Info } from 'lucide-react-native';
-import { appLock, client, startClient, useCall, useClient, useLock } from './messenger';
+import { appLock, client, startClient, useCall, useClient, useGroupCall, useLock } from './messenger';
 import { setupCallNotifications } from './callNotify';
 import { colors, isDark, s } from './theme';
 import { Logo } from './ui';
@@ -16,6 +16,7 @@ import { ChatInfoScreen } from './screens/ChatInfoScreen';
 import { SettingsScreen } from './screens/SettingsScreen';
 import { PendingScreen } from './screens/PendingScreen';
 import { CallBar, CallScreen } from './screens/CallScreen';
+import { GroupCallBar, GroupCallScreen } from './screens/GroupCallScreen';
 import { BroadcastScreen } from './screens/BroadcastScreen';
 import { MediaViewerHost } from './screens/AttachmentView';
 import { AdminScreen } from './screens/AdminScreen';
@@ -59,6 +60,11 @@ export default function App() {
   const [toast, setToast] = useState<string | null>(null);
   /** The call screen is minimised (back to the chats while the call goes on). A new call always shows it again. */
   const [callHidden, setCallHidden] = useState(false);
+  const groupCall = useGroupCall();
+  const [groupHidden, setGroupHidden] = useState(false);
+  useEffect(() => {
+    if (groupCall.status === 'idle' || groupCall.status === 'ringing') setGroupHidden(false);
+  }, [groupCall.status]);
   useEffect(() => {
     if (call.status === 'idle' || call.status === 'incoming') setCallHidden(false);
   }, [call.status]);
@@ -125,6 +131,7 @@ export default function App() {
   useEffect(() => {
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
       if (call.status !== 'idle' && !callHidden) setCallHidden(true);
+      else if (groupCall.status !== 'idle' && !groupHidden) setGroupHidden(true);
       else if (route.name === 'info') setRoute({ name: 'chat', peer: route.peer });
       else if (route.name === 'media') setRoute({ name: 'info', peer: route.peer });
       else if (route.name === 'notice-new') setRoute({ name: 'notices' });
@@ -134,7 +141,7 @@ export default function App() {
       return true;
     });
     return () => sub.remove();
-  }, [route, call.status, callHidden]);
+  }, [route, call.status, callHidden, groupCall.status, groupHidden]);
 
   let screen;
   if (!ready) {
@@ -194,6 +201,7 @@ export default function App() {
       <SafeAreaView style={[s.fill, { backgroundColor: colors.surface }]} edges={['top', 'bottom']}>
         {/* Android draws edge-to-edge, so the window no longer shrinks for the keyboard: lift the screen ourselves. */}
         {call.status !== 'idle' && callHidden && !lock.locked && <CallBar onPress={() => setCallHidden(false)} />}
+        {groupCall.status !== 'idle' && groupHidden && !lock.locked && <GroupCallBar onPress={() => setGroupHidden(false)} />}
         <KeyboardAvoidingView style={s.fill} behavior="padding">
           {screen}
         </KeyboardAvoidingView>
@@ -202,6 +210,7 @@ export default function App() {
         {ready && c.account && lock.locked && <LockScreen />}
         {/* Above the lock screen, like WhatsApp: a call can be answered without unlocking the app first. */}
         {call.status !== 'idle' && !callHidden && <CallScreen onMinimize={() => setCallHidden(true)} />}
+        {groupCall.status !== 'idle' && !groupHidden && <GroupCallScreen onMinimize={() => setGroupHidden(true)} />}
         {toast && (
           <View
             style={{

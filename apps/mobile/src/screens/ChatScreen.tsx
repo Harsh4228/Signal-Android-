@@ -59,7 +59,7 @@ import { copyText, saveToDevice } from '../deviceFiles';
 import { AttachmentView } from './AttachmentView';
 import { MessageText, ViewOnceBubble, ViewOnceViewer } from './MessageText';
 import { EventView, NewEvent, NewPoll, PollView } from './PollEvent';
-import { calls, client, useClient } from '../messenger';
+import { calls, client, groupCalls, useClient, useGroupCall } from '../messenger';
 import { colors, s } from '../theme';
 import { ChatAvatar, Header, IconButton, Sheet, clock, errorText, typingText, useBack, type SheetAction } from '../ui';
 import type { Route } from '../App';
@@ -227,7 +227,10 @@ export function ChatScreen({
     return list;
   }
 
-  const call = (video: boolean) => calls.startCall(peer, video).catch((e) => onError(errorText(e)));
+  // In a group: a group call (rings everyone); otherwise a 1:1 call.
+  const call = (video: boolean) => (group ? groupCalls.start(peer, video) : calls.startCall(peer, video)).catch((e) => onError(errorText(e)));
+  useGroupCall();
+  const ongoing = group ? groupCalls.ongoingIn(peer) : null;
   const canSend = !!text.trim() && online && !gone;
   // Typing "@" in a group suggests members to mention.
   const mentionQuery = group ? /(?:^|\s)@([^\s@]*)$/.exec(text)?.[1]?.toLowerCase() : undefined;
@@ -280,12 +283,21 @@ export function ChatScreen({
         }
         right={
           <>
-            {!group && c.can('voiceCall', peer) && <IconButton icon={Phone} label="Voice call" disabled={!online} onPress={() => call(false)} />}
-            {!group && c.can('videoCall', peer) && <IconButton icon={Video} label="Video call" disabled={!online} onPress={() => call(true)} />}
+            {c.can('voiceCall', peer) && !gone && !c.isChannel(peer) && <IconButton icon={Phone} label="Voice call" disabled={!online} onPress={() => call(false)} />}
+            {c.can('videoCall', peer) && !gone && !c.isChannel(peer) && <IconButton icon={Video} label="Video call" disabled={!online} onPress={() => call(true)} />}
             <IconButton icon={Search} label="Search in chat" onPress={() => (setSearching(!searching), setQuery(''))} />
           </>
         }
       />
+      {ongoing && (
+        <Pressable onPress={() => void groupCalls.joinOngoing(peer).catch((e) => onError(errorText(e)))} style={styles.ongoing}>
+          {ongoing.video ? <Video size={16} color="#fff" /> : <Phone size={16} color="#fff" />}
+          <Text style={{ color: '#fff', fontWeight: '600', flex: 1 }} numberOfLines={1}>
+            Call in progress · {ongoing.members.map((u) => c.displayName(u)).join(', ')}
+          </Text>
+          <Text style={{ color: '#fff', fontWeight: '700' }}>Join</Text>
+        </Pressable>
+      )}
       {searching && (
         <View style={{ backgroundColor: colors.surface, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.lineStrong }}>
           <View style={[s.row, { gap: 8, margin: 8, paddingHorizontal: 12, borderRadius: 10, backgroundColor: colors.bg, minHeight: 42 }]}>
@@ -570,6 +582,7 @@ function CallIcon({ c }: { c: CallLog }) {
 }
 
 const styles = StyleSheet.create({
+  ongoing: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 16, paddingVertical: 10, backgroundColor: '#00a884' },
   mentions: {
     backgroundColor: colors.surface,
     borderTopWidth: StyleSheet.hairlineWidth,

@@ -1,8 +1,8 @@
 import { useEffect, useReducer } from 'react';
-import { AppLock, CallManager, MessengerClient, type CallState } from '@meetme/core';
+import { AppLock, CallManager, GroupCallManager, MessengerClient, type CallState, type GroupCallState } from '@meetme/core';
 import { browserStore } from './browserStore';
 import { keepStorage, webBlobs, webStore } from './webStore';
-import { updateRinger } from './ringer';
+import { updateGroupRinger, updateRinger } from './ringer';
 
 // In a browser there is no Electron preload: the web app (iPhone: Add to Home Screen) keeps its data encrypted in
 // IndexedDB; the dev page (`npm run web`) uses a per-tab store so each tab can be another user.
@@ -29,6 +29,20 @@ export const calls = new CallManager(client, {
   getUserMedia: (c) => navigator.mediaDevices.getUserMedia(c as MediaStreamConstraints),
 });
 calls.on('change', updateRinger);
+
+/** Group calls (everyone connected to everyone); never at the same time as a 1:1 call. */
+export const groupCalls = new GroupCallManager(
+  client,
+  { RTCPeerConnection: window.RTCPeerConnection, getUserMedia: (c) => navigator.mediaDevices.getUserMedia(c as MediaStreamConstraints) },
+  () => calls.state.status !== 'idle',
+);
+groupCalls.on('change', (s) => updateGroupRinger(s.status, calls.state.status === 'idle'));
+
+export function useGroupCall(): GroupCallState {
+  const [, bump] = useReducer((n: number) => n + 1, 0);
+  useEffect(() => groupCalls.on('change', bump), []);
+  return groupCalls.state;
+}
 
 /** Re-render whenever the client state changes. */
 export function useClient(): MessengerClient {

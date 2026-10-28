@@ -115,6 +115,7 @@ import { ProtocolStore, type Account, type SecureStorage } from './store';
 
 export type ConnectionStatus = 'offline' | 'connecting' | 'online';
 export type CallSignal = Extract<Payload, { k: 'call' }>;
+export type GroupCallSignal = Extract<Payload, { k: 'gcall' }>;
 
 export interface ChatMessage {
   id: string;
@@ -489,6 +490,7 @@ type Events = {
   /** A new notice arrived (it is also in pendingNotices() until OK is clicked). */
   notice: [Notice];
   callSignal: [string, CallSignal];
+  groupCallSignal: [string, GroupCallSignal];
   identityChanged: [string];
   error: [string];
 };
@@ -1839,6 +1841,13 @@ export class MessengerClient extends Emitter<Events> {
         this.addContactLocal(from);
         this.emit('callSignal', from, p);
         break;
+      case 'gcall': {
+        // Only from someone the server lists in that group.
+        if (typeof p.callId !== 'string' || p.callId.length > 64) return;
+        const key = await this.chatKeyFor(from, p.g);
+        if (key) this.emit('groupCallSignal', from, p);
+        break;
+      }
     }
   }
 
@@ -1864,7 +1873,7 @@ export class MessengerClient extends Emitter<Events> {
     const push: PushKind | undefined =
       payload.k === 'text' || payload.k === 'notice' || payload.k === 'poll' || payload.k === 'event'
         ? 'message'
-        : payload.k === 'call' && payload.action === 'offer' ? 'call' : undefined;
+        : (payload.k === 'call' && payload.action === 'offer') || (payload.k === 'gcall' && payload.action === 'invite') ? 'call' : undefined;
     if (await this.trySealedSend(peer, body, push)) {
       if (msgId) this.setMsgStatus(peer, msgId, 'sent');
       return;
@@ -2566,7 +2575,7 @@ export class MessengerClient extends Emitter<Events> {
     return this.store.setSetting('statuses', this.statuses);
   }
 
-  sendCallSignal(peer: string, signal: CallSignal): Promise<void> {
+  sendCallSignal(peer: string, signal: CallSignal | GroupCallSignal): Promise<void> {
     return this.sendPayload(peer, signal);
   }
 

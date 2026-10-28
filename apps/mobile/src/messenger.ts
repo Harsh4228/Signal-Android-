@@ -2,7 +2,7 @@ import { useEffect, useReducer } from 'react';
 import { AppState, NativeModules, PermissionsAndroid, Platform, type Permission } from 'react-native';
 import { mediaDevices, RTCPeerConnection } from 'react-native-webrtc';
 import InCallManager from 'react-native-incall-manager';
-import { AppLock, CallManager, MessengerClient, derivePin, fromBase64, toBase64, type CallState, type PinDerive } from '@meetme/core';
+import { AppLock, CallManager, GroupCallManager, MessengerClient, derivePin, fromBase64, toBase64, type CallState, type GroupCallState, type PinDerive } from '@meetme/core';
 import { keychainStorage } from './storage';
 import { mediaFiles } from './mediaFiles';
 
@@ -53,6 +53,46 @@ export const calls = new CallManager(client, {
     return mediaDevices.getUserMedia(constraints as never);
   },
 });
+
+const webrtc = {
+  RTCPeerConnection: RTCPeerConnection as unknown as new (config: unknown) => unknown,
+  async getUserMedia(constraints: { audio: boolean; video: boolean | object }) {
+    await ensureMediaPermissions(!!constraints.video);
+    return mediaDevices.getUserMedia(constraints as never);
+  },
+};
+
+/** Group calls (everyone connected to everyone); a 1:1 call and a group call never run at the same time. */
+export const groupCalls = new GroupCallManager(client, webrtc, () => calls.state.status !== 'idle');
+
+/** Ring for a group call invite, speaker on while in one. */
+let groupRinging = false;
+let groupAudio = false;
+groupCalls.on('change', (s) => {
+  const inApp = AppState.currentState === 'active';
+  if (s.status === 'ringing' && inApp && !groupRinging) {
+    InCallManager.startRingtone('_DEFAULT_', [0, 800, 1200], 'playback', 45);
+    groupRinging = true;
+  } else if (s.status !== 'ringing' && groupRinging) {
+    InCallManager.stopRingtone();
+    groupRinging = false;
+  }
+  if (s.status === 'active' && !groupAudio) {
+    InCallManager.start({ media: s.video ? 'video' : 'audio' });
+    groupAudio = true;
+    setSpeaker(true);
+  } else if (s.status === 'idle' && groupAudio) {
+    InCallManager.stop();
+    groupAudio = false;
+    setSpeaker(false);
+  }
+});
+
+export function useGroupCall(): GroupCallState {
+  const [, bump] = useReducer((n: number) => n + 1, 0);
+  useEffect(() => groupCalls.on('change', bump), []);
+  return groupCalls.state;
+}
 
 // Route audio properly (earpiece vs speaker, proximity sensor, keep screen on) during calls.
 let audioActive = false;
