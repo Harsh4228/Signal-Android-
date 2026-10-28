@@ -204,6 +204,12 @@ export interface Db {
   getBackup(username: string): Promise<BackupRow | undefined>;
   putBackup(username: string, data: string): Promise<void>;
   deleteBackup(username: string): Promise<void>;
+  /** Live backup: small encrypted changes since the last full backup (oldest first). */
+  addBackupOp(username: string, data: string): Promise<number>;
+  listBackupOps(username: string, after: number, limit: number): Promise<{ id: number; data: string }[]>;
+  countBackupOps(username: string): Promise<number>;
+  /** The full backup now holds everything up to this op: drop those. */
+  pruneBackupOps(username: string, upTo: number): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -272,6 +278,13 @@ export function openSqlite(file: string): Db {
       data       TEXT NOT NULL,
       updated_at INTEGER NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS backup_ops (
+      id       INTEGER PRIMARY KEY AUTOINCREMENT,
+      username TEXT NOT NULL REFERENCES users(username) ON DELETE CASCADE,
+      data     TEXT NOT NULL,
+      ts       INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS backup_ops_user ON backup_ops(username, id);
     CREATE TABLE IF NOT EXISTS audit_log (
       id     INTEGER PRIMARY KEY AUTOINCREMENT,
       ts     INTEGER NOT NULL,
@@ -415,6 +428,11 @@ export function openSqlite(file: string): Db {
       'INSERT INTO backups (username, data, updated_at) VALUES (?, ?, ?) ON CONFLICT(username) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at',
     ),
     deleteBackup: db.prepare('DELETE FROM backups WHERE username = ?'),
+    addOp: db.prepare('INSERT INTO backup_ops (username, data, ts) VALUES (?, ?, ?)'),
+    listOps: db.prepare('SELECT id, data FROM backup_ops WHERE username = ? AND id > ? ORDER BY id LIMIT ?'),
+    countOps: db.prepare('SELECT COUNT(*) AS n FROM backup_ops WHERE username = ?'),
+    pruneOps: db.prepare('DELETE FROM backup_ops WHERE username = ? AND id <= ?'),
+    deleteOps: db.prepare('DELETE FROM backup_ops WHERE username = ?'),
   };
 
   type GroupBase = Omit<GroupRow, 'members' | 'senders' | 'admins'> & { senders: string | null; admins: string | null };
@@ -621,6 +639,14 @@ export function openSqlite(file: string): Db {
     },
     async deleteBackup(username) {
       q.deleteBackup.run(username);
+      q.deleteOps.run(username);
+    },
+    addBackupOp: async (username, data) => Number(q.addOp.run(username, data, Date.now()).lastInsertRowid),
+    listBackupOps: async (username, after, limit) =>
+      (q.listOps.all(username, after, limit) as { id: number; data: string }[]).map((r) => ({ id: Number(r.id), data: r.data })),
+    countBackupOps: async (username) => Number((q.countOps.get(username) as { n: number }).n),
+    async pruneBackupOps(username, upTo) {
+      q.pruneOps.run(username, upTo);
     },
     async close() {
       db.close();

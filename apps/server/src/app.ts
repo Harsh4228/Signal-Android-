@@ -36,6 +36,8 @@ import {
   ALL_RIGHTS,
   FEATURE_KEYS,
   MAX_BACKUP_CHARS,
+  MAX_BACKUP_OP,
+  MAX_BACKUP_OPS,
   MAX_HELP_CONTACTS,
   MAX_HELP_FIELD,
   PAGE_SIZE,
@@ -842,6 +844,7 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
   const attachmentFile = (id: string) => join(attachmentsDir, `${id}.bin`);
   const uploadLimit = new RateLimiter(120, 3600_000);
   const backupLimit = new RateLimiter(60, 3600_000);
+  const backupOpLimit = new RateLimiter(3000, 3600_000);
 
   function iceConfig(username: string): IceConfigResponse {
     const iceServers: IceConfigResponse['iceServers'] = [];
@@ -1465,6 +1468,24 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
     if (method === 'GET' && path === '/v1/communities') {
       return send(200, { communities: await getCommunities(companyOf(me)) });
     }
+    // ---- live backup: each change as a small encrypted record, until the next full backup takes them in ----
+    if (path === '/v1/backup/ops') {
+      if (method === 'POST') {
+        if (!backupOpLimit.allow(me)) throw new HttpError(429, 'too many backup changes');
+        const data = ((await readJson(req, MAX_BACKUP_OP + 1024)) as { data?: unknown }).data;
+        if (typeof data !== 'string' || !data || data.length > MAX_BACKUP_OP || !/^[A-Za-z0-9+/]*={0,2}$/.test(data)) {
+          throw new HttpError(400, 'invalid backup change');
+        }
+        // Too many since the last full backup: the app sends a full one instead (409).
+        if ((await db.countBackupOps(me)) >= MAX_BACKUP_OPS) throw new HttpError(409, 'full backup needed');
+        return send(200, { id: await db.addBackupOp(me, data) });
+      }
+      if (method === 'GET') {
+        const after = Math.max(0, Number(url.searchParams.get('after')) || 0);
+        const ops = await db.listBackupOps(me, after, 500);
+        return send(200, { ops, next: ops.length === 500 ? ops[ops.length - 1]!.id : null });
+      }
+    }
     // ---- my chat history backup: ciphertext only (see HistoryBackup) ----
     if (path === '/v1/backup') {
       if (method === 'GET') {
@@ -1484,8 +1505,11 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
         }
         const b64 = (v: unknown) => typeof v === 'string' && /^[A-Za-z0-9+/]*={0,2}$/.test(v);
         if (!b64(b.data) || !b64(b.wrap) || !b64(b.salt) || !Number.isInteger(b.v)) throw new HttpError(400, 'invalid backup');
-        const clean: HistoryBackup = { data: b.data!, wrap: b.wrap!, salt: b.salt!, v: b.v!, updatedAt: Date.now() };
+        const upTo = Number.isInteger(b.upTo) && b.upTo! > 0 ? b.upTo! : 0;
+        const clean: HistoryBackup = { data: b.data!, wrap: b.wrap!, salt: b.salt!, v: b.v!, updatedAt: Date.now(), ...(upTo ? { upTo } : {}) };
         await db.putBackup(me, JSON.stringify(clean));
+        // The full backup holds every change up to upTo: those records are no longer needed.
+        if (upTo) await db.pruneBackupOps(me, upTo);
         return send(200, { updatedAt: clean.updatedAt });
       }
       if (method === 'DELETE') {

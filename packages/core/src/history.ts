@@ -37,7 +37,7 @@ export interface BackupKeys {
 }
 
 /** A copy of a message without file bytes, typing state or anything that only makes sense in memory. */
-function storable(m: ChatMessage): ChatMessage {
+export function storable(m: ChatMessage): ChatMessage {
   const copy: ChatMessage = { ...m };
   if (m.attachment) {
     const { data: _drop, ...rest } = m.attachment;
@@ -143,4 +143,55 @@ export function openBackup(b: Pick<HistoryBackup, 'data'>, key: Uint8Array): His
   } catch {
     return null;
   }
+}
+
+// ---- live backup: small changes between full backups ----
+
+/**
+ * One live change, sealed with the backup key like the full backup: messages added or changed, removed, chats
+ * cleared, and the small lists that changed (contacts, pins / archives / mutes, starred, notices).
+ */
+export interface HistoryOp {
+  up?: { chat: string; m: ChatMessage }[];
+  del?: { chat: string; id: string }[];
+  clear?: string[];
+  contacts?: string[];
+  prefs?: Record<string, ChatPrefs>;
+  starred?: StarredMessage[];
+  notices?: Notice[];
+}
+
+export function sealOp(op: HistoryOp, keys: BackupKeys): string {
+  return toBase64(sealWithKey(fromBase64(keys.key), utf8(JSON.stringify(op))));
+}
+
+export function openOp(data: string, key: Uint8Array): HistoryOp | null {
+  try {
+    const op = JSON.parse(fromUtf8(openWithKey(key, fromBase64(data)))) as HistoryOp;
+    return op && typeof op === 'object' ? op : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Applies live changes (oldest first) to a snapshot from the full backup. */
+export function applyOps(snap: HistorySnapshot, ops: HistoryOp[]): HistorySnapshot {
+  const chats: Record<string, ChatMessage[]> = { ...snap.chats };
+  for (const op of ops) {
+    for (const key of op.clear ?? []) delete chats[key];
+    for (const d of op.del ?? []) chats[d.chat] = (chats[d.chat] ?? []).filter((m) => m.id !== d.id);
+    for (const u of op.up ?? []) {
+      if (!u?.chat || !u.m || typeof u.m.id !== 'string') continue;
+      const list = (chats[u.chat] ??= []);
+      const i = list.findIndex((m) => m.id === u.m.id);
+      if (i >= 0) list[i] = u.m;
+      else list.push(u.m);
+    }
+    for (const k of Object.keys(chats)) chats[k] = chats[k]!.sort((a, b) => a.ts - b.ts).slice(-MAX_KEPT_PER_CHAT);
+    if (op.contacts) snap = { ...snap, contacts: op.contacts };
+    if (op.prefs) snap = { ...snap, prefs: op.prefs };
+    if (op.starred) snap = { ...snap, starred: op.starred };
+    if (op.notices) snap = { ...snap, notices: op.notices };
+  }
+  return { ...snap, chats };
 }

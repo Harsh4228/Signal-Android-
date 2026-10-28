@@ -118,3 +118,27 @@ test('an account signed in before backups existed turns them on with its passwor
   await waitFor(() => laptop.getMessages('admin').length === 1, 'restored');
   assert.equal(laptop.starredMessages().length, 1);
 });
+test('live backup: every change reaches the backup within seconds, without logging out', async () => {
+  const admin = clients.find((c) => c.account?.username === 'admin')!;
+  const invite = await admin.inviteEmployee({ username: 'live', name: 'Live' });
+  const phone = await device();
+  await phone.join(inviteCode(url, invite), 'live-password-1');
+  await online(phone);
+  await phone.addContact('admin');
+  await waitFor(() => !!phone.lastBackupAt, 'first full backup');
+
+  // Chat as usual: no flush, no logout.
+  await phone.sendText('admin', 'one');
+  await phone.sendText('admin', 'two');
+  await admin.sendText('live', 'three');
+  await waitFor(() => phone.getMessages('admin').length === 3, 'three messages');
+  phone.toggleStar(phone.getMessages('admin')[0]!);
+  await new Promise((r) => setTimeout(r, 2500));
+
+  // Another device signs in straight away: everything is there, from the live changes.
+  const laptop = await device();
+  await laptop.login(url, 'live', 'live-password-1');
+  await waitFor(() => laptop.getMessages('admin').length === 3, 'all three restored');
+  assert.deepEqual(laptop.getMessages('admin').map((m) => m.text), ['one', 'two', 'three']);
+  assert.equal(laptop.starredMessages().length, 1);
+});

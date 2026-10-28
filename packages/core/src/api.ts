@@ -635,9 +635,14 @@ export interface HistoryBackup {
   /** Format version. */
   v: number;
   updatedAt: number;
+  /** The last live change (backup op id) this full backup already contains. */
+  upTo?: number;
 }
 /** Largest backup the server keeps (base64 characters). */
 export const MAX_BACKUP_CHARS = 24 * 1024 * 1024;
+/** One live backup change (base64), and how many may wait before a full backup is needed. */
+export const MAX_BACKUP_OP = 256 * 1024;
+export const MAX_BACKUP_OPS = 5000;
 
 // ---- pages: long lists come in pages, newest first ----
 

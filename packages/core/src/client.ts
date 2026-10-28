@@ -106,9 +106,13 @@ import {
   openBackup,
   parseSnapshot,
   sealBackup,
+  sealOp,
+  openOp,
+  applyOps,
   unlockBackupKey,
   type BackupKeys,
   type HistorySnapshot,
+  type HistoryOp,
 } from './history';
 import { SessionCipher, type WireMessage } from './session';
 import { ProtocolStore, type Account, type SecureStorage } from './store';
@@ -895,7 +899,7 @@ export class MessengerClient extends Emitter<Events> {
     if (this.backupKeys) {
       this.backupKeys = await lockBackupKey(fromBase64(this.backupKeys.key), newPassword);
       await this.store.setSetting('backupKeys', this.backupKeys);
-      this.backedUpJson = '';
+      this.sentReady = false; // the next backup is a full one
       await this.uploadBackup().catch((e) => console.warn('backup failed', e));
     }
   }
@@ -3303,6 +3307,7 @@ export class MessengerClient extends Emitter<Events> {
     this.backupKeys = await this.store.getSetting<BackupKeys | null>('backupKeys', null);
     this.lockedBackup = await this.store.getSetting<HistoryBackup | null>('lockedBackup', null);
     this.lastBackupAt = await this.store.getSetting<number | null>('lastBackupAt', null);
+    this.lastOpId = await this.store.getSetting<number>('lastOpId', 0);
     this.historyLoaded = true;
   }
 
@@ -3353,16 +3358,25 @@ export class MessengerClient extends Emitter<Events> {
     this.historyTimer = setTimeout(() => {
       this.historyTimer = null;
       void this.saveHistory().catch((e) => console.warn('could not save the chat history', e));
-    }, 2000);
+    }, 1000);
   }
 
   private snapshot(): HistorySnapshot {
     return { ...makeSnapshot(this.chats, this.contacts, this.unread), prefs: this.chatPrefs, starred: this.starred, notices: this.notices };
   }
 
-  /** The history as last written / backed up: typing and presence changes don't touch the files. */
+  /** The history as last written: typing and presence changes don't touch the file. */
   private savedJson = '';
-  private backedUpJson = '';
+  /** What the server already has (full backup + live changes), per message and per small list. */
+  private sent = new Map<string, string>();
+  private sentLists = new Map<string, string>();
+  /** `sent` matches the server (false after a restart: the first change then sends a full backup). */
+  private sentReady = false;
+  private lastOpId = 0;
+  private opsSinceFull = 0;
+  private lastFullAt = 0;
+  private liveBusy = false;
+  private liveAgain = false;
 
   private async saveHistory(force = false): Promise<void> {
     if (!this.account) return;
@@ -3371,19 +3385,95 @@ export class MessengerClient extends Emitter<Events> {
     if (!force && json === this.savedJson) return;
     await this.media.saveDoc(HISTORY_DOC, utf8(JSON.stringify(this.snapshot())));
     this.savedJson = json;
-    // Backed up a few seconds after a change, so switching to another device right away loses nothing.
+    // Live: the change goes to the backup right away, as a small encrypted record.
     this.backupTimer ??= setTimeout(() => {
       this.backupTimer = null;
-      void this.uploadBackup().catch((e) => console.warn('backup failed', e));
-    }, 5000);
+      void this.pushLive().catch((e) => console.warn('backup failed', e));
+    }, 500);
   }
 
+  private canBackUp() {
+    return !!this.account && !!this.backupKeys && !this.lockedBackup && this.status === 'online';
+  }
+
+  /** Remember what the server now has (after a full backup or a restore). */
+  private markSent(snap: HistorySnapshot) {
+    this.sent.clear();
+    for (const [chat, list] of Object.entries(snap.chats)) for (const m of list) this.sent.set(`${chat}\u0000${m.id}`, JSON.stringify(m));
+    this.sentLists = new Map([
+      ['contacts', JSON.stringify(snap.contacts)],
+      ['prefs', JSON.stringify(snap.prefs ?? {})],
+      ['starred', JSON.stringify(snap.starred ?? [])],
+      ['notices', JSON.stringify(snap.notices ?? [])],
+    ]);
+    this.sentReady = true;
+  }
+
+  /** Send what changed since the last backup; a full backup instead when there is none yet, or now and then. */
+  private async pushLive(): Promise<void> {
+    if (!this.canBackUp()) return;
+    if (this.liveBusy) {
+      this.liveAgain = true;
+      return;
+    }
+    this.liveBusy = true;
+    try {
+      const full = !this.lastBackupAt || !this.sentReady || this.opsSinceFull >= 200 || Date.now() - this.lastFullAt > 30 * 60_000;
+      if (full) return await this.uploadBackup();
+      const snap = this.snapshot();
+      const op: HistoryOp = {};
+      const now = new Map<string, string>();
+      for (const [chat, list] of Object.entries(snap.chats)) {
+        for (const m of list) {
+          const k = `${chat}\u0000${m.id}`;
+          const j = JSON.stringify(m);
+          now.set(k, j);
+          if (this.sent.get(k) !== j) (op.up ??= []).push({ chat, m });
+        }
+      }
+      for (const k of this.sent.keys()) {
+        if (now.has(k)) continue;
+        const [chat, id] = k.split('\u0000') as [string, string];
+        if (!snap.chats[chat]) {
+          if (!(op.clear ??= []).includes(chat)) op.clear.push(chat);
+        } else (op.del ??= []).push({ chat, id });
+      }
+      const lists = { contacts: snap.contacts, prefs: snap.prefs ?? {}, starred: snap.starred ?? [], notices: snap.notices ?? [] };
+      for (const [name, value] of Object.entries(lists)) {
+        if (this.sentLists.get(name) !== JSON.stringify(value)) (op as Record<string, unknown>)[name] = value;
+      }
+      if (!Object.keys(op).length) return;
+      try {
+        const r = await this.http<{ id: number }>('POST', '/v1/backup/ops', { data: sealOp(op, this.backupKeys!) });
+        this.lastOpId = r.id;
+        this.opsSinceFull++;
+        this.sent = now;
+        for (const [name, value] of Object.entries(lists)) this.sentLists.set(name, JSON.stringify(value));
+        this.lastBackupAt = Date.now();
+        await this.store.setSetting('lastOpId', this.lastOpId);
+        await this.store.setSetting('lastBackupAt', this.lastBackupAt);
+      } catch (e) {
+        // Too many changes waiting on the server: one full backup takes them all in.
+        if (e instanceof ApiError && e.status === 409) await this.uploadBackup();
+        else throw e;
+      }
+    } finally {
+      this.liveBusy = false;
+      if (this.liveAgain) {
+        this.liveAgain = false;
+        void this.pushLive().catch(() => {});
+      }
+    }
+  }
+
+  /** A full backup: everything, including all live changes so far (the server drops those). */
   private async uploadBackup(): Promise<void> {
-    if (!this.account || !this.backupKeys || this.lockedBackup || this.status !== 'online') return;
-    const json = this.savedJson;
-    if (json && json === this.backedUpJson) return;
-    const r = await this.http<{ updatedAt: number }>('PUT', '/v1/backup', sealBackup(this.snapshot(), this.backupKeys));
-    this.backedUpJson = json;
+    if (!this.canBackUp()) return;
+    const snap = this.snapshot();
+    const r = await this.http<{ updatedAt: number }>('PUT', '/v1/backup', { ...sealBackup(snap, this.backupKeys!), upTo: this.lastOpId || undefined });
+    this.markSent(snap);
+    this.opsSinceFull = 0;
+    this.lastFullAt = Date.now();
     this.lastBackupAt = r.updatedAt;
     await this.store.setSetting('lastBackupAt', this.lastBackupAt);
   }
@@ -3399,9 +3489,25 @@ export class MessengerClient extends Emitter<Events> {
     await this.uploadBackup();
   }
 
+  /** The live changes made after this full backup (all pages), opened with the backup key. */
+  private async fetchOps(after: number, key: Uint8Array): Promise<HistoryOp[]> {
+    const out: HistoryOp[] = [];
+    for (let from = after; ; ) {
+      const page = await this.http<{ ops: { id: number; data: string }[]; next: number | null }>('GET', `/v1/backup/ops?after=${from}`);
+      for (const o of page.ops) {
+        const op = openOp(o.data, key);
+        if (op) out.push(op);
+        this.lastOpId = Math.max(this.lastOpId, o.id);
+      }
+      if (page.next === null) break;
+      from = page.next;
+    }
+    return out;
+  }
+
   /**
-   * Just signed in with this password (new device, or again on this one): bring back the chats from my backup.
-   * Never throws: without a backup the chats simply start empty.
+   * Just signed in with this password (new device, or again on this one): bring back the chats from my backup
+   * (the full backup plus every live change after it). Never throws: without a backup the chats start empty.
    */
   private async afterSignIn(password: string): Promise<void> {
     this.historyLoaded = true;
@@ -3416,10 +3522,16 @@ export class MessengerClient extends Emitter<Events> {
       let keys = fresh;
       if (backup) {
         const key = await unlockBackupKey(backup, password);
-        const snap = key && openBackup(backup, key);
+        let snap = key && openBackup(backup, key);
         if (key && snap) {
           keys = { key: toBase64(key), salt: backup.salt, wrap: backup.wrap };
+          this.lastOpId = backup.upTo ?? 0;
+          snap = applyOps(snap, await this.fetchOps(this.lastOpId, key).catch(() => []));
           const n = this.applySnapshot(snap);
+          this.markSent(snap);
+          this.lastBackupAt = backup.updatedAt;
+          this.lastFullAt = Date.now();
+          await this.store.setSetting('lastOpId', this.lastOpId);
           if (n) this.emit('error', `Restored ${n} message${n === 1 ? '' : 's'} from your backup`);
         } else {
           // Locked with a password from before (an admin reset it, or a new QR code): keep it for later.
@@ -3434,7 +3546,6 @@ export class MessengerClient extends Emitter<Events> {
       console.warn('history setup failed', e);
     }
   }
-
   /** Open the older backup with the password it was made with; its chats are added to these. */
   async restoreOldBackup(oldPassword: string): Promise<number> {
     const b = this.lockedBackup;
@@ -3452,7 +3563,7 @@ export class MessengerClient extends Emitter<Events> {
   /** Forget the older backup (its chats are gone for good) and back up these chats from now on. */
   async discardOldBackup(): Promise<void> {
     this.lockedBackup = null;
-    this.backedUpJson = '';
+    this.sentReady = false; // the next backup is a full one
     await this.store.setSetting('lockedBackup', null);
     this.emit('change');
     await this.flushHistory().catch(() => {});
@@ -3493,7 +3604,11 @@ export class MessengerClient extends Emitter<Events> {
     this.backupKeys = null;
     this.lockedBackup = null;
     this.lastBackupAt = null;
-    this.savedJson = this.backedUpJson = '';
+    this.savedJson = '';
+    this.sent.clear();
+    this.sentReady = false;
+    this.lastOpId = 0;
+    this.opsSinceFull = 0;
     this.chatPrefs = {};
     this.privacy = { readReceipts: true };
     this.about = '';

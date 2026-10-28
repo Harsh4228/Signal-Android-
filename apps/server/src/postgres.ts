@@ -111,6 +111,13 @@ const SCHEMA = `
   ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS company TEXT NOT NULL DEFAULT '';
   UPDATE audit_log SET company = regexp_replace(actor, '^.*-', '') WHERE company = '' AND actor LIKE '%-%';
   CREATE INDEX IF NOT EXISTS audit_log_company ON audit_log(company, id);
+  CREATE TABLE IF NOT EXISTS backup_ops (
+    id       BIGSERIAL PRIMARY KEY,
+    username TEXT NOT NULL REFERENCES users(username) ON DELETE CASCADE,
+    data     TEXT NOT NULL,
+    ts       BIGINT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS backup_ops_user ON backup_ops(username, id);
   CREATE TABLE IF NOT EXISTS backups (
     username   TEXT PRIMARY KEY REFERENCES users(username) ON DELETE CASCADE,
     data       TEXT NOT NULL,
@@ -487,6 +494,18 @@ export async function openPostgres(connectionString: string): Promise<{ db: Db; 
     },
     async deleteBackup(username) {
       await pool.query('DELETE FROM backups WHERE username = $1', [username]);
+      await pool.query('DELETE FROM backup_ops WHERE username = $1', [username]);
+    },
+    addBackupOp: async (username, data) =>
+      Number((await one<{ id: string }>('INSERT INTO backup_ops (username, data, ts) VALUES ($1, $2, $3) RETURNING id', [username, data, Date.now()]))!.id),
+    listBackupOps: async (username, after, limit) =>
+      (await pool.query('SELECT id, data FROM backup_ops WHERE username = $1 AND id > $2 ORDER BY id LIMIT $3', [username, after, limit])).rows.map(
+        (r: { id: string; data: string }) => ({ id: Number(r.id), data: r.data }),
+      ),
+    countBackupOps: async (username) =>
+      Number((await one<{ n: string }>('SELECT COUNT(*) AS n FROM backup_ops WHERE username = $1', [username]))!.n),
+    async pruneBackupOps(username, upTo) {
+      await pool.query('DELETE FROM backup_ops WHERE username = $1 AND id <= $2', [username, upTo]);
     },
     async close() {
       await bus.close();
