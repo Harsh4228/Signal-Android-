@@ -1,7 +1,7 @@
-import { Platform, StyleSheet } from 'react-native';
+import { Appearance, Platform, StyleSheet } from 'react-native';
 
-/** MeetMe light theme. Keep in sync with apps/desktop/src/renderer/src/styles.css. */
-export const colors = {
+/** Light theme. Keep in sync with apps/desktop/src/renderer/src/styles.css. */
+const LIGHT = {
   bg: '#f4f5f7',
   surface: '#ffffff',
   surface2: '#f8f9fb',
@@ -26,6 +26,40 @@ export const colors = {
   warn: '#b54708',
   warnSoft: '#fffaeb',
 };
+
+/** Dark theme (like WhatsApp's), used when the phone is in dark mode. */
+const DARK: typeof LIGHT = {
+  bg: '#0b141a',
+  surface: '#111b21',
+  surface2: '#1a242b',
+  hover: '#202c33',
+  line: '#222e35',
+  lineStrong: '#2f3d45',
+  text: '#e9edef',
+  text2: '#cfd6da',
+  muted: '#8696a0',
+  faint: '#667781',
+  accent: '#4f80ff',
+  accentSoft: '#17264a',
+  accentText: '#a9c1ff',
+  out: '#1c3157',
+  outBorder: '#25406d',
+  in: '#1a242b',
+  danger: '#f15c6d',
+  dangerSoft: '#3a1d22',
+  ok: '#21c063',
+  okSoft: '#12301f',
+  online: '#21c063',
+  warn: '#f5a524',
+  warnSoft: '#33270f',
+};
+
+/**
+ * The phone's light / dark setting when the app starts (styles are made once; switching the phone's mode takes
+ * effect the next time CellMate opens).
+ */
+export const isDark = Appearance.getColorScheme() === 'dark';
+export const colors = isDark ? DARK : LIGHT;
 
 export const mono = Platform.select({ ios: 'Menlo', default: 'monospace' });
 

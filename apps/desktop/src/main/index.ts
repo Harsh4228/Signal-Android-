@@ -281,14 +281,15 @@ app.on('web-contents-created', (_e, contents) => {
 // ---------------------------------------------------------------- window
 
 function createWindow() {
-  nativeTheme.themeSource = 'light';
+  // The app follows the computer's light / dark setting unless the person picks one in Settings.
+  nativeTheme.themeSource = 'system';
   const win = new BrowserWindow({
     width: 1120,
     height: 740,
     minWidth: 780,
     minHeight: 520,
     title: 'CellMate',
-    backgroundColor: '#f4f5f7',
+    backgroundColor: nativeTheme.shouldUseDarkColors ? '#0b141a' : '#f4f5f7',
     autoHideMenuBar: true,
     show: false,
     webPreferences: {

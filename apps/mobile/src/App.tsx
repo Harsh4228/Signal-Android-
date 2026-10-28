@@ -5,7 +5,7 @@ import { CaptureEventType, CaptureProtection } from 'react-native-capture-protec
 import { Info } from 'lucide-react-native';
 import { appLock, client, startClient, useCall, useClient, useLock } from './messenger';
 import { setupCallNotifications } from './callNotify';
-import { colors, s } from './theme';
+import { colors, isDark, s } from './theme';
 import { Logo } from './ui';
 import { registerPush } from './push';
 import { RegisterScreen } from './screens/RegisterScreen';
@@ -186,7 +186,7 @@ export default function App() {
 
   return (
     <SafeAreaProvider>
-      <StatusBar barStyle="dark-content" />
+      <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
       <SafeAreaView style={[s.fill, { backgroundColor: colors.surface }]} edges={['top', 'bottom']}>
         {/* Android draws edge-to-edge, so the window no longer shrinks for the keyboard: lift the screen ourselves. */}
         {call.status !== 'idle' && callHidden && !lock.locked && <CallBar onPress={() => setCallHidden(false)} />}

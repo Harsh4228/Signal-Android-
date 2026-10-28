@@ -553,7 +553,7 @@ function UsersTab({
       renderItem={({ item: u }) => (
         <Pressable
           onPress={() => (u.username !== me ? manage(u) : setEditingProfile(u))}
-          style={({ pressed }) => [styles.item, pressed && { backgroundColor: colors.hover }, u.banned && { backgroundColor: '#fffbfa' }]}
+          style={({ pressed }) => [styles.item, pressed && { backgroundColor: colors.hover }, u.banned && { backgroundColor: colors.dangerSoft }]}
         >
           <View>
             <Avatar name={u.username} size={42} />

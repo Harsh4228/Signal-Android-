@@ -3,6 +3,7 @@ import { Camera, CircleCheck, CloudUpload, LogOut, Settings as SettingsIcon, Tra
 import { MAX_ABOUT, MAX_EMAIL, MAX_PHONE, MIN_PASSWORD_LENGTH, shortId } from '@meetme/core';
 import { appLock, client, useClient } from '../messenger';
 import { AppLockSettings } from './AppLockSettings';
+import { getTheme, setTheme, type ThemeChoice } from '../theme';
 import { enableWebPush, needsHomeScreen, webPushState, webPushSupported } from '../webPush';
 import { Avatar, PasswordInput, errorText } from './ui';
 
@@ -249,6 +250,9 @@ export function Settings({ onClose, onToast }: { onClose: () => void; onToast: (
           </>
         )}
 
+        <div className="section-title">Appearance</div>
+        <ThemePicker />
+
         <div className="section-title">Privacy</div>
         <PrivacySettings />
 
@@ -442,6 +446,29 @@ function WebNotifications() {
       </p>
       {state === 'granted' ? <div className="notice">Notifications are on</div> : <button onClick={() => void on()}>Turn on notifications</button>}
       {msg && state !== 'granted' && <p className="muted small" style={{ margin: 0 }}>{msg}</p>}
+    </div>
+  );
+}
+/** Light, dark, or like the computer. */
+function ThemePicker() {
+  const [choice, setChoice] = useState<ThemeChoice>(getTheme());
+  const pick = (c: ThemeChoice) => {
+    setTheme(c);
+    setChoice(c);
+  };
+  return (
+    <div className="seg">
+      {(
+        [
+          ['system', 'System'],
+          ['light', 'Light'],
+          ['dark', 'Dark'],
+        ] as [ThemeChoice, string][]
+      ).map(([c, label]) => (
+        <button key={c} type="button" className={choice === c ? 'active' : ''} onClick={() => pick(c)}>
+          {label}
+        </button>
+      ))}
     </div>
   );
 }
