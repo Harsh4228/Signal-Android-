@@ -41,6 +41,10 @@ import {
   fromBase64,
   groupKey,
   inviteCode,
+  inviteMessage,
+  passwordMessage,
+  companyOf,
+  generatePassword,
   toBase64,
   type AdminStats,
   type AdminUser,
@@ -54,7 +58,7 @@ import { HelpDeskTab, RightsTab } from './AdminRights';
 
 type Tab = 'overview' | 'users' | 'departments' | 'groups' | 'rights' | 'helpdesk' | 'activity' | 'settings';
 /** A QR invite to show: for a new user, or a new one for someone who already exists. */
-type Share = { invite: InviteResponse; name: string; renewed: boolean };
+type Share = { invite: InviteResponse; name: string; email?: string; renewed: boolean };
 type Toast = (m: string) => void;
 
 const TABS: [Tab, string, typeof Users][] = [
@@ -214,6 +218,8 @@ function UsersTab({
   onManageDepartments: () => void;
 }) {
   const me = client.account?.username;
+  // Other admins can't demote or delete the company's main admin.
+  const iAmOwner = !!users?.find((x) => x.username === me)?.owner;
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<Filter>('all');
   const [dept, setDept] = useState('');
@@ -251,7 +257,7 @@ function UsersTab({
       ? `Make a new QR code for ${who}? Use it for a new phone or a forgotten password: scanning it lets them choose a new password, and signs out their old device.`
       : `Make a new QR code for ${who}? Their old QR code stops working.`;
     if (!confirm(msg)) return;
-    await act(async () => setShare({ invite: await client.newInvite(u.username), name: who, renewed: true }))();
+    await act(async () => setShare({ invite: await client.newInvite(u.username), name: who, email: u.email, renewed: true }))();
   }
 
   const ban = async (u: AdminUser) => {
@@ -268,7 +274,7 @@ function UsersTab({
     await act(() => client.setBanned(u.username, false), `${who} unblocked`)();
     // Their permission to come back: a new QR code (now, or later with the QR button).
     if (confirm(`Make ${who}'s new QR code now?`)) {
-      await act(async () => setShare({ invite: await client.newInvite(u.username), name: who, renewed: true }))();
+      await act(async () => setShare({ invite: await client.newInvite(u.username), name: who, email: u.email, renewed: true }))();
     }
   };
 
@@ -355,7 +361,7 @@ function UsersTab({
             <div className="grow">
               <div className="name">
                 {u.name || shortId(u.username)} {u.name && <span className="muted small">@{shortId(u.username)}</span>}{' '}
-                {u.username === me && <span className="muted small">(you)</span>} {u.admin && <span className="tag admin">Admin</span>}{' '}
+                {u.username === me && <span className="muted small">(you)</span>} {u.admin && <span className="tag admin">{u.owner ? 'Main admin' : 'Admin'}</span>}{' '}
                 {u.banned && <span className="tag banned">Banned</span>}{' '}
                 {u.moved && <span className="tag">Moved</span>}{' '}
                 {u.departments.map((d) => (
@@ -420,10 +426,10 @@ function UsersTab({
                       <MessageSquare size={16} />
                     </button>
                   )}
-                  <button className="icon" title="New QR code (new phone or forgotten password)" onClick={() => void newQr(u)}>
+                  <button className="icon" title="New invite: QR, email or password (new phone or forgotten password)" onClick={() => void newQr(u)}>
                     <QrCode size={16} />
                   </button>
-                  {!u.banned && (
+                  {!u.banned && !(u.owner && !iAmOwner) && (
                     <button className={`icon ${u.admin ? 'active' : ''}`} title={u.admin ? 'Remove admin' : 'Make admin'} onClick={() => toggleAdmin(u)}>
                       <ShieldCheck size={16} />
                     </button>
@@ -437,7 +443,7 @@ function UsersTab({
               )}
                 </>
               )}
-              {u.username !== me && (
+              {u.username !== me && !(u.owner && !iAmOwner) && (
                 <button className="icon danger" title="Delete" onClick={() => remove(u.username)}>
                   <Trash2 size={16} />
                 </button>
@@ -560,7 +566,7 @@ function CreateUser({
         departments: picked,
         photo: photo ?? undefined,
       });
-      onCreated({ invite, name: name.trim(), renewed: false });
+      onCreated({ invite, name: name.trim(), email: email.trim() || undefined, renewed: false });
     } catch (err) {
       setError(errorText(err));
     } finally {
@@ -659,51 +665,118 @@ async function shrinkPhoto(file: File): Promise<Uint8Array> {
   return new Uint8Array(await blob.arrayBuffer());
 }
 
-/** The QR invite to show the new user (or print / send privately), plus the same code as text for desktops. */
+/**
+ * The QR invite to show the new user, plus ways to send it: email (opens the mail app with the instructions),
+ * copy the code, save the QR picture, or give a temporary password with company code + ID instead.
+ */
 function InviteView({ share, onDone, onToast }: { share: Share; onDone: () => void; onToast: Toast }) {
   // The address the person's phone uses to reach the server (on this PC it may be "localhost", which a phone
   // can't reach, so the admin can change it here).
   const [server, setServer] = useState(client.account?.serverUrl ?? '');
   const [qr, setQr] = useState<string | null>(null);
+  const [temp, setTemp] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
   const code = inviteCode(server || 'http://localhost', share.invite);
   useEffect(() => {
     QRCode.toDataURL(code, { margin: 1, width: 260, errorCorrectionLevel: 'M' }).then(setQr, () => setQr(null));
   }, [code]);
   const local = /^https?:\/\/(localhost|127\.)/i.test(server);
+  const username = share.invite.username;
+  const msg = temp ? passwordMessage(share.name, companyOf(username), shortId(username), temp) : inviteMessage(share.name, code, server);
+  const mailto = `mailto:${encodeURIComponent(share.email ?? '')}?subject=${encodeURIComponent(msg.subject)}&body=${encodeURIComponent(msg.body)}`;
+  const copy = (text: string, what: string) =>
+    navigator.clipboard.writeText(text).then(
+      () => onToast(`${what} copied`),
+      () => onToast('Could not copy'),
+    );
+  async function usePassword() {
+    setBusy(true);
+    try {
+      const pw = generatePassword();
+      await client.resetEmployeePassword(username, pw);
+      setTemp(pw);
+    } catch (e) {
+      onToast(errorText(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function saveQr() {
+    if (!qr) return;
+    const data = new Uint8Array(await (await fetch(qr)).arrayBuffer());
+    if (window.meetme.saveFile) {
+      const where = await window.meetme.saveFile(`cellmate-invite-${shortId(username)}.png`, data);
+      if (where) onToast(`Saved to ${where}`);
+    } else {
+      const a = document.createElement('a');
+      a.href = qr;
+      a.download = `cellmate-invite-${shortId(username)}.png`;
+      a.click();
+    }
+  }
 
   return (
     <div className="share stack panel invite">
       <div className="ok">
         <Check size={16} />
-        {share.renewed ? `New QR code for ${share.name}` : `${share.name} created`}. They scan this QR in the CellMate app and choose a password.
+        {share.renewed ? `New invite for ${share.name}` : `${share.name} created`}.{' '}
+        {temp ? 'They sign in with these details, then choose their own password.' : 'They scan this QR in the CellMate app and choose a password.'}
       </div>
       <div className="row" style={{ alignItems: 'flex-start', gap: 16 }}>
-        <div className="qr-box">{qr ? <img src={qr} alt="QR invite" draggable={false} /> : <Loader2 className="spin" />}</div>
-        <div className="grow stack" style={{ gap: 8 }}>
-          <label className="field-label">
-            Server address in the QR
-            <input value={server} onChange={(e) => setServer(e.target.value)} />
-          </label>
-          {local && (
-            <div className="notice">
-              A phone can't reach "localhost". Use this PC's network address (e.g. http://192.168.0.155:8080), or your real server address.
+        {temp ? (
+          <div className="qr-box temp-login">
+            {companyOf(username) && (
+              <div>
+                Company code <strong>{companyOf(username)}</strong>
+              </div>
+            )}
+            <div>
+              ID <strong>{shortId(username)}</strong>
             </div>
+            <div>
+              Temporary password <code>{temp}</code>
+            </div>
+          </div>
+        ) : (
+          <div className="qr-box">{qr ? <img src={qr} alt="QR invite" draggable={false} /> : <Loader2 className="spin" />}</div>
+        )}
+        <div className="grow stack" style={{ gap: 8 }}>
+          {local && (
+            <>
+              <label className="field-label">
+                Server address in the QR
+                <input value={server} onChange={(e) => setServer(e.target.value)} />
+              </label>
+              <div className="notice">
+                A phone can't reach "localhost". Use this PC's network address (e.g. http://192.168.0.155:8080), or your real server address.
+              </div>
+            </>
           )}
           <p className="muted small" style={{ margin: 0 }}>
-            Works once, until {new Date(share.invite.expires).toLocaleString()}. Anyone with this QR can set up the account, so show it in
-            person or send it privately. On a computer they can paste the invite code instead.
+            {temp
+              ? 'Send these privately. The temporary password stops working once they choose their own.'
+              : `Works once, until ${new Date(share.invite.expires).toLocaleString()}. Anyone with it can set up the account, so show it in person or send it privately. On a computer they paste the invite code.`}
           </p>
-          <div className="row">
-            <button
-              onClick={() =>
-                navigator.clipboard.writeText(code).then(
-                  () => onToast('Invite code copied'),
-                  () => onToast('Could not copy'),
-                )
-              }
-            >
-              <Copy size={16} /> Copy invite code
+          <div className="row" style={{ flexWrap: 'wrap', gap: 6 }}>
+            <a className={`button ${share.email ? 'primary' : ''}`} href={mailto}>
+              <Mail size={16} /> {share.email ? `Email to ${share.email}` : 'Email'}
+            </a>
+            <button onClick={() => void copy(msg.body, temp ? 'Sign-in details' : 'Invite message')}>
+              <Copy size={16} /> Copy message
             </button>
+            {!temp && (
+              <>
+                <button onClick={() => void copy(code, 'Invite code')}>
+                  <Copy size={16} /> Copy code
+                </button>
+                <button onClick={() => void saveQr()} disabled={!qr}>
+                  <QrCode size={16} /> Save QR picture
+                </button>
+                <button onClick={() => void usePassword()} disabled={busy}>
+                  <KeyRound size={16} /> Give ID + password instead
+                </button>
+              </>
+            )}
             <div className="grow" />
             <button className="primary" onClick={onDone}>
               Done
@@ -714,7 +787,6 @@ function InviteView({ share, onDone, onToast }: { share: Share; onDone: () => vo
     </div>
   );
 }
-
 /** Admin: change a user's name, photo, mobile and email (users can't change these themselves). */
 function ProfileEditor({ user, onDone, onToast }: { user: AdminUser; onDone: (changed: boolean) => void; onToast: Toast }) {
   const [name, setName] = useState(user.name);

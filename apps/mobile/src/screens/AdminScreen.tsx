@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Alert, FlatList, Image, Pressable, ScrollView, Share, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
+import { Alert, FlatList, Image, Linking, Pressable, ScrollView, Share, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 import { SvgXml } from 'react-native-svg';
 import QRCode from 'qrcode';
 import {
@@ -9,6 +9,8 @@ import {
   Check,
   CircleAlert,
   CircleCheck,
+  KeyRound,
+  Mail,
   MessageSquare,
   Pencil,
   Plus,
@@ -16,6 +18,8 @@ import {
   RefreshCw,
   Search,
   Square,
+  Share2,
+  ShieldCheck,
   SquareCheck,
   Trash2,
   UserPlus,
@@ -35,6 +39,10 @@ import {
   shortId,
   groupKey,
   inviteCode,
+  inviteMessage,
+  passwordMessage,
+  companyOf,
+  generatePassword,
   toBase64,
   type AdminStats,
   type AdminUser,
@@ -45,11 +53,11 @@ import {
 } from '@meetme/core';
 import { pickFile } from '../files';
 import { client, useClient } from '../messenger';
-import { colors, s } from '../theme';
-import { Avatar, Banner, Button, Field, Header, IconButton, errorText, shortTime, useBack } from '../ui';
+import { colors, mono, s } from '../theme';
+import { Avatar, Banner, Button, Field, Header, IconButton, Sheet, errorText, shortTime, useBack, type SheetAction } from '../ui';
 import type { Route } from '../App';
 import { HelpDeskTab } from './HelpDesk';
-import { RightsTab } from './RightsScreen';
+import { GroupRightsScreen, RightsTab } from './RightsScreen';
 
 type Tab = 'overview' | 'users' | 'departments' | 'groups' | 'rights' | 'helpdesk' | 'activity' | 'settings';
 type Toast = (m: string) => void;
@@ -74,44 +82,84 @@ const userState = (u: AdminUser) =>
       : formatLastSeen({ online: u.online, lastSeen: u.lastSeen }) || 'Active';
 
 /** A QR invite to show: for a new user, or a new one for someone who already exists. */
-type InviteShare = { invite: InviteResponse; name: string; renewed: boolean };
+type InviteShare = { invite: InviteResponse; name: string; email?: string; renewed: boolean };
 
-/** The QR invite: the person scans it in CellMate and only chooses a password. */
+/**
+ * The QR invite: the person scans it in CellMate and only chooses a password. The admin can show it, email it
+ * (opens the mail app with the instructions), share it to any app, or give a temporary password instead.
+ */
 function InviteCard({ share, onDone }: { share: InviteShare; onDone: () => void }) {
   useBack(onDone);
   const [server, setServer] = useState(client.account?.serverUrl ?? '');
   const [svg, setSvg] = useState<string | null>(null);
+  const [temp, setTemp] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const code = inviteCode(server || 'http://localhost', share.invite);
   useEffect(() => {
     QRCode.toString(code, { type: 'svg', margin: 1, errorCorrectionLevel: 'M' }).then(setSvg, () => setSvg(null));
   }, [code]);
   const local = /^https?:\/\/(localhost|127\.|10\.0\.2\.2)/i.test(server);
+  const username = share.invite.username;
+  const msg = temp
+    ? passwordMessage(share.name, companyOf(username), shortId(username), temp)
+    : inviteMessage(share.name, code, server);
+  const email = () =>
+    void Linking.openURL(`mailto:${encodeURIComponent(share.email ?? '')}?subject=${encodeURIComponent(msg.subject)}&body=${encodeURIComponent(msg.body)}`);
+  async function usePassword() {
+    setBusy(true);
+    setError(null);
+    try {
+      const pw = generatePassword();
+      await client.resetEmployeePassword(username, pw);
+      setTemp(pw);
+    } catch (e) {
+      setError(errorText(e));
+    } finally {
+      setBusy(false);
+    }
+  }
   return (
     <View style={[s.card, { padding: 16, gap: 12 }]}>
       <Banner kind="ok" icon={CircleCheck}>
-        {share.renewed ? `New QR code for ${share.name}.` : `${share.name} created.`} They scan this in the CellMate app and choose a password.
+        {share.renewed ? `New invite for ${share.name}.` : `${share.name} created.`}{' '}
+        {temp ? 'They sign in with these details and then choose their own password.' : 'They scan this in the CellMate app and choose a password.'}
       </Banner>
-      <View style={{ alignSelf: 'center', padding: 10, backgroundColor: '#fff', borderRadius: 12, borderWidth: 1, borderColor: colors.line }}>
-        {svg ? <SvgXml xml={svg} width={220} height={220} /> : <View style={{ width: 220, height: 220 }} />}
-      </View>
-      <Field label="Server address in the QR" value={server} onChangeText={setServer} keyboardType="url" />
+      {temp ? (
+        <View style={[s.card, { padding: 14, gap: 6, backgroundColor: colors.surface2 }]}>
+          {!!companyOf(username) && <Text style={s.text}>Company code: <Text style={s.textStrong}>{companyOf(username)}</Text></Text>}
+          <Text style={s.text}>ID: <Text style={s.textStrong}>{shortId(username)}</Text></Text>
+          <Text style={s.text}>Temporary password: <Text style={[s.textStrong, { fontFamily: mono }]}>{temp}</Text></Text>
+        </View>
+      ) : (
+        <View style={{ alignSelf: 'center', padding: 10, backgroundColor: '#fff', borderRadius: 12, borderWidth: 1, borderColor: colors.line }}>
+          {svg ? <SvgXml xml={svg} width={220} height={220} /> : <View style={{ width: 220, height: 220 }} />}
+        </View>
+      )}
       {local && (
-        <Banner kind="warn" icon={CircleAlert}>
-          Other phones can't reach this address. Use the PC's network address (e.g. http://192.168.0.155:8080) or your real server.
-        </Banner>
+        <>
+          <Field label="Server address in the QR" value={server} onChangeText={setServer} keyboardType="url" />
+          <Banner kind="warn" icon={CircleAlert}>
+            Other phones can't reach this address. Use the PC's network address (e.g. http://192.168.0.155:8080) or your real server.
+          </Banner>
+        </>
       )}
       <Text style={[s.muted, { fontSize: 12, lineHeight: 18 }]}>
-        Works once, until {new Date(share.invite.expires).toLocaleString()}. Anyone with this QR can set up the account: show it in person or
-        send it privately.
+        {temp
+          ? 'Send these privately. The temporary password stops working once they choose their own.'
+          : `Works once, until ${new Date(share.invite.expires).toLocaleString()}. Anyone with it can set up the account: show it in person or send it privately.`}
       </Text>
+      {error && <Banner kind="error" icon={CircleAlert}>{error}</Banner>}
+      {!!share.email && <Button variant="primary" title={`Email to ${share.email}`} icon={Mail} onPress={email} />}
       <View style={[s.row, { gap: 10 }]}>
-        <Button title="Share code" icon={QrCode} onPress={() => void Share.share({ message: code })} style={{ flex: 1 }} />
-        <Button variant="primary" title="Done" onPress={onDone} style={{ flex: 1 }} />
+        <Button title={share.email ? 'Other email' : 'Email'} icon={Mail} onPress={email} style={{ flex: 1 }} />
+        <Button title="Share" icon={Share2} onPress={() => void Share.share({ title: msg.subject, message: msg.body })} style={{ flex: 1 }} />
       </View>
+      {!temp && <Button title="Give an ID and password instead" icon={KeyRound} busy={busy} onPress={() => void usePassword()} />}
+      <Button variant={share.email ? 'secondary' : 'primary'} title="Done" onPress={onDone} />
     </View>
   );
 }
-
 /** Admin: change a user's name, photo, mobile and email (users can't change these themselves). */
 function ProfileEditor({ user, onDone, onToast }: { user: AdminUser; onDone: (changed: boolean) => void; onToast: Toast }) {
   useBack(() => onDone(false));
@@ -323,6 +371,9 @@ function UsersTab({
   const [editing, setEditing] = useState<AdminUser | null>(null);
   const [editingProfile, setEditingProfile] = useState<AdminUser | null>(null);
   const [invite, setInvite] = useState<InviteShare | null>(null);
+  // The actions for one person, as a list (an Android alert shows only three buttons).
+  const [sheet, setSheet] = useState<{ title: string; actions: SheetAction[] } | null>(null);
+  const iAmOwner = !!users?.find((x) => x.username === me)?.owner;
 
   const shown = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -343,7 +394,9 @@ function UsersTab({
   };
 
   const manage = (u: AdminUser) => {
-    const buttons: { text: string; style?: 'cancel' | 'destructive'; onPress?: () => void }[] = [];
+    const buttons: { text: string; style?: 'cancel' | 'destructive'; onPress?: () => void; icon?: SheetAction['icon'] }[] = [];
+    // Other admins can't demote or delete the main admin.
+    const protectedOwner = !!u.owner && !iAmOwner;
     const who = u.name || shortId(u.username);
     const remove = {
       text: 'Delete account',
@@ -362,16 +415,18 @@ function UsersTab({
       ]);
       return;
     }
-    if (u.active && !u.banned) buttons.push({ text: 'Message', onPress: () => openChat(u.username) });
-    buttons.push({ text: 'Edit profile', onPress: () => setEditingProfile(u) });
-    buttons.push({ text: 'Change departments', onPress: () => setEditing(u) });
+    if (u.active && !u.banned) buttons.push({ text: 'Message', icon: MessageSquare, onPress: () => openChat(u.username) });
+    buttons.push({ text: 'Edit profile', icon: Pencil, onPress: () => setEditingProfile(u) });
+    buttons.push({ text: 'Change departments', icon: Building2, onPress: () => setEditing(u) });
     buttons.push({
-      text: 'New QR code',
+      text: 'New invite (QR, email or password)',
+      icon: QrCode,
       onPress: () =>
-        void run(async () => setInvite({ invite: await client.newInvite(u.username), name: who, renewed: true })),
+        void run(async () => setInvite({ invite: await client.newInvite(u.username), name: who, email: u.email, renewed: true })),
     });
-    if (!u.banned) {
+    if (!u.banned && !protectedOwner && u.username !== me) {
       buttons.push({
+        icon: ShieldCheck,
         text: u.admin ? 'Remove admin' : 'Make admin',
         onPress: () =>
           Alert.alert(
@@ -391,6 +446,7 @@ function UsersTab({
     }
     if (!u.admin) {
       buttons.push({
+        icon: Ban,
         text: u.banned ? 'Unblock' : 'Block',
         style: u.banned ? undefined : 'destructive',
         onPress: () =>
@@ -402,7 +458,7 @@ function UsersTab({
                   onPress: () =>
                     void run(async () => {
                       await client.setBanned(u.username, false);
-                      setInvite({ invite: await client.newInvite(u.username), name: who, renewed: true });
+                      setInvite({ invite: await client.newInvite(u.username), name: who, email: u.email, renewed: true });
                     }),
                 },
                 { text: 'Unblock only', onPress: () => void run(() => client.setBanned(u.username, false), `${who} unblocked`) },
@@ -417,12 +473,15 @@ function UsersTab({
               ),
       });
     }
-    buttons.push(remove);
-    buttons.push({ text: 'Cancel', style: 'cancel' });
-    Alert.alert(who, `@${shortId(u.username)} · ${userState(u)}`, buttons);
+    if (!protectedOwner && u.username !== me) buttons.push({ ...remove, icon: Trash2 });
+    setSheet({
+      title: ` · @${shortId(u.username)}${u.owner ? ' · main admin' : ''}`,
+      actions: buttons.map((b) => ({ icon: b.icon ?? Pencil, label: b.text, onPress: () => b.onPress?.() })),
+    });
   };
 
   return (
+    <>
     <FlatList
       data={shown}
       keyExtractor={(u) => u.username}
@@ -507,7 +566,7 @@ function UsersTab({
                 {u.name ? <Text style={[s.muted, { fontWeight: '400' }]}> @{shortId(u.username)}</Text> : null}
                 {u.username === me ? ' (you)' : ''}
               </Text>
-              {u.admin && <Pill text="Admin" />}
+              {u.admin && <Pill text={u.owner ? 'Main admin' : 'Admin'} />}
               {u.banned && <Pill text="Banned" danger />}
               {u.moved && <Pill text="Moved" />}
             </View>
@@ -538,6 +597,8 @@ function UsersTab({
         </Pressable>
       )}
     />
+    {sheet && <Sheet title={sheet.title} actions={sheet.actions} onClose={() => setSheet(null)} />}
+    </>
   );
 }
 
@@ -658,7 +719,7 @@ function CreateUser({
         departments: picked,
         photo: photo ? { mime: photo.mime, data: toBase64(photo.data) } : undefined,
       });
-      onCreated({ invite, name: name.trim(), renewed: false });
+      onCreated({ invite, name: name.trim(), email: email.trim() || undefined, renewed: false });
     } catch (e) {
       setError(errorText(e));
     } finally {
@@ -851,7 +912,10 @@ function GroupsTab({
   const me = client.account?.username ?? '';
   const [editing, setEditing] = useState<GroupInfo | 'new' | null>(null);
   const [query, setQuery] = useState('');
+  const [sheet, setSheet] = useState<{ title: string; actions: SheetAction[] } | null>(null);
+  const [rights, setRights] = useState<GroupInfo | null>(null);
 
+  if (rights) return <GroupRightsScreen group={rights} onClose={() => setRights(null)} onToast={onToast} />;
   if (editing) {
     return (
       <GroupEditor
@@ -868,12 +932,13 @@ function GroupsTab({
   }
 
   const manage = (g: GroupInfo) => {
-    const buttons: { text: string; style?: 'cancel' | 'destructive'; onPress?: () => void }[] = [];
-    if (g.members.includes(me)) buttons.push({ text: 'Open chat', onPress: () => openChat(groupKey(g.id)) });
-    buttons.push({ text: 'Edit name & members', onPress: () => setEditing(g) });
+    const buttons: SheetAction[] = [];
+    if (g.members.includes(me)) buttons.push({ icon: MessageSquare, label: 'Open chat', onPress: () => openChat(groupKey(g.id)) });
+    buttons.push({ icon: Pencil, label: 'Edit name, members & group admins', onPress: () => setEditing(g) });
+    buttons.push({ icon: ShieldCheck, label: 'Group permissions', onPress: () => setRights(g) });
     buttons.push({
-      text: 'Delete group',
-      style: 'destructive',
+      icon: Trash2,
+      label: 'Delete group',
       onPress: () =>
         Alert.alert('Delete group', `Delete "${g.name}"? Members can no longer write in it.`, [
           { text: 'Cancel', style: 'cancel' },
@@ -892,13 +957,13 @@ function GroupsTab({
           },
         ]),
     });
-    buttons.push({ text: 'Cancel', style: 'cancel' });
-    Alert.alert(g.name, `${g.members.length} members`, buttons);
+    setSheet({ title: `${g.name} · ${g.members.length} members`, actions: buttons });
   };
 
   const q = query.trim().toLowerCase();
   const shown = (groups ?? []).filter((g) => g.name.toLowerCase().includes(q) || g.members.some((m) => m.includes(q)));
   return (
+    <>
     <FlatList
       data={shown}
       keyExtractor={(g) => g.id}
@@ -936,6 +1001,8 @@ function GroupsTab({
         </Pressable>
       )}
     />
+    {sheet && <Sheet title={sheet.title} actions={sheet.actions} onClose={() => setSheet(null)} />}
+    </>
   );
 }
 

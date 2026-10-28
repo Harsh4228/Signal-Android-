@@ -248,14 +248,21 @@ function hardenSession() {
   });
 }
 
+/** Email and phone links (help desk, invites) open the system's mail / phone app; nothing else leaves the app. */
+const MAIL_OR_PHONE = /^(mailto|tel):[^\s]{1,8000}$/i;
+
 app.on('web-contents-created', (_e, contents) => {
   contents.on('will-navigate', (event, url) => {
     if (!(isDev && process.env.ELECTRON_RENDERER_URL && url.startsWith(process.env.ELECTRON_RENDERER_URL))) {
       event.preventDefault();
+      if (MAIL_OR_PHONE.test(url)) void shell.openExternal(url);
     }
   });
   contents.on('will-attach-webview', (event) => event.preventDefault());
-  contents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  contents.setWindowOpenHandler(({ url }) => {
+    if (MAIL_OR_PHONE.test(url)) void shell.openExternal(url);
+    return { action: 'deny' };
+  });
 });
 
 // ---------------------------------------------------------------- window

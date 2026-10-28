@@ -500,6 +500,46 @@ export function inviteCode(serverUrl: string, invite: { username: string; token:
   return `cellmate://join?s=${encodeURIComponent(normalizeServerUrl(serverUrl))}&u=${encodeURIComponent(invite.username)}&t=${encodeURIComponent(invite.token)}`;
 }
 
+/** What the admin sends a new person with their invite (email / chat apps). */
+export function inviteMessage(name: string, code: string, serverUrl: string): { subject: string; body: string } {
+  return {
+    subject: 'Your CellMate account',
+    body: [
+      `Hi ${name || 'there'},`,
+      '',
+      'Your CellMate account is ready. To start:',
+      '1. Install CellMate (Android app, Windows app, or on iPhone open ' + serverUrl.replace(/\/+$/, '') + '/app in Safari and tap Share > Add to Home Screen).',
+      '2. Open it and choose "I have a QR invite".',
+      '3. Scan the QR code, or paste this invite code:',
+      '',
+      code,
+      '',
+      '4. Choose your own password. Nobody else, not even your admin, will know it.',
+      '',
+      'The invite works once and expires in 7 days.',
+    ].join('\n'),
+  };
+}
+
+/** The same, for signing in with company code + ID + a temporary password (changed at the first sign-in). */
+export function passwordMessage(name: string, company: string, id: string, password: string): { subject: string; body: string } {
+  return {
+    subject: 'Your CellMate sign-in',
+    body: [
+      `Hi ${name || 'there'},`,
+      '',
+      'Sign in to CellMate with:',
+      company ? `Company code: ${company}` : '',
+      `ID: ${id}`,
+      `Temporary password: ${password}`,
+      '',
+      'At the first sign-in you choose your own password; this one stops working then.',
+    ]
+      .filter((l, i, a) => l !== '' || a[i - 1] !== '')
+      .join('\n'),
+  };
+}
+
 export function parseInviteCode(code: string): { serverUrl: string; username: string; token: string } | null {
   const m = code.trim().match(/^cellmate:\/\/join\?(.+)$/i);
   if (!m) return null;
