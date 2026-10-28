@@ -60,6 +60,8 @@ const SCHEMA = `
   ALTER TABLE users ADD COLUMN IF NOT EXISTS display_name TEXT NOT NULL DEFAULT '';
   ALTER TABLE users ADD COLUMN IF NOT EXISTS invite_hash TEXT;
   ALTER TABLE users ADD COLUMN IF NOT EXISTS invite_expires BIGINT;
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS about TEXT NOT NULL DEFAULT '';
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS hide_last_seen SMALLINT NOT NULL DEFAULT 0;
   CREATE TABLE IF NOT EXISTS avatars (
     username TEXT PRIMARY KEY REFERENCES users(username) ON DELETE CASCADE,
     mime     TEXT NOT NULL,
@@ -247,6 +249,12 @@ export async function openPostgres(connectionString: string): Promise<{ db: Db; 
     },
     async setDisplayName(username, name) {
       await pool.query('UPDATE users SET display_name = $1 WHERE username = $2', [name, username]);
+    },
+    async setPrivacy(username, p) {
+      if (p.about !== undefined) await pool.query('UPDATE users SET about = $1 WHERE username = $2', [p.about, username]);
+      if (p.hideLastSeen !== undefined) {
+        await pool.query('UPDATE users SET hide_last_seen = $1 WHERE username = $2', [p.hideLastSeen ? 1 : 0, username]);
+      }
     },
     async setInvite(username, invite) {
       await pool.query('UPDATE users SET invite_hash = $1, invite_expires = $2 WHERE username = $3', [

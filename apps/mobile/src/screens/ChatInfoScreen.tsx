@@ -299,6 +299,7 @@ function PersonInfoScreen({
           <Avatar name={peer} size={80} />
           <Text style={[s.h1, { fontSize: 20 }]}>{client.displayName(peer)}</Text>
           {!!c.getPresence(peer) && <Text style={s.muted}>{formatLastSeen(c.getPresence(peer))}</Text>}
+          {!!c.profileOf(peer)?.about && <Text style={[s.text, { textAlign: 'center', color: colors.text2 }]}>{c.profileOf(peer)!.about}</Text>}
           {!!c.profileOf(peer)?.departments.length && (
             <Text style={[s.muted, { fontSize: 13, fontWeight: '600', color: colors.accentText }]}>{c.profileOf(peer)!.departments.join(', ')}</Text>
           )}

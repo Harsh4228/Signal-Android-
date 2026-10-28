@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { FlatList, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, FlatList, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import {
   Ban,
   BadgeCheck,
@@ -11,6 +11,8 @@ import {
   Clock3,
   Copy,
   Download,
+  Eye,
+  Info,
   File,
   FileText,
   Forward,
@@ -55,6 +57,7 @@ import {
 import { pickFile, type PickKind } from '../files';
 import { copyText, saveToDevice } from '../deviceFiles';
 import { AttachmentView } from './AttachmentView';
+import { MessageText, ViewOnceBubble, ViewOnceViewer } from './MessageText';
 import { EventView, NewEvent, NewPoll, PollView } from './PollEvent';
 import { calls, client, useClient } from '../messenger';
 import { colors, s } from '../theme';
@@ -88,6 +91,7 @@ export function ChatScreen({
   const [creating, setCreating] = useState<'poll' | 'event' | 'location' | 'contact' | 'catalog' | null>(null);
   const [replyTo, setReplyTo] = useState<ChatMessage | null>(null);
   const [forwarding, setForwarding] = useState<ChatMessage | null>(null);
+  const [viewOnce, setViewOnce] = useState<ChatMessage | null>(null);
   const [recording, setRecording] = useState(false);
   const [searching, setSearching] = useState(false);
   const [viewingCatalog, setViewingCatalog] = useState<string | null>(null);
@@ -129,7 +133,7 @@ export function ChatScreen({
     }
   }
 
-  async function sendPicked(kind: PickKind) {
+  async function sendPicked(kind: PickKind, viewOnce = false) {
     try {
       const file = await pickFile(kind);
       if (!file) return;
@@ -137,7 +141,7 @@ export function ChatScreen({
       setText('');
       const r = replyTo;
       setReplyTo(null);
-      await client.sendFile(peer, file, caption, { replyTo: r ?? undefined });
+      await client.sendFile(peer, file, caption, { replyTo: r ?? undefined, viewOnce });
     } catch (e) {
       onError(errorText(e));
     }
@@ -174,7 +178,7 @@ export function ChatScreen({
         onPress: () => void copyText(m.text, peer).then(() => onError('Copied'), (e) => onError(errorText(e))),
       });
     }
-    if (m.attachment?.data && c.can('download', peer)) {
+    if (m.attachment?.data && !m.viewOnce && c.can('download', peer)) {
       const a = m.attachment;
       list.push({
         icon: Download,
@@ -182,7 +186,7 @@ export function ChatScreen({
         onPress: () => void saveToDevice(a, peer).then((where) => onError(`Saved to ${where}`), (e) => onError(errorText(e))),
       });
     }
-    if (!m.poll && !m.event && (!m.attachment || m.attachment.data) && c.can('forward', peer)) {
+    if (!m.poll && !m.event && !m.viewOnce && (!m.attachment || m.attachment.data) && c.can('forward', peer)) {
       list.push({ icon: Forward, label: 'Forward', onPress: () => setForwarding(m) });
     }
     list.push({ icon: Star, label: m.starred ? 'Unstar' : 'Star', onPress: () => client.toggleStar(m) });
@@ -196,6 +200,23 @@ export function ChatScreen({
         },
       });
     }
+    if (m.outgoing && !m.system) {
+      list.push({
+        icon: Info,
+        label: 'Message info',
+        onPress: () =>
+          Alert.alert(
+            'Message info',
+            [
+              `Sent: ${new Date(m.ts).toLocaleString()}`,
+              group ? '' : `Delivered: ${m.deliveredAt ? new Date(m.deliveredAt).toLocaleString() : 'not yet'}`,
+              group ? '' : `Read: ${m.readAt ? new Date(m.readAt).toLocaleString() : m.deliveredAt ? 'not yet (or read receipts are off)' : 'not yet'}`,
+            ]
+              .filter(Boolean)
+              .join('\n'),
+          ),
+      });
+    }
     if (c.canClearHistory) list.push({ icon: Trash2, label: 'Delete for me', onPress: () => void remove(m, false) });
     if (c.canEditDelete && (m.outgoing || c.isAdmin)) {
       list.push({ icon: Ban, label: 'Delete for everyone', onPress: () => void remove(m, true) });
@@ -205,6 +226,15 @@ export function ChatScreen({
 
   const call = (video: boolean) => calls.startCall(peer, video).catch((e) => onError(errorText(e)));
   const canSend = !!text.trim() && online && !gone;
+  // Typing "@" in a group suggests members to mention.
+  const mentionQuery = group ? /(?:^|\s)@([^\s@]*)$/.exec(text)?.[1]?.toLowerCase() : undefined;
+  const mentionChoices =
+    mentionQuery === undefined
+      ? []
+      : (groupInfo?.members ?? [])
+          .filter((u) => u !== c.account?.username && `${u} ${c.displayName(u)}`.toLowerCase().includes(mentionQuery))
+          .slice(0, 5);
+  const pickMention = (u: string) => setText(text.replace(/@([^\s@]*)$/, `@${c.displayName(u)} `));
   const typing = typingText(c.getTyping(peer), group);
   const presence = group ? '' : formatLastSeen(c.getPresence(peer));
   // 1:1 chats: department next to the name, mobile · email underneath.
@@ -354,18 +384,21 @@ export function ChatScreen({
                 </View>
               ) : (
                 <>
-                  {m.attachment && (m.attachment.kind === 'audio' ? <AudioView a={m.attachment} /> : <AttachmentView a={m.attachment} />)}
+                  {m.attachment &&
+                    (m.viewOnce ? (
+                      <ViewOnceBubble m={m} onOpen={() => setViewOnce(m)} />
+                    ) : m.attachment.kind === 'audio' ? (
+                      <AudioView a={m.attachment} />
+                    ) : (
+                      <AttachmentView a={m.attachment} />
+                    ))}
                   {m.poll && <PollView chat={peer} m={m} onError={onError} />}
                   {m.event && <EventView chat={peer} m={m} onError={onError} />}
                   {m.contact && <ContactCardView username={m.contact} navigate={navigate} />}
                   {m.location && <LocationCardView l={m.location} />}
                   {m.product && <ProductCardView p={m.product} onViewCatalog={setViewingCatalog} />}
                   {/* selectable={false}: message text cannot be copied */}
-                  {!!m.text && (
-                    <Text style={[s.text, { lineHeight: 21 }]} selectable={false}>
-                      {m.text}
-                    </Text>
-                  )}
+                  {!!m.text && <MessageText m={m} />}
                 </>
               )}
               <View style={[s.row, { gap: 4, alignSelf: 'flex-end', marginTop: 2 }]}>
@@ -427,6 +460,16 @@ export function ChatScreen({
               />
             </View>
           )}
+          {mentionChoices.length > 0 && (
+            <View style={styles.mentions}>
+              {mentionChoices.map((u) => (
+                <Pressable key={u} onPress={() => pickMention(u)} style={({ pressed }) => [s.row, { gap: 10, padding: 10 }, pressed && { backgroundColor: colors.hover }]}>
+                  <ChatAvatar chatKey={u} size={30} />
+                  <Text style={s.text}>{c.displayName(u)}</Text>
+                </Pressable>
+              ))}
+            </View>
+          )}
           <View style={styles.composer}>
             <View style={styles.field}>
               {!editing && (
@@ -480,6 +523,7 @@ export function ChatScreen({
             ...(c.can('sendFiles', peer)
               ? [
                   { icon: Image, label: 'Photo', onPress: () => void sendPicked('photo') },
+                  { icon: Eye, label: 'Photo, view once', onPress: () => void sendPicked('photo', true) },
                   { icon: FileText, label: 'PDF document', onPress: () => void sendPicked('pdf') },
                   { icon: File, label: 'Other file', onPress: () => void sendPicked('file') },
                 ]
@@ -499,6 +543,7 @@ export function ChatScreen({
       {creating === 'catalog' && <CatalogScreen chat={peer} onClose={() => setCreating(null)} onToast={onError} />}
       {viewingCatalog && <CatalogScreen owner={viewingCatalog} onClose={() => setViewingCatalog(null)} onToast={onError} />}
       {forwarding && <ForwardPicker m={forwarding} onClose={() => setForwarding(null)} onToast={onError} />}
+      {viewOnce && <ViewOnceViewer m={viewOnce} onClose={() => setViewOnce(null)} />}
       {selected && <Sheet title="Message" onClose={() => setSelected(null)} actions={actionsFor(selected)} />}
       {selected && (
         // Quick reactions float above the long-press menu, like WhatsApp.
@@ -520,6 +565,11 @@ function CallIcon({ c }: { c: CallLog }) {
 }
 
 const styles = StyleSheet.create({
+  mentions: {
+    backgroundColor: colors.surface,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.lineStrong,
+  },
   reactFloat: { position: 'absolute', left: 12, right: 12, top: '22%', alignItems: 'center' },
   bubble: {
     maxWidth: '82%',

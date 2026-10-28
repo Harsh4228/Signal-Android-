@@ -134,6 +134,8 @@ export interface UserProfile {
   name: string;
   /** Has logged in at least once (can receive messages). */
   active: boolean;
+  /** Their own short line, like WhatsApp's "About" ('' = none). */
+  about?: string;
   departments: string[];
   phone: string;
   email: string;
@@ -346,6 +348,17 @@ export interface MeResponse {
   isSuper?: boolean;
   /** What I may do (missing on older servers: the defaults apply). */
   rights?: MyRights;
+  /** My "About" line and whether I hide my last seen / online. */
+  about?: string;
+  hideLastSeen?: boolean;
+}
+
+export const MAX_ABOUT = 140;
+/** PUT /v1/me/privacy: fields left out stay. */
+export interface PrivacyRequest {
+  about?: string;
+  /** Nobody sees when I was last online (and, like WhatsApp, I don't see theirs). */
+  hideLastSeen?: boolean;
 }
 
 export interface UploadKeysRequest {
@@ -429,7 +442,13 @@ export type Payload =
       fwd?: boolean;
       /** A product from the company catalog (snapshot, so it shows even if the product changes later). */
       product?: ProductCard;
+      /** @mentions: members of the group named in the text. */
+      mn?: string[];
+      /** View once: the photo / video can be opened one time, then it is gone (never saved). */
+      vo?: boolean;
     }
+  /** I opened view-once message `id` (goes back to its sender). */
+  | { k: 'opened'; id: string; g?: string }
   /** My reaction to message `id` ('' = removed). One per person, like WhatsApp. */
   | { k: 'react'; id: string; e: string; g?: string }
   /** A poll (like WhatsApp). `multi` = people may pick more than one option. */

@@ -26,6 +26,7 @@ import { MediaScreen } from './screens/MediaScreen';
 import { StatusComposeScreen, StatusScreen, StatusViewerScreen } from './screens/StatusScreen';
 import { CatalogScreen, StarredScreen } from './screens/ChatExtras';
 import { HelpDeskScreen } from './screens/HelpDesk';
+import { CallsScreen } from './screens/CallsScreen';
 
 export type Route =
   | { name: 'list' }
@@ -44,7 +45,8 @@ export type Route =
   | { name: 'notices' }
   | { name: 'notice-new' }
   | { name: 'applock' }
-  | { name: 'help' };
+  | { name: 'help' }
+  | { name: 'calls' };
 
 export default function App() {
   const c = useClient();
@@ -172,6 +174,8 @@ export default function App() {
     screen = <NewNoticeScreen navigate={setRoute} onDone={setToast} />;
   } else if (route.name === 'applock') {
     screen = <AppLockScreen navigate={setRoute} onToast={setToast} />;
+  } else if (route.name === 'calls') {
+    screen = <CallsScreen navigate={setRoute} onError={setToast} />;
   } else if (route.name === 'help') {
     screen = <HelpDeskScreen onClose={() => setRoute({ name: 'list' })} onChat={(u) => void openDirectChat(u, setRoute, setToast)} />;
   } else if (route.name === 'settings') {

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { FlatList, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
-import { Ban, Bell, CircleDashed, EllipsisVertical, LifeBuoy, Megaphone, ShoppingBag, Star, MessageSquarePlus, Search, Settings, ShieldCheck } from 'lucide-react-native';
+import { Archive, ArchiveRestore, BellOff, Ban, Bell, ChevronLeft, CircleDashed, EllipsisVertical, LifeBuoy, Megaphone, Phone, Pin, PinOff, ShoppingBag, Star, MessageSquarePlus, Search, Settings, ShieldCheck } from 'lucide-react-native';
 import { MessengerClient, isGroupKey } from '@meetme/core';
 import { client, useClient } from '../messenger';
 import { colors, s } from '../theme';
@@ -12,12 +12,20 @@ export function ChatListScreen({ navigate, onError }: { navigate: (r: Route) => 
   const c = useClient();
   const [filter, setFilter] = useState('');
   const [more, setMore] = useState(false);
+  const [archived, setArchived] = useState(false);
+  const [acting, setActing] = useState<string | null>(null);
 
   const q = filter.trim().toLowerCase();
   const all = c.chatKeys();
-  const sorted = all
-    .filter((k) => !q || c.chatTitle(k).toLowerCase().includes(q))
-    .sort((a, b) => (c.lastMessage(b)?.ts ?? 0) - (c.lastMessage(a)?.ts ?? 0));
+  // Pinned first, then the newest; archived chats have their own list (like WhatsApp).
+  const sorted = c.orderedChats({ archived }).filter((k) => !q || c.chatTitle(k).toLowerCase().includes(q));
+  const run = (fn: () => void) => {
+    try {
+      fn();
+    } catch (e) {
+      onError(e instanceof Error ? e.message : String(e));
+    }
+  };
   const online = c.status === 'online';
   const statusColor = c.banned ? colors.danger : online ? colors.online : c.status === 'connecting' ? '#f79009' : colors.danger;
 
@@ -51,6 +59,7 @@ export function ChatListScreen({ navigate, onError }: { navigate: (r: Route) => 
                 />
               )}
             </View>
+            <IconButton icon={Phone} label="Calls" onPress={() => navigate({ name: 'calls' })} />
             <IconButton icon={LifeBuoy} label="Help desk" onPress={() => navigate({ name: 'help' })} />
             <IconButton icon={Bell} label="Notices" onPress={() => navigate({ name: 'notices' })} />
             {/* Everything else lives in the ⋮ menu, like WhatsApp. */}
@@ -82,14 +91,28 @@ export function ChatListScreen({ navigate, onError }: { navigate: (r: Route) => 
         </View>
       )}
 
+      {archived ? (
+        <Pressable onPress={() => setArchived(false)} style={[s.row, { gap: 10, paddingHorizontal: 16, paddingVertical: 12 }]}>
+          <ChevronLeft size={20} color={colors.accent} />
+          <Text style={[s.textStrong, { color: colors.accent }]}>Archived chats</Text>
+        </Pressable>
+      ) : (
+        c.archivedCount > 0 && (
+          <Pressable onPress={() => setArchived(true)} style={[s.row, { gap: 14, paddingHorizontal: 22, paddingVertical: 12 }]}>
+            <Archive size={20} color={colors.muted} />
+            <Text style={[s.textStrong, { flex: 1 }]}>Archived</Text>
+            <Text style={s.muted}>{c.archivedCount}</Text>
+          </Pressable>
+        )
+      )}
       <FlatList
         data={sorted}
         keyExtractor={(n) => n}
         contentContainerStyle={{ paddingBottom: 24, flexGrow: 1 }}
         ListEmptyComponent={
-          q ? (
+          q || archived ? (
             <View style={[s.center, { gap: 8 }]}>
-              <Text style={s.title}>No chats match</Text>
+              <Text style={s.title}>{archived && !q ? 'No archived chats' : 'No chats match'}</Text>
             </View>
           ) : (
             // First login: show everyone at once, no need to search for names.
@@ -110,6 +133,7 @@ export function ChatListScreen({ navigate, onError }: { navigate: (r: Route) => 
           return (
             <Pressable
               onPress={() => navigate({ name: 'chat', peer: key })}
+              onLongPress={() => setActing(key)}
               style={({ pressed }) => [styles.item, pressed && { backgroundColor: colors.hover }]}
             >
               <ChatAvatar chatKey={key} size={50} />
@@ -136,8 +160,15 @@ export function ChatListScreen({ navigate, onError }: { navigate: (r: Route) => 
                   >
                     {typing || preview}
                   </Text>
+                  {c.isMuted(key) && <BellOff size={15} color={colors.faint} />}
+                  {c.isPinned(key) && <Pin size={15} color={colors.faint} />}
+                  {c.mentionsMe(key) && (
+                    <View style={[styles.badge, { minWidth: 22 }]}>
+                      <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>@</Text>
+                    </View>
+                  )}
                   {unread > 0 && (
-                    <View style={styles.badge}>
+                    <View style={[styles.badge, c.isMuted(key) && { backgroundColor: colors.faint }]}>
                       <Text style={{ color: '#fff', fontSize: 11.5, fontWeight: '700' }}>{unread}</Text>
                     </View>
                   )}
@@ -155,6 +186,27 @@ export function ChatListScreen({ navigate, onError }: { navigate: (r: Route) => 
         >
           <MessageSquarePlus size={24} color="#fff" />
         </Pressable>
+      )}
+      {acting && (
+        <Sheet
+          title={c.chatTitle(acting)}
+          onClose={() => setActing(null)}
+          actions={[
+            c.isPinned(acting)
+              ? { icon: PinOff, label: 'Unpin', onPress: () => run(() => client.pinChat(acting, false)) }
+              : { icon: Pin, label: 'Pin to top', onPress: () => run(() => client.pinChat(acting, true)) },
+            c.isArchived(acting)
+              ? { icon: ArchiveRestore, label: 'Unarchive', onPress: () => run(() => client.archiveChat(acting, false)) }
+              : { icon: Archive, label: 'Archive', onPress: () => run(() => client.archiveChat(acting, true)) },
+            ...(c.isMuted(acting)
+              ? [{ icon: Bell, label: 'Unmute', onPress: () => run(() => client.muteChat(acting, 0)) }]
+              : [
+                  { icon: BellOff, label: 'Mute for 8 hours', onPress: () => run(() => client.muteChat(acting, 8 * 3600_000)) },
+                  { icon: BellOff, label: 'Mute for 1 week', onPress: () => run(() => client.muteChat(acting, 7 * 86400_000)) },
+                  { icon: BellOff, label: 'Mute always', onPress: () => run(() => client.muteChat(acting, Infinity)) },
+                ]),
+          ]}
+        />
       )}
       {more && (
         <Sheet

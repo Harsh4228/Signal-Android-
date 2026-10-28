@@ -231,6 +231,7 @@ function PersonInfo({ peer, onClose, onError }: { peer: string; onClose: () => v
         <Avatar name={peer} />
         <div className="name">{client.displayName(peer)}</div>
         <div className="muted small">{formatLastSeen(c.getPresence(peer))}</div>
+        {c.profileOf(peer)?.about && <div className="about-line">{c.profileOf(peer)!.about}</div>}
         {profile && profile.departments.length > 0 && (
           <div className="row" style={{ gap: 4, flexWrap: 'wrap', justifyContent: 'center' }}>
             {profile.departments.map((d) => (

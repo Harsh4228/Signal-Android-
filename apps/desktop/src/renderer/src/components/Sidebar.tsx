@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Ban, Bell, CircleDashed, EllipsisVertical, LifeBuoy, Lock, Megaphone, ShoppingBag, Star, MessageSquarePlus, Search, Settings as SettingsIcon, ShieldCheck } from 'lucide-react';
+import { Archive, ArchiveRestore, BellOff, ChevronLeft, Phone, Pin, PinOff, Ban, Bell, CircleDashed, EllipsisVertical, LifeBuoy, Lock, Megaphone, ShoppingBag, Star, MessageSquarePlus, Search, Settings as SettingsIcon, ShieldCheck } from 'lucide-react';
 import { MessengerClient, isGroupKey } from '@meetme/core';
 import { appLock, client, useClient, useLock } from '../messenger';
 import { Broadcast } from './Broadcast';
@@ -11,6 +11,7 @@ import { CatalogPanel } from './Catalog';
 import { Avatar, ChatAvatar, Logo, errorText, shortTime, typingText } from './ui';
 import { Directory } from './Directory';
 import { HelpDeskModal } from './AdminRights';
+import { CallsPanel } from './CallsPanel';
 
 export function Sidebar({ onSettings, onError }: { onSettings: () => void; onError: (m: string) => void }) {
   const c = useClient();
@@ -22,7 +23,23 @@ export function Sidebar({ onSettings, onError }: { onSettings: () => void; onErr
   const [showNotices, setShowNotices] = useState(false);
   const [showStatus, setShowStatus] = useState(false);
   const [more, setMore] = useState(false);
-  const [panel, setPanel] = useState<'starred' | 'catalog' | 'help' | null>(null);
+  const [panel, setPanel] = useState<'starred' | 'catalog' | 'help' | 'calls' | null>(null);
+  const [archived, setArchived] = useState(false);
+  /** Right-click menu of a chat: pin, archive, mute. */
+  const [chatMenu, setChatMenu] = useState<{ key: string; x: number; y: number } | null>(null);
+  useEffect(() => {
+    if (!chatMenu) return;
+    const close = () => setChatMenu(null);
+    window.addEventListener('click', close);
+    return () => window.removeEventListener('click', close);
+  }, [chatMenu]);
+  const run = (fn: () => void) => {
+    try {
+      fn();
+    } catch (e) {
+      onError(errorText(e));
+    }
+  };
   const moreRef = useRef<HTMLDivElement>(null);
   const pick = (fn: () => void) => {
     setMore(false);
@@ -53,10 +70,8 @@ export function Sidebar({ onSettings, onError }: { onSettings: () => void; onErr
   }
 
   const q = filter.trim().toLowerCase();
-  const sorted = c
-    .chatKeys()
-    .filter((k) => !q || c.chatTitle(k).toLowerCase().includes(q))
-    .sort((a, b) => (c.lastMessage(b)?.ts ?? 0) - (c.lastMessage(a)?.ts ?? 0));
+  // Pinned first, then the newest; archived chats have their own list (like WhatsApp).
+  const sorted = c.orderedChats({ archived }).filter((k) => !q || c.chatTitle(k).toLowerCase().includes(q));
   const offline = c.status !== 'online';
 
   return (
@@ -73,6 +88,9 @@ export function Sidebar({ onSettings, onError }: { onSettings: () => void; onErr
           <button className="icon dot-host" title="Status" onClick={() => setShowStatus(true)}>
             <CircleDashed size={19} />
             {c.unseenStatusCount > 0 && <span className="dot" />}
+          </button>
+          <button className="icon" title="Calls" onClick={() => setPanel('calls')}>
+            <Phone size={18} />
           </button>
           <button className="icon" title="Help desk: whom to contact" disabled={offline} onClick={() => setPanel('help')}>
             <LifeBuoy size={19} />
@@ -130,6 +148,7 @@ export function Sidebar({ onSettings, onError }: { onSettings: () => void; onErr
       {showStatus && <StatusPanel onClose={() => setShowStatus(false)} onToast={onError} />}
       {panel === 'starred' && <StarredPanel onClose={() => setPanel(null)} />}
       {panel === 'help' && <HelpDeskModal onClose={() => setPanel(null)} onToast={onError} />}
+      {panel === 'calls' && <CallsPanel onClose={() => setPanel(null)} onError={onError} />}
       {panel === 'catalog' && <CatalogPanel onClose={() => setPanel(null)} onToast={onError} />}
 
       {c.banned && (
@@ -153,11 +172,22 @@ export function Sidebar({ onSettings, onError }: { onSettings: () => void; onErr
         </div>
       )}
 
+      {archived ? (
+        <button className="archived-row" onClick={() => setArchived(false)}>
+          <ChevronLeft size={17} /> Archived chats
+        </button>
+      ) : (
+        c.archivedCount > 0 && (
+          <button className="archived-row" onClick={() => setArchived(true)}>
+            <Archive size={17} /> <span className="grow">Archived</span> <span className="muted small">{c.archivedCount}</span>
+          </button>
+        )
+      )}
       <ul className="contacts">
         {sorted.length === 0 && (
           <li className="none">
             <MessageSquarePlus size={28} color="var(--faint)" />
-            <div>{q ? 'No chats match' : 'No conversations yet'}</div>
+            <div>{q ? 'No chats match' : archived ? 'No archived chats' : 'No conversations yet'}</div>
           </li>
         )}
         {sorted.map((key) => {
@@ -171,6 +201,11 @@ export function Sidebar({ onSettings, onError }: { onSettings: () => void; onErr
               key={key}
               className={`${c.activeChat === key ? 'active' : ''} ${unread ? 'unread' : ''}`}
               onClick={() => client.setActiveChat(key)}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                setChatMenu({ key, x: e.clientX, y: e.clientY });
+              }}
+              title="Right-click: pin, archive, mute"
             >
               <ChatAvatar chatKey={key} />
               <div className="grow">
@@ -187,7 +222,10 @@ export function Sidebar({ onSettings, onError }: { onSettings: () => void; onErr
                           ? `${c.groupOf(key)?.members.length ?? 0} members`
                           : 'No messages yet')}
                   </div>
-                  {unread > 0 && <span className="badge">{unread}</span>}
+                  {c.isMuted(key) && <BellOff size={14} className="muted" />}
+                  {c.isPinned(key) && <Pin size={14} className="muted" />}
+                  {c.mentionsMe(key) && <span className="badge">@</span>}
+                  {unread > 0 && <span className={`badge ${c.isMuted(key) ? 'quiet' : ''}`}>{unread}</span>}
                 </div>
               </div>
             </li>
@@ -195,6 +233,30 @@ export function Sidebar({ onSettings, onError }: { onSettings: () => void; onErr
         })}
       </ul>
         </>
+      )}
+
+      {chatMenu && (
+        <div className="dropdown context" role="menu" style={{ left: chatMenu.x, top: chatMenu.y }} onClick={(e) => e.stopPropagation()}>
+          {[
+            c.isPinned(chatMenu.key)
+              ? { icon: PinOff, label: 'Unpin', go: () => client.pinChat(chatMenu.key, false) }
+              : { icon: Pin, label: 'Pin to top', go: () => client.pinChat(chatMenu.key, true) },
+            c.isArchived(chatMenu.key)
+              ? { icon: ArchiveRestore, label: 'Unarchive', go: () => client.archiveChat(chatMenu.key, false) }
+              : { icon: Archive, label: 'Archive', go: () => client.archiveChat(chatMenu.key, true) },
+            ...(c.isMuted(chatMenu.key)
+              ? [{ icon: Bell, label: 'Unmute', go: () => client.muteChat(chatMenu.key, 0) }]
+              : [
+                  { icon: BellOff, label: 'Mute for 8 hours', go: () => client.muteChat(chatMenu.key, 8 * 3600_000) },
+                  { icon: BellOff, label: 'Mute for 1 week', go: () => client.muteChat(chatMenu.key, 7 * 86400_000) },
+                  { icon: BellOff, label: 'Mute always', go: () => client.muteChat(chatMenu.key, Infinity) },
+                ]),
+          ].map(({ icon: Icon, label, go }) => (
+            <button key={label} role="menuitem" onClick={() => (setChatMenu(null), run(go))}>
+              <Icon size={16} /> {label}
+            </button>
+          ))}
+        </div>
       )}
 
       <div className="me">

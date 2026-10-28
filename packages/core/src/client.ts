@@ -68,6 +68,7 @@ import {
   type InviteResponse,
   type JoinRequest,
   type HistoryBackup,
+  type PrivacyRequest,
 } from './api';
 import { attachmentKind, decryptAttachment, encryptAttachment, safeFileName, type AttachmentKind } from './attachments';
 import { randomBytes } from './crypto/primitives';
@@ -147,7 +148,38 @@ export interface ChatMessage {
   forwarded?: boolean;
   /** Kept in my Starred messages. */
   starred?: boolean;
+  /** @mentions (usernames) in a group message. */
+  mentions?: string[];
+  /** View once: the file can be opened one time; `opened` = it was (then it is gone). */
+  viewOnce?: boolean;
+  opened?: boolean;
+  /** My message: when it reached them / they read it (message info). */
+  deliveredAt?: number;
+  readAt?: number;
 }
+
+/** Per-chat choices kept on this device (and in the backup): pinned, archived, muted. */
+export interface ChatPrefs {
+  /** When it was pinned (ms); pinned chats are on top, the last pinned first. */
+  pinned?: number;
+  archived?: boolean;
+  /** Muted until (ms); Number.MAX_SAFE_INTEGER = always. */
+  muteUntil?: number;
+}
+export const MAX_PINNED = 3;
+
+/** Finds "@id" / "@Name" mentions of these members in a text (usernames, once each). */
+export function findMentions(text: string, members: string[], nameOf: (u: string) => string): string[] {
+  const lower = text.toLowerCase();
+  return members.filter((u) => {
+    const id = shortId(u).toLowerCase();
+    const name = nameOf(u).toLowerCase();
+    return lower.includes(`@${id}`) || (!!name && lower.includes(`@${name}`));
+  });
+}
+
+/** Links in a message (http / https), to show them tappable. */
+export const LINK_RE = /\bhttps?:\/\/[^\s<>"']+[^\s<>"'.,;:!?)\]]/gi;
 
 /** A starred message, kept (encrypted) on this device so the list survives restarts. Text only, no files. */
 export interface StarredMessage {
@@ -724,6 +756,8 @@ export class MessengerClient extends Emitter<Events> {
     this.notices = await this.store.getSetting<Notice[]>('notices', []);
     this.statuses = await this.store.getSetting<StatusUpdate[]>('statuses', []);
     this.starred = await this.store.getSetting<StarredMessage[]>('starred', []);
+    this.chatPrefs = await this.store.getSetting<Record<string, ChatPrefs>>('chatPrefs', {});
+    this.privacy = { readReceipts: true, ...(await this.store.getSetting<Partial<{ readReceipts: boolean }>>('privacy', {})) };
     await this.media.load();
     if (this.account) await this.loadHistory();
     this.sweepTimer ??= setInterval(() => this.sweepExpired(), 1000);
@@ -1397,6 +1431,8 @@ export class MessengerClient extends Emitter<Events> {
     this.admins = Array.isArray(me.admins) ? me.admins : [];
     this.company = me.company ?? null;
     this.isSuper = !!me.isSuper;
+    this.about = me.about ?? '';
+    this.hideLastSeen = !!me.hideLastSeen;
     this.setRights(me.rights);
     this.emit('change');
   }
@@ -1530,6 +1566,8 @@ export class MessengerClient extends Emitter<Events> {
             location: cleanLocation(p.loc),
             product: cleanProduct(p.product),
             forwarded: p.fwd === true || undefined,
+            // Only photos / videos can be view-once.
+            viewOnce: p.vo === true && !!att && /^(image|video)\//.test(att.mime) ? true : undefined,
           };
           if (!text && !att && !extra.contact && !extra.location && !extra.product) return;
         } else if (p.k === 'poll') {
@@ -1544,6 +1582,11 @@ export class MessengerClient extends Emitter<Events> {
         const group = key !== from;
         // Read-only member of a group where only some may send: drop it (a modified app could try).
         if (group && !(await this.mayPost(key, from))) return;
+        if (group && Array.isArray((p as { mn?: unknown }).mn)) {
+          const members = this.groupOf(key)?.members ?? [];
+          const mn = ((p as { mn: unknown[] }).mn).filter((u): u is string => typeof u === 'string' && members.includes(u)).slice(0, 50);
+          if (mn.length) extra.mentions = mn;
+        }
         this.clearTyping(key, from);
         let expire = 0;
         if (!group) {
@@ -1580,9 +1623,11 @@ export class MessengerClient extends Emitter<Events> {
         const chat = this.chatOf(key);
         if (chat.some((m) => m.id === p.id && !m.outgoing)) return; // same message twice
         chat.push(msg);
+        // A new message brings an archived chat back to the list (unless it is muted), like WhatsApp.
+        if (this.chatPrefs[key]?.archived && !this.isMuted(key)) this.setChatPref(key, { archived: false });
         const isOpen = this.activeChat === key;
         if (!isOpen) this.unread.set(key, (this.unread.get(key) ?? 0) + 1);
-        msg.receiptSent = isOpen ? 'read' : 'delivered';
+        msg.receiptSent = isOpen && this.privacy.readReceipts ? 'read' : 'delivered';
         // Receipts only in 1:1 chats (in groups they would tell every member who read what).
         if (!group) this.sendPayload(from, { k: 'receipt', ids: [p.id], status: msg.receiptSent }).catch(() => {});
         this.emit('message', msg);
@@ -1666,10 +1711,26 @@ export class MessengerClient extends Emitter<Events> {
       case 'receipt': {
         if (!Array.isArray(p.ids)) return;
         const ids = new Set(p.ids);
+        // With my read receipts off I don't see other people's either (like WhatsApp).
+        const status = p.status === 'read' && !this.privacy.readReceipts ? 'delivered' : p.status;
         for (const m of this.chatOf(from)) {
-          if (m.outgoing && ids.has(m.id) && m.status !== 'read') m.status = p.status;
+          if (!m.outgoing || !ids.has(m.id)) continue;
+          if (p.status === 'delivered' || p.status === 'read') m.deliveredAt ??= ts;
+          if (status === 'read') m.readAt ??= ts;
+          if (m.status !== 'read') m.status = status;
         }
         this.emit('change');
+        break;
+      }
+      case 'opened': {
+        // They opened my view-once photo: show "Opened".
+        if (typeof p.id !== 'string') return;
+        const key = await this.chatKeyFor(from, p.g);
+        const m = key && this.chats.get(key)?.find((x) => x.id === p.id && x.outgoing && x.viewOnce);
+        if (m && !isGroupKey(key)) {
+          m.opened = true;
+          this.emit('change');
+        }
         break;
       }
       case 'timer':
@@ -1907,13 +1968,18 @@ export class MessengerClient extends Emitter<Events> {
 
   /** `replyTo`: the message this answers (quoted above it, like WhatsApp). */
   async sendText(peer: string, text: string, opts: { broadcast?: boolean; replyTo?: ChatMessage } = {}): Promise<void> {
-    await this.sendMessage(peer, text, { broadcast: opts.broadcast, replyTo: opts.replyTo && this.quoteOf(opts.replyTo) });
+    // In a group, "@name" / "@id" of a member mentions them.
+    const members = isGroupKey(peer) ? (this.groupOf(peer)?.members ?? []).filter((u) => u !== this.account?.username) : [];
+    const mentions = members.length ? findMentions(text, members, (u) => this.displayName(u)) : [];
+    await this.sendMessage(peer, text, { broadcast: opts.broadcast, replyTo: opts.replyTo && this.quoteOf(opts.replyTo), mentions });
   }
 
   /** Send a photo / PDF / file / voice message (with an optional caption). */
-  async sendFile(peer: string, file: OutgoingFile, caption = '', opts: { replyTo?: ChatMessage } = {}): Promise<void> {
+  /** iewOnce: a photo / video they can open one time only (never saved, by them or by me). */
+  async sendFile(peer: string, file: OutgoingFile, caption = '', opts: { replyTo?: ChatMessage; viewOnce?: boolean } = {}): Promise<void> {
     if (!this.can('sendFiles', peer)) throw new Error('Your admin has turned off sending photos and files');
-    await this.sendMessage(peer, caption, { file, replyTo: opts.replyTo && this.quoteOf(opts.replyTo) });
+    if (opts.viewOnce && !/^(image|video)\//.test(file.mime)) throw new Error('Only photos and videos can be view once');
+    await this.sendMessage(peer, caption, { file, replyTo: opts.replyTo && this.quoteOf(opts.replyTo), viewOnce: opts.viewOnce });
   }
 
   /** Share a colleague's contact card; the other side can start a chat with them in one tap. */
@@ -1997,6 +2063,8 @@ export class MessengerClient extends Emitter<Events> {
       location?: SharedLocation;
       product?: ProductCard;
       forwarded?: boolean;
+      mentions?: string[];
+      viewOnce?: boolean;
     },
   ): Promise<void> {
     text = text.trim();
@@ -2021,6 +2089,8 @@ export class MessengerClient extends Emitter<Events> {
       location: opts.location,
       product: opts.product,
       forwarded: opts.forwarded || undefined,
+      mentions: opts.mentions?.length ? opts.mentions : undefined,
+      viewOnce: opts.viewOnce || undefined,
     };
     if (opts.file) {
       const name = safeFileName(opts.file.name);
@@ -2041,8 +2111,13 @@ export class MessengerClient extends Emitter<Events> {
       if (opts.file) {
         att = opts.uploaded ?? (await this.uploadAttachment(opts.file));
         msg.attachment!.state = 'ready';
-        msg.attachment!.ptr = att;
-        void this.keepMedia(msg, opts.file.data);
+        if (opts.viewOnce) {
+          // View once: I don't keep it either.
+          msg.attachment!.data = undefined;
+        } else {
+          msg.attachment!.ptr = att;
+          void this.keepMedia(msg, opts.file.data);
+        }
       }
       const payload: Payload = {
         k: 'text',
@@ -2057,6 +2132,8 @@ export class MessengerClient extends Emitter<Events> {
         loc: opts.location,
         product: opts.product,
         fwd: opts.forwarded || undefined,
+        mn: opts.mentions?.length ? opts.mentions : undefined,
+        vo: opts.viewOnce || undefined,
       };
       if (group) {
         const r = await this.sendToChat(peer, payload);
@@ -2780,7 +2857,10 @@ export class MessengerClient extends Emitter<Events> {
         m.receiptSent = 'read';
         return m.id;
       });
-    if (ids.length && !isGroupKey(peer)) this.sendPayload(peer, { k: 'receipt', ids, status: 'read' }).catch(() => {});
+    // Read receipts off: they only see "delivered".
+    if (ids.length && !isGroupKey(peer) && this.privacy.readReceipts) {
+      this.sendPayload(peer, { k: 'receipt', ids, status: 'read' }).catch(() => {});
+    }
     this.emit('change');
   }
 
@@ -2934,7 +3014,7 @@ export class MessengerClient extends Emitter<Events> {
    */
   private async keepMedia(msg: ChatMessage, data: Uint8Array): Promise<void> {
     const a = msg.attachment;
-    if (!a || msg.expiresAt || msg.deleted) return;
+    if (!a || msg.expiresAt || msg.deleted || msg.viewOnce) return;
     try {
       const added = await this.media.add(
         {
@@ -3027,6 +3107,118 @@ export class MessengerClient extends Emitter<Events> {
     await this.wipeLocal();
   }
 
+  // ------------------------------------------------------------------ chat list: pin, archive, mute
+
+  chatPrefs: Record<string, ChatPrefs> = {};
+  /** My privacy choices kept on this device. */
+  privacy: { readReceipts: boolean } = { readReceipts: true };
+  /** My "About" line and last-seen choice (on the server). */
+  about = '';
+  hideLastSeen = false;
+
+  private setChatPref(key: string, patch: Partial<ChatPrefs>) {
+    const next: ChatPrefs = { ...this.chatPrefs[key], ...patch };
+    for (const k of Object.keys(next) as (keyof ChatPrefs)[]) if (next[k] === undefined || next[k] === false || next[k] === 0) delete next[k];
+    if (Object.keys(next).length) this.chatPrefs[key] = next;
+    else delete this.chatPrefs[key];
+    void this.store.setSetting('chatPrefs', this.chatPrefs);
+    this.emit('change');
+  }
+
+  isPinned = (key: string) => !!this.chatPrefs[key]?.pinned;
+  isArchived = (key: string) => !!this.chatPrefs[key]?.archived;
+  isMuted = (key: string) => (this.chatPrefs[key]?.muteUntil ?? 0) > Date.now();
+
+  /** Pin to the top of the chat list (up to three, like WhatsApp). */
+  pinChat(key: string, pin: boolean): void {
+    if (pin && !this.isPinned(key) && Object.values(this.chatPrefs).filter((p) => p.pinned).length >= MAX_PINNED) {
+      throw new Error(`You can pin up to ${MAX_PINNED} chats`);
+    }
+    this.setChatPref(key, { pinned: pin ? Date.now() : undefined, archived: pin ? undefined : this.chatPrefs[key]?.archived });
+  }
+
+  /** Archived chats leave the main list (they come back when a new message arrives, unless muted). */
+  archiveChat(key: string, archive: boolean): void {
+    this.setChatPref(key, { archived: archive || undefined, pinned: archive ? undefined : this.chatPrefs[key]?.pinned });
+  }
+
+  /** Mute for `ms` (Infinity = always); 0 unmutes. Muted chats show no unread highlight and don't come back from the archive. */
+  muteChat(key: string, ms: number): void {
+    this.setChatPref(key, { muteUntil: ms > 0 ? (Number.isFinite(ms) ? Date.now() + ms : Number.MAX_SAFE_INTEGER) : undefined });
+  }
+
+  /** The chat list: pinned first (last pinned on top), then by the newest message. */
+  orderedChats(opts: { archived?: boolean } = {}): string[] {
+    const last = (k: string) => this.lastMessage(k)?.ts ?? 0;
+    return this.chatKeys()
+      .filter((k) => this.isArchived(k) === !!opts.archived)
+      .sort((a, b) => (this.chatPrefs[b]?.pinned ?? 0) - (this.chatPrefs[a]?.pinned ?? 0) || last(b) - last(a));
+  }
+
+  get archivedCount(): number {
+    return this.chatKeys().filter((k) => this.isArchived(k)).length;
+  }
+
+  /** An unread message in this group mentions me. */
+  mentionsMe(key: string): boolean {
+    const me = this.account?.username;
+    const n = this.getUnread(key);
+    return !!me && n > 0 && this.getMessages(key).slice(-n).some((m) => m.mentions?.includes(me));
+  }
+
+  /** Read receipts off: nobody sees when I read their message, and I don't see when they read mine. */
+  async setReadReceipts(on: boolean): Promise<void> {
+    this.privacy = { ...this.privacy, readReceipts: on };
+    await this.store.setSetting('privacy', this.privacy);
+    this.emit('change');
+  }
+
+  /** My "About" line and whether others see my last seen (stored on the server). */
+  async setPrivacy(p: PrivacyRequest): Promise<void> {
+    await this.http('PUT', '/v1/me/privacy', p);
+    if (p.about !== undefined) this.about = p.about.trim();
+    if (p.hideLastSeen !== undefined) this.hideLastSeen = p.hideLastSeen;
+    this.emit('change');
+  }
+
+  // ------------------------------------------------------------------ view once, calls, message info
+
+  /**
+   * Open a view-once photo: returns the file once. Call closeViewOnce() when it is closed; after that it is gone
+   * for good (and the sender sees "Opened").
+   */
+  viewOnceFile(m: ChatMessage): Attachment | null {
+    if (!m.viewOnce || m.outgoing || m.opened || !m.attachment?.data) return null;
+    return m.attachment;
+  }
+
+  closeViewOnce(m: ChatMessage): void {
+    if (!m.viewOnce || m.outgoing || m.opened) return;
+    m.opened = true;
+    if (m.attachment) {
+      if (m.attachment.data) m.attachment.data.fill(0);
+      m.attachment.data = undefined;
+      m.attachment.ptr = undefined;
+    }
+    const group = isGroupKey(m.peer);
+    const to = group ? m.from : m.peer;
+    if (to) this.sendPayload(to, { k: 'opened', id: m.id, g: group ? groupIdOf(m.peer) : undefined }).catch(() => {});
+    this.emit('change');
+  }
+
+  /** Every call in every chat, newest first (the Calls tab). */
+  callHistory(): { chat: string; m: ChatMessage }[] {
+    const out: { chat: string; m: ChatMessage }[] = [];
+    for (const [chat, list] of this.chats) for (const m of list) if (m.call) out.push({ chat, m });
+    return out.sort((a, b) => b.m.ts - a.m.ts);
+  }
+
+  /** Clear the call list (the chats keep their messages). */
+  clearCallHistory(): void {
+    for (const [chat, list] of this.chats) this.chats.set(chat, list.filter((m) => !m.call));
+    this.emit('change');
+  }
+
   // ------------------------------------------------------------------ chat history (device + backup)
 
   /** The saved history was read (nothing is written before that, so a slow start can't overwrite it). */
@@ -3062,6 +3254,9 @@ export class MessengerClient extends Emitter<Events> {
     const added = mergeSnapshot(this.chats, snap);
     for (const c of snap.contacts) if (!this.contacts.includes(c) && !isGroupKey(c)) this.contacts.push(c);
     for (const [k, n] of Object.entries(snap.unread)) if (typeof n === 'number' && !this.unread.has(k)) this.unread.set(k, n);
+    // Pinned / archived / muted chats come along to a new device.
+    for (const [k, p] of Object.entries(snap.prefs ?? {})) if (!this.chatPrefs[k] && p && typeof p === 'object') this.chatPrefs[k] = p;
+    void this.store.setSetting('chatPrefs', this.chatPrefs);
     void this.restoreFiles();
     this.emit('change');
     return added;
@@ -3101,7 +3296,7 @@ export class MessengerClient extends Emitter<Events> {
   }
 
   private snapshot(): HistorySnapshot {
-    return makeSnapshot(this.chats, this.contacts, this.unread);
+    return { ...makeSnapshot(this.chats, this.contacts, this.unread), prefs: this.chatPrefs };
   }
 
   /** The history as last written / backed up: typing and presence changes don't touch the files. */
@@ -3238,6 +3433,10 @@ export class MessengerClient extends Emitter<Events> {
     this.lockedBackup = null;
     this.lastBackupAt = null;
     this.savedJson = this.backedUpJson = '';
+    this.chatPrefs = {};
+    this.privacy = { readReceipts: true };
+    this.about = '';
+    this.hideLastSeen = false;
     this.emit('change');
   }
 

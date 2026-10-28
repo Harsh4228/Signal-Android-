@@ -164,6 +164,19 @@ ipcMain.handle('maps:open', async (e, url: string) => {
   await shell.openExternal(url);
 });
 
+/** A link in a message, after the person confirmed it in the app: http(s) only, in the system browser. */
+ipcMain.handle('link:open', async (e, url: string) => {
+  assertTrusted(e);
+  let u: URL;
+  try {
+    u = new URL(String(url));
+  } catch {
+    throw new Error('invalid link');
+  }
+  if (u.protocol !== 'https:' && u.protocol !== 'http:') throw new Error('invalid link');
+  await shell.openExternal(u.toString());
+});
+
 /** Server owner: the companies web page (<server>/super) in the system browser. Only that exact page. */
 ipcMain.handle('super:open', async (e, serverUrl: string) => {
   assertTrusted(e);

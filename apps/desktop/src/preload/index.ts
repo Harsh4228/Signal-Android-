@@ -13,6 +13,8 @@ contextBridge.exposeInMainWorld('meetme', {
   checkUpdates: (serverUrl: string): Promise<void> => ipcRenderer.invoke('updates:check', serverUrl),
   /** Server owner: open the companies page of this server in the system browser. */
   openSuper: (serverUrl: string): Promise<void> => ipcRenderer.invoke('super:open', serverUrl),
+  /** Open a link from a message in the system browser (after the person confirmed it). */
+  openLink: (url: string): Promise<void> => ipcRenderer.invoke('link:open', url),
   /** Screenshot protection off only when the admin allows screenshots (the UI checks the rights). */
   setCapture: (allow: boolean): Promise<void> => ipcRenderer.invoke('capture:set', allow),
   /** "Save to PC" with the normal save dialog (only offered with the download right). Resolves with the path, or null. */

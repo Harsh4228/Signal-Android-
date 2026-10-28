@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
-import { Alert, Linking, Pressable, ScrollView, Text, View } from 'react-native';
+import { Alert, Linking, Pressable, ScrollView, Switch, Text, View } from 'react-native';
 import { Building2, Camera, ChevronRight, CircleAlert, CircleCheck, CloudUpload, Lock, LogOut, Trash2 } from 'lucide-react-native';
-import { AVATAR_MIMES, MAX_EMAIL, MAX_PHONE, MIN_PASSWORD_LENGTH, shortId } from '@meetme/core';
+import { AVATAR_MIMES, MAX_ABOUT, MAX_EMAIL, MAX_PHONE, MIN_PASSWORD_LENGTH, shortId } from '@meetme/core';
 import { pickFile } from '../files';
 import { appLock, client, useClient, useLock } from '../messenger';
 import { resetPush } from '../push';
@@ -227,6 +227,7 @@ export function SettingsScreen({ navigate }: { navigate: (r: Route) => void }) {
             right={<ChevronRight size={18} color={colors.faint} />}
           />
         </View>
+        <PrivacySettings />
 
         {c.isSuper && (
           <>
@@ -339,6 +340,43 @@ function BackupSettings() {
           {msg.text}
         </Banner>
       )}
+    </View>
+  );
+}
+/** Like WhatsApp: my About line, read receipts and last seen. */
+function PrivacySettings() {
+  const c = useClient();
+  const [about, setAbout] = useState(c.about);
+  const [msg, setMsg] = useState<string | null>(null);
+  useEffect(() => setAbout(c.about), [c.about]);
+  const save = (fn: () => Promise<void>, done: string) =>
+    void fn().then(
+      () => setMsg(done),
+      (e) => setMsg(errorText(e)),
+    );
+  const toggle = (title: string, hint: string, value: boolean, onChange: (v: boolean) => void) => (
+    <View style={[s.row, { gap: 12, paddingHorizontal: 12, paddingVertical: 10 }]}>
+      <View style={{ flex: 1 }}>
+        <Text style={s.textStrong}>{title}</Text>
+        <Text style={[s.muted, { marginTop: 2, lineHeight: 18 }]}>{hint}</Text>
+      </View>
+      <Switch value={value} onValueChange={onChange} trackColor={{ true: colors.accent, false: colors.lineStrong }} thumbColor="#fff" />
+    </View>
+  );
+  return (
+    <View style={[s.card, { padding: 4, marginTop: 10, gap: 2 }]}>
+      <View style={{ padding: 12, gap: 8 }}>
+        <Text style={s.textStrong}>About</Text>
+        <Field value={about} onChangeText={setAbout} placeholder="e.g. At the Pune office" maxLength={MAX_ABOUT} autoCapitalize="sentences" />
+        {about.trim() !== c.about && <Button title="Save About" onPress={() => save(() => client.setPrivacy({ about }), 'About saved')} />}
+      </View>
+      {toggle('Read receipts', 'When off, people don\'t see when you read their messages, and you don\'t see theirs.', c.privacy.readReceipts, (v) =>
+        save(() => client.setReadReceipts(v), v ? 'Read receipts on' : 'Read receipts off'),
+      )}
+      {toggle('Hide last seen & online', 'Nobody sees when you were last online, and you don\'t see theirs.', c.hideLastSeen, (v) =>
+        save(() => client.setPrivacy({ hideLastSeen: v }), v ? 'Last seen hidden' : 'Last seen shown'),
+      )}
+      {msg && <Text style={[s.muted, { padding: 12, paddingTop: 0 }]}>{msg}</Text>}
     </View>
   );
 }

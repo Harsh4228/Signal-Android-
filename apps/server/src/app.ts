@@ -48,6 +48,8 @@ import {
   type RightChange,
   type RightRule,
   type Rights,
+  MAX_ABOUT,
+  type PrivacyRequest,
   type CompanyInfo,
   type NewCompanyRequest,
   type AdminStats,
@@ -1079,6 +1081,7 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
           departments: u.departments,
           phone: u.phone,
           email: u.email,
+          about: u.about,
           editDelete: admins.includes(u.username) || resolveRight(rules, 'editDelete', { username: u.username, departments: u.departments }),
         }));
       return send(200, { users });
@@ -1095,6 +1098,7 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
         departments: u.departments,
         phone: u.phone,
         email: u.email,
+        about: u.about,
         editDelete:
           (await isAdminUser(u.username)) ||
           resolveRight(await getRules(companyOf(me)), 'editDelete', { username: u.username, departments: u.departments }),
@@ -1160,12 +1164,31 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
         company: await companyInfo(companyOf(me)),
         isSuper: (await superAdmins()).includes(me),
         rights: await rightsOf(user),
+        about: user.about,
+        hideLastSeen: !!user.hide_last_seen,
       };
       return send(200, me_);
     }
     // Profiles are made by the admin and locked: only admins may change their own details (employees ask the
     // admin). On a server without admins people manage their own.
     const profileLocked = (await adminsOf(companyOf(me))).length > 0 && !(await isAdminUser(me));
+    // My own privacy choices (not locked by the admin): About line, hide last seen.
+    if (method === 'PUT' && path === '/v1/me/privacy') {
+      const body = (await readJson(req)) as Partial<PrivacyRequest>;
+      const p: { about?: string; hideLastSeen?: boolean } = {};
+      if (body.about !== undefined) {
+        if (typeof body.about !== 'string' || body.about.trim().length > MAX_ABOUT || /[\u0000-\u001f\u007f]/.test(body.about)) {
+          throw new HttpError(400, `About: at most ${MAX_ABOUT} characters`);
+        }
+        p.about = body.about.trim();
+      }
+      if (body.hideLastSeen !== undefined) {
+        if (typeof body.hideLastSeen !== 'boolean') throw new HttpError(400, 'hideLastSeen must be true or false');
+        p.hideLastSeen = body.hideLastSeen;
+      }
+      await db.setPrivacy(me, p);
+      return send(204);
+    }
     if (method === 'PUT' && path === '/v1/me/contact') {
       if (profileLocked) throw new HttpError(403, 'Only your admin can change your profile');
       const body = (await readJson(req)) as { phone?: unknown; email?: unknown };
@@ -1236,9 +1259,16 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
       const names = [...new Set((url.searchParams.get('u') ?? '').split(',').filter((u) => USERNAME_RE.test(u) && sameCompany(me, u)))];
       if (names.length > 200) throw new HttpError(400, 'too many users');
       const out: Record<string, Presence> = {};
+      // Like WhatsApp: whoever hides their last seen can't see anyone else's either.
+      const iHide = !!(await db.getUser(me))?.hide_last_seen;
       for (const u of await Promise.all(names.map((n) => db.getUser(n)))) {
         if (u) {
-          out[u.username] = { online: isOnline(u), lastSeen: u.last_seen === null ? null : Number(u.last_seen), avatar: u.avatar_ver };
+          const hidden = iHide || !!u.hide_last_seen;
+          out[u.username] = {
+            online: hidden ? false : isOnline(u),
+            lastSeen: hidden || u.last_seen === null ? null : Number(u.last_seen),
+            avatar: u.avatar_ver,
+          };
         }
       }
       return send(200, out);

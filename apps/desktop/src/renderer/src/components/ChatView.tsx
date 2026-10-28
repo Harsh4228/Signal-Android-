@@ -12,6 +12,7 @@ import {
   FileText,
   Copy,
   Download,
+  Eye,
   Forward,
   Image,
   Info,
@@ -49,6 +50,10 @@ import {
   type ChatMessage,
 } from '@meetme/core';
 import { copyText, saveToDevice } from '../deviceFiles';
+import { MessageText, ViewOnceBubble, ViewOnceViewer } from './MessageText';
+
+/** A short read-only message box (message info). */
+const alertInfo = (text: string) => alert(text);
 import { calls, client, useClient } from '../messenger';
 import { ChatInfo } from './ChatInfo';
 import { AttachmentView } from './AttachmentView';
@@ -96,6 +101,7 @@ export function ChatView({ peer, onError }: { peer: string; onError: (m: string)
   const [editing, setEditing] = useState<ChatMessage | null>(null);
   const [replyTo, setReplyTo] = useState<ChatMessage | null>(null);
   const [forwarding, setForwarding] = useState<ChatMessage | null>(null);
+  const [viewOnce, setViewOnce] = useState<ChatMessage | null>(null);
   const [reactingTo, setReactingTo] = useState<string | null>(null);
   const [recording, setRecording] = useState(false);
   const [searching, setSearching] = useState(false);
@@ -207,7 +213,10 @@ export function ChatView({ peer, onError }: { peer: string; onError: (m: string)
   const [menu, setMenu] = useState(false);
   const [creating, setCreating] = useState<'poll' | 'event' | 'location' | 'contact' | 'catalog' | null>(null);
 
-  function pick(accept: string) {
+  /** The next picked file goes as view once. */
+  const viewOnceNext = useRef(false);
+  function pick(accept: string, viewOnce = false) {
+    viewOnceNext.current = viewOnce;
     setMenu(false);
     if (!fileInput.current) return;
     fileInput.current.accept = accept;
@@ -225,7 +234,10 @@ export function ChatView({ peer, onError }: { peer: string; onError: (m: string)
     try {
       // Read into memory only; the original file on disk is untouched and nothing new is written.
       const data = new Uint8Array(await f.arrayBuffer());
-      await client.sendFile(peer, { name: f.name, mime: f.type || 'application/octet-stream', data }, caption, { replyTo: r ?? undefined });
+      await client.sendFile(peer, { name: f.name, mime: f.type || 'application/octet-stream', data }, caption, {
+        replyTo: r ?? undefined,
+        viewOnce: viewOnceNext.current,
+      });
     } catch (err) {
       onError(errorText(err));
     }
@@ -236,6 +248,18 @@ export function ChatView({ peer, onError }: { peer: string; onError: (m: string)
   }
 
   const typing = typingText(c.getTyping(peer), group);
+  // Typing "@" in a group suggests members to mention.
+  const mentionQuery = group ? /(?:^|\s)@([^\s@]*)$/.exec(text)?.[1]?.toLowerCase() : undefined;
+  const mentionChoices =
+    mentionQuery === undefined
+      ? []
+      : (groupInfo?.members ?? [])
+          .filter((u) => u !== c.account?.username && `${u} ${c.displayName(u)}`.toLowerCase().includes(mentionQuery))
+          .slice(0, 6);
+  const pickMention = (u: string) => {
+    setText(text.replace(/@([^\s@]*)$/, `@${c.displayName(u)} `));
+    inputRef.current?.focus();
+  };
   const presence = group ? '' : formatLastSeen(c.getPresence(peer));
   const profile = group ? undefined : c.profileOf(peer);
   const contactLine = [profile?.phone, profile?.email].filter(Boolean).join(' · ');
@@ -382,9 +406,23 @@ export function ChatView({ peer, onError }: { peer: string; onError: (m: string)
                     canDeleteAll={c.canEditDelete && (m.outgoing || c.isAdmin)}
                     canDeleteMine={c.canClearHistory}
                     canReply={canWrite && c.canSendTo(peer)}
-                    canForward={!m.poll && !m.event && (!m.attachment || !!m.attachment.data) && c.can('forward', peer)}
+                    canForward={!m.poll && !m.event && !m.viewOnce && (!m.attachment || !!m.attachment.data) && c.can('forward', peer)}
                     canCopy={!!m.text && c.can('copy', peer)}
-                    canSave={!!m.attachment?.data && c.can('download', peer)}
+                    canSave={!!m.attachment?.data && !m.viewOnce && c.can('download', peer)}
+                    onInfo={
+                      m.outgoing
+                        ? () =>
+                            alertInfo(
+                              [
+                                `Sent: ${new Date(m.ts).toLocaleString()}`,
+                                group ? '' : `Delivered: ${m.deliveredAt ? new Date(m.deliveredAt).toLocaleString() : 'not yet'}`,
+                                group ? '' : `Read: ${m.readAt ? new Date(m.readAt).toLocaleString() : 'not yet (or read receipts are off)'}`,
+                              ]
+                                .filter(Boolean)
+                                .join('\n'),
+                            )
+                        : undefined
+                    }
                     onCopy={() => void copyText(m.text, peer).then(() => onError('Copied'), (e) => onError(errorText(e)))}
                     onSave={() => void saveToDevice(m.attachment!, peer).then((p) => p && onError(`Saved to ${p}`), (e) => onError(errorText(e)))}
                     onMenu={() => setMenuFor(menuFor === m.id ? null : m.id)}
@@ -416,13 +454,19 @@ export function ChatView({ peer, onError }: { peer: string; onError: (m: string)
                 ) : (
                   <>
                     {m.attachment &&
-                      (m.attachment.kind === 'audio' ? <AudioView a={m.attachment} /> : <AttachmentView a={m.attachment} onToast={onError} />)}
+                      (m.viewOnce ? (
+                        <ViewOnceBubble m={m} onOpen={() => setViewOnce(m)} />
+                      ) : m.attachment.kind === 'audio' ? (
+                        <AudioView a={m.attachment} />
+                      ) : (
+                        <AttachmentView a={m.attachment} onToast={onError} />
+                      ))}
                     {m.poll && <PollView chat={peer} m={m} onError={onError} />}
                     {m.event && <EventView chat={peer} m={m} onError={onError} />}
                     {m.contact && <ContactCardView username={m.contact} />}
                     {m.location && <LocationCardView l={m.location} />}
                     {m.product && <ProductCardView p={m.product} onViewCatalog={setViewingCatalog} />}
-                    {m.text && <div className="text">{m.text}</div>}
+                    {m.text && <MessageText m={m} />}
                   </>
                 )}
                 <div className="meta">
@@ -451,6 +495,7 @@ export function ChatView({ peer, onError }: { peer: string; onError: (m: string)
       {creating === 'catalog' && <CatalogPanel chat={peer} onClose={() => setCreating(null)} onToast={onError} />}
       {viewingCatalog && <CatalogPanel owner={viewingCatalog} onClose={() => setViewingCatalog(null)} onToast={onError} />}
       {forwarding && <ForwardPicker m={forwarding} onClose={() => setForwarding(null)} onToast={onError} />}
+      {viewOnce && <ViewOnceViewer m={viewOnce} onClose={() => setViewOnce(null)} />}
 
       {gone ? (
         <div className="composer-note">You are no longer a member of this group.</div>
@@ -496,6 +541,15 @@ export function ChatView({ peer, onError }: { peer: string; onError: (m: string)
                 </button>
               </div>
             )}
+            {mentionChoices.length > 0 && (
+              <div className="mention-list">
+                {mentionChoices.map((u) => (
+                  <button key={u} type="button" onClick={() => pickMention(u)}>
+                    <ChatAvatar chatKey={u} size="sm" /> {c.displayName(u)}
+                  </button>
+                ))}
+              </div>
+            )}
             <div className="field">
               {!editing && (
                 <div className="attach">
@@ -514,6 +568,9 @@ export function ChatView({ peer, onError }: { peer: string; onError: (m: string)
                         <>
                           <button type="button" onClick={() => pick('image/*')}>
                             <Image size={17} /> Photo
+                          </button>
+                          <button type="button" onClick={() => pick('image/*', true)}>
+                            <Eye size={17} /> Photo, view once
                           </button>
                           <button type="button" onClick={() => pick('application/pdf,.pdf')}>
                             <FileText size={17} /> PDF document
@@ -583,6 +640,7 @@ function MessageActions({
   canSave,
   onCopy,
   onSave,
+  onInfo,
   onMenu,
   onEdit,
   onDelete,
@@ -603,6 +661,8 @@ function MessageActions({
   canSave: boolean;
   onCopy: () => void;
   onSave: () => void;
+  /** Message info (my messages): when it was delivered / read. */
+  onInfo?: () => void;
   onMenu: () => void;
   onEdit: () => void;
   onDelete: (forEveryone: boolean) => void;
@@ -634,6 +694,11 @@ function MessageActions({
       {canForward && (
         <button className="icon" title="Forward" onClick={onForward}>
           <Forward size={14} />
+        </button>
+      )}
+      {onInfo && (
+        <button className="icon" title="Message info" onClick={onInfo}>
+          <Info size={14} />
         </button>
       )}
       <button className={`icon ${m.starred ? 'starred' : ''}`} title={m.starred ? 'Unstar' : 'Star'} onClick={onStar}>

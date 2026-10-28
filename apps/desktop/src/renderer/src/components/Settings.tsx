@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Camera, CircleCheck, CloudUpload, LogOut, Settings as SettingsIcon, Trash2, X } from 'lucide-react';
-import { MAX_EMAIL, MAX_PHONE, MIN_PASSWORD_LENGTH, shortId } from '@meetme/core';
+import { MAX_ABOUT, MAX_EMAIL, MAX_PHONE, MIN_PASSWORD_LENGTH, shortId } from '@meetme/core';
 import { appLock, client, useClient } from '../messenger';
 import { AppLockSettings } from './AppLockSettings';
 import { Avatar, PasswordInput, errorText } from './ui';
@@ -241,6 +241,9 @@ export function Settings({ onClose, onToast }: { onClose: () => void; onToast: (
         <div className="section-title">{canEditProfile ? 'Mobile number & email' : 'My profile'}</div>
         <ContactSettings onToast={onToast} editable={canEditProfile} />
 
+        <div className="section-title">Privacy</div>
+        <PrivacySettings />
+
         <div className="section-title">App lock</div>
         <AppLockSettings onToast={onToast} />
 
@@ -352,6 +355,54 @@ function BackupSettings() {
         </button>
       )}
       {msg && <div className={msg.ok ? 'notice' : 'error'}>{msg.text}</div>}
+    </div>
+  );
+}
+/** Like WhatsApp: my About line, read receipts and last seen. */
+function PrivacySettings() {
+  const c = useClient();
+  const [about, setAbout] = useState(c.about);
+  const [msg, setMsg] = useState<string | null>(null);
+  useEffect(() => setAbout(c.about), [c.about]);
+  const save = (fn: () => Promise<void>, done: string) =>
+    void fn().then(
+      () => setMsg(done),
+      (e) => setMsg(errorText(e)),
+    );
+  return (
+    <div className="stack">
+      <label className="field-label">
+        About
+        <span className="row" style={{ gap: 6 }}>
+          <input className="grow" value={about} onChange={(e) => setAbout(e.target.value)} placeholder="e.g. At the Pune office" maxLength={MAX_ABOUT} />
+          {about.trim() !== c.about && <button onClick={() => save(() => client.setPrivacy({ about }), 'About saved')}>Save</button>}
+        </span>
+      </label>
+      <label className="setting">
+        <div className="grow">
+          <div className="name">Read receipts</div>
+          <div className="muted small">When off, people don't see when you read their messages, and you don't see theirs.</div>
+        </div>
+        <input
+          type="checkbox"
+          className="switch"
+          checked={c.privacy.readReceipts}
+          onChange={(e) => save(() => client.setReadReceipts(e.target.checked), e.target.checked ? 'Read receipts on' : 'Read receipts off')}
+        />
+      </label>
+      <label className="setting">
+        <div className="grow">
+          <div className="name">Hide last seen & online</div>
+          <div className="muted small">Nobody sees when you were last online, and you don't see theirs.</div>
+        </div>
+        <input
+          type="checkbox"
+          className="switch"
+          checked={c.hideLastSeen}
+          onChange={(e) => save(() => client.setPrivacy({ hideLastSeen: e.target.checked }), e.target.checked ? 'Last seen hidden' : 'Last seen shown')}
+        />
+      </label>
+      {msg && <p className="muted small" style={{ margin: 0 }}>{msg}</p>}
     </div>
   );
 }

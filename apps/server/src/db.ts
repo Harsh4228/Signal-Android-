@@ -46,6 +46,10 @@ export interface UserRow {
   /** One-time QR invite (hash of the secret) and until when it works; null = none. */
   invite_hash: string | null;
   invite_expires: number | null;
+  /** Their own "About" line ('' = none). */
+  about: string;
+  /** 1 = nobody sees their last seen / online (and they don't see others'). */
+  hide_last_seen: number;
 }
 
 export type AvatarRow = { mime: string; data: string; ver: number };
@@ -142,6 +146,8 @@ export interface Db {
   setDepartments(username: string, departments: string[]): Promise<void>;
   setContactInfo(username: string, phone: string, email: string): Promise<void>;
   setDisplayName(username: string, name: string): Promise<void>;
+  /** The person's own privacy choices: About line, hide last seen. Fields left out stay. */
+  setPrivacy(username: string, p: { about?: string; hideLastSeen?: boolean }): Promise<void>;
   /** A new one-time QR invite (replaces any old one), or null to clear it. */
   setInvite(username: string, invite: { hash: string; expires: number } | null): Promise<void>;
   setCanShare(username: string, canShare: boolean): Promise<void>;
@@ -302,6 +308,8 @@ export function openSqlite(file: string): Db {
   if (!cols.includes('display_name')) db.exec("ALTER TABLE users ADD COLUMN display_name TEXT NOT NULL DEFAULT ''");
   if (!cols.includes('invite_hash')) db.exec('ALTER TABLE users ADD COLUMN invite_hash TEXT');
   if (!cols.includes('invite_expires')) db.exec('ALTER TABLE users ADD COLUMN invite_expires INTEGER');
+  if (!cols.includes('about')) db.exec("ALTER TABLE users ADD COLUMN about TEXT NOT NULL DEFAULT ''");
+  if (!cols.includes('hide_last_seen')) db.exec('ALTER TABLE users ADD COLUMN hide_last_seen INTEGER NOT NULL DEFAULT 0');
   const productCols = (db.prepare('PRAGMA table_info(products)').all() as { name: string }[]).map((c) => c.name);
   if (!productCols.includes('owner')) {
     db.exec("ALTER TABLE products ADD COLUMN owner TEXT NOT NULL DEFAULT ''");
@@ -356,6 +364,8 @@ export function openSqlite(file: string): Db {
     setCanShare: db.prepare('UPDATE users SET can_share = ? WHERE username = ?'),
     setContactInfo: db.prepare('UPDATE users SET phone = ?, email = ? WHERE username = ?'),
     setDisplayName: db.prepare('UPDATE users SET display_name = ? WHERE username = ?'),
+    setAbout: db.prepare('UPDATE users SET about = ? WHERE username = ?'),
+    setHideLastSeen: db.prepare('UPDATE users SET hide_last_seen = ? WHERE username = ?'),
     setInvite: db.prepare('UPDATE users SET invite_hash = ?, invite_expires = ? WHERE username = ?'),
     putAvatar: db.prepare(
       'INSERT INTO avatars (username, mime, data, ver) VALUES (?, ?, ?, ?) ON CONFLICT(username) DO UPDATE SET mime = excluded.mime, data = excluded.data, ver = excluded.ver',
@@ -467,6 +477,12 @@ export function openSqlite(file: string): Db {
     },
     async setDisplayName(username, name) {
       q.setDisplayName.run(name, username);
+    },
+    async setPrivacy(username, p) {
+      tx(() => {
+        if (p.about !== undefined) q.setAbout.run(p.about, username);
+        if (p.hideLastSeen !== undefined) q.setHideLastSeen.run(p.hideLastSeen ? 1 : 0, username);
+      });
     },
     async setInvite(username, invite) {
       q.setInvite.run(invite?.hash ?? null, invite?.expires ?? null, username);
