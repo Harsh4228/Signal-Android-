@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Ban, Bell, CircleDashed, EllipsisVertical, Lock, Megaphone, ShoppingBag, Star, MessageSquarePlus, Search, Settings as SettingsIcon, ShieldCheck } from 'lucide-react';
+import { Ban, Bell, CircleDashed, EllipsisVertical, LifeBuoy, Lock, Megaphone, ShoppingBag, Star, MessageSquarePlus, Search, Settings as SettingsIcon, ShieldCheck } from 'lucide-react';
 import { MessengerClient, isGroupKey } from '@meetme/core';
 import { appLock, client, useClient, useLock } from '../messenger';
 import { Broadcast } from './Broadcast';
@@ -10,6 +10,7 @@ import { StarredPanel } from './ChatExtras';
 import { CatalogPanel } from './Catalog';
 import { Avatar, ChatAvatar, Logo, errorText, shortTime, typingText } from './ui';
 import { Directory } from './Directory';
+import { HelpDeskModal } from './AdminRights';
 
 export function Sidebar({ onSettings, onError }: { onSettings: () => void; onError: (m: string) => void }) {
   const c = useClient();
@@ -21,7 +22,7 @@ export function Sidebar({ onSettings, onError }: { onSettings: () => void; onErr
   const [showNotices, setShowNotices] = useState(false);
   const [showStatus, setShowStatus] = useState(false);
   const [more, setMore] = useState(false);
-  const [panel, setPanel] = useState<'starred' | 'catalog' | null>(null);
+  const [panel, setPanel] = useState<'starred' | 'catalog' | 'help' | null>(null);
   const moreRef = useRef<HTMLDivElement>(null);
   const pick = (fn: () => void) => {
     setMore(false);
@@ -72,6 +73,9 @@ export function Sidebar({ onSettings, onError }: { onSettings: () => void; onErr
           <button className="icon dot-host" title="Status" onClick={() => setShowStatus(true)}>
             <CircleDashed size={19} />
             {c.unseenStatusCount > 0 && <span className="dot" />}
+          </button>
+          <button className="icon" title="Help desk: whom to contact" disabled={offline} onClick={() => setPanel('help')}>
+            <LifeBuoy size={19} />
           </button>
           <button className="icon" title={c.isAdmin ? 'Notices: send and see who read them' : 'Notices'} onClick={() => setShowNotices(true)}>
             <Bell size={19} />
@@ -125,6 +129,7 @@ export function Sidebar({ onSettings, onError }: { onSettings: () => void; onErr
       {showNotices && <NoticesPanel onClose={() => setShowNotices(false)} onToast={onError} />}
       {showStatus && <StatusPanel onClose={() => setShowStatus(false)} onToast={onError} />}
       {panel === 'starred' && <StarredPanel onClose={() => setPanel(null)} />}
+      {panel === 'help' && <HelpDeskModal onClose={() => setPanel(null)} onToast={onError} />}
       {panel === 'catalog' && <CatalogPanel onClose={() => setPanel(null)} onToast={onError} />}
 
       {c.banned && (

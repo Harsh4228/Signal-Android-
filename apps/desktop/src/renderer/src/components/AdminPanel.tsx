@@ -7,7 +7,9 @@ import {
   Check,
   CircleCheck,
   Copy,
+  KeyRound,
   LayoutDashboard,
+  LifeBuoy,
   Loader2,
   Mail,
   MessageSquare,
@@ -48,8 +50,9 @@ import {
 } from '@meetme/core';
 import { client, useClient } from '../messenger';
 import { Avatar, errorText, shortTime } from './ui';
+import { HelpDeskTab, RightsTab } from './AdminRights';
 
-type Tab = 'overview' | 'users' | 'departments' | 'groups' | 'activity' | 'settings';
+type Tab = 'overview' | 'users' | 'departments' | 'groups' | 'rights' | 'helpdesk' | 'activity' | 'settings';
 /** A QR invite to show: for a new user, or a new one for someone who already exists. */
 type Share = { invite: InviteResponse; name: string; renewed: boolean };
 type Toast = (m: string) => void;
@@ -59,6 +62,8 @@ const TABS: [Tab, string, typeof Users][] = [
   ['users', 'Users', Users],
   ['departments', 'Departments', Building2],
   ['groups', 'Groups', UsersRound],
+  ['rights', 'Permissions', KeyRound],
+  ['helpdesk', 'Help desk', LifeBuoy],
   ['activity', 'Activity log', ScrollText],
   ['settings', 'Settings', Settings2],
 ];
@@ -137,6 +142,8 @@ export function AdminPanel({ onClose, onToast }: { onClose: () => void; onToast:
           {tab === 'groups' && (
             <GroupsTab groups={groups} users={users} reload={reload} onToast={onToast} openChat={openChat} />
           )}
+          {tab === 'rights' && <RightsTab users={users} groups={groups} departments={departments ?? []} onToast={onToast} />}
+          {tab === 'helpdesk' && <HelpDeskTab users={users} departments={departments ?? []} onToast={onToast} />}
           {tab === 'activity' && <Activity />}
           {tab === 'settings' && <SettingsTab onToast={onToast} />}
         </div>
@@ -1005,6 +1012,8 @@ function GroupEditor({
   // Who can send: everyone, or only the people ticked here (admins always can).
   const [restrict, setRestrict] = useState(!!group?.senders);
   const [senders, setSenders] = useState<Set<string>>(() => new Set(group?.senders ?? []));
+  // Group admins: members who may manage the group themselves (members, who sends, its permissions).
+  const [groupAdmins, setGroupAdmins] = useState<Set<string>>(() => new Set(group?.admins ?? []));
   const [query, setQuery] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1036,8 +1045,8 @@ function GroupEditor({
       const list = [...members];
       const who = restrict ? [...senders].filter((u) => members.has(u)) : null;
       const g = group
-        ? await client.updateGroup(group.id, { name: name.trim(), members: list, senders: who })
-        : await client.createGroup(name.trim(), list, who);
+        ? await client.updateGroup(group.id, { name: name.trim(), members: list, senders: who, admins: [...groupAdmins].filter((u) => members.has(u)) })
+        : await client.createGroup(name.trim(), list, who, [...groupAdmins].filter((u) => members.has(u)));
       onSaved(g);
     } catch (err) {
       setError(errorText(err));
@@ -1111,6 +1120,37 @@ function GroupEditor({
           )}
         </>
       )}
+      <div className="section-title" style={{ marginBottom: 0 }}>
+        Group admins
+      </div>
+      <p className="muted small" style={{ margin: 0 }}>
+        They can add or remove members and set what members may do in this group.
+      </p>
+      {senderChoices.length ? (
+        <div className="chips" style={{ margin: 0 }}>
+          {senderChoices.map((u) => (
+            <button
+              key={u}
+              type="button"
+              className={groupAdmins.has(u) ? 'active' : ''}
+              onClick={() =>
+                setGroupAdmins((s) => {
+                  const n = new Set(s);
+                  if (n.has(u)) n.delete(u);
+                  else n.add(u);
+                  return n;
+                })
+              }
+            >
+              {groupAdmins.has(u) && <Check size={13} />} {shortId(u)}
+            </button>
+          ))}
+        </div>
+      ) : (
+        <p className="muted small" style={{ margin: 0 }}>
+          Add members above first.
+        </p>
+      )}
       {error && <div className="error">{error}</div>}
       <div className="row-end" style={{ marginTop: 4 }}>
         <button type="button" onClick={onCancel}>
@@ -1146,16 +1186,24 @@ function AuditList({ entries }: { entries: AuditEntry[] }) {
   );
 }
 
+/** The activity log, 50 at a time (newest first); "Load more" fetches the next page. */
 function Activity() {
   const [entries, setEntries] = useState<AuditEntry[] | null>(null);
+  const [next, setNext] = useState<number | null>(null);
+  const [loading, setLoading] = useState(false);
   const [query, setQuery] = useState('');
-  const load = useCallback(() => {
-    void client
-      .getAuditLog(500)
-      .then(setEntries)
-      .catch(() => setEntries([]));
+  const load = useCallback((before: number | null) => {
+    setLoading(true);
+    client
+      .getAuditPage(before)
+      .then((p) => {
+        setEntries((cur) => (before && cur ? [...cur, ...p.items] : p.items));
+        setNext(p.next);
+      })
+      .catch(() => setEntries((cur) => cur ?? []))
+      .finally(() => setLoading(false));
   }, []);
-  useEffect(load, [load]);
+  useEffect(() => load(null), [load]);
   const q = query.trim().toLowerCase();
   const shown = (entries ?? []).filter((e) =>
     `${e.actor} ${AUDIT_LABELS[e.action] ?? e.action} ${e.target} ${e.detail}`.toLowerCase().includes(q),
@@ -1165,9 +1213,9 @@ function Activity() {
       <div className="row" style={{ marginTop: 4, marginBottom: 12 }}>
         <div className="search grow">
           <Search size={16} />
-          <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search the log" />
+          <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search the loaded entries" />
         </div>
-        <button className="icon" title="Refresh" onClick={load}>
+        <button className="icon" title="Refresh" onClick={() => load(null)}>
           <RefreshCw size={16} />
         </button>
       </div>
@@ -1178,11 +1226,15 @@ function Activity() {
       ) : (
         <p className="muted small">No admin actions logged{q ? ' that match' : ' yet'}.</p>
       )}
-      <p className="muted small">Every account, ban, group and settings change made by an admin is recorded here.</p>
+      {next !== null && (
+        <button disabled={loading} onClick={() => load(next)} style={{ marginTop: 10 }}>
+          {loading ? <Loader2 size={15} className="spin" /> : null} Load older entries
+        </button>
+      )}
+      <p className="muted small">Every account, ban, group, permission and settings change is recorded here.</p>
     </>
   );
 }
-
 // ------------------------------------------------------------------ settings
 
 function SettingsTab({ onToast }: { onToast: Toast }) {

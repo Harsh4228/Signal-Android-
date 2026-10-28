@@ -1,6 +1,7 @@
 import {
   app,
   BrowserWindow,
+  dialog,
   ipcMain,
   Menu,
   nativeTheme,
@@ -17,8 +18,9 @@ import { join } from 'node:path';
 /**
  * Security hardening for the desktop app:
  *  - Screen capture / screenshots are blocked with setContentProtection (black window in captures).
- *  - Downloads are blocked entirely, and nothing can open new windows or navigate away. There is no way
- *    to save a file outside the app: files can only be shared on to other chats inside it.
+ *    The admin may allow screenshots for someone (rights): only then is the protection switched off.
+ *  - Browser downloads are blocked entirely, and nothing can open new windows or navigate away. A file only
+ *    leaves the app through "Save to PC" (file:save), which the UI offers only with the admin's download right.
  *  - The renderer is sandboxed, has no Node access, and uses an in-memory session
  *    (no cookies / cache / localStorage written to disk).
  *  - The only things written to disk are the key store, encrypted with the OS keychain (safeStorage:
@@ -153,6 +155,31 @@ ipcMain.handle('super:open', async (e, serverUrl: string) => {
   }
   if (page.protocol !== 'https:' && page.protocol !== 'http:') throw new Error('invalid server address');
   await shell.openExternal(page.toString());
+});
+
+// ---------------------------------------------------------------- what the admin may allow (rights)
+
+/**
+ * Screenshots: blocked unless the admin allows them for this person (in the chat that is open). The UI checks the
+ * rights and tells the window; nothing else changes it.
+ */
+ipcMain.handle('capture:set', async (e, allow: boolean) => {
+  assertTrusted(e);
+  BrowserWindow.fromWebContents(e.sender)?.setContentProtection(allow !== true);
+});
+
+const MAX_SAVE_BYTES = 26 * 1024 * 1024;
+/** "Save to PC" (only with the download right): the person picks where, in the normal save dialog. */
+ipcMain.handle('file:save', async (e, name: string, data: Uint8Array) => {
+  assertTrusted(e);
+  if (!(data instanceof Uint8Array) || data.length > MAX_SAVE_BYTES) throw new Error('invalid file');
+  const safe = String(name).replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_').slice(0, 120) || 'file';
+  const win = BrowserWindow.fromWebContents(e.sender);
+  const options = { defaultPath: join(app.getPath('downloads'), safe) };
+  const r = win ? await dialog.showSaveDialog(win, options) : await dialog.showSaveDialog(options);
+  if (r.canceled || !r.filePath) return null;
+  await fs.writeFile(r.filePath, data);
+  return r.filePath;
 });
 
 // ---------------------------------------------------------------- auto-update

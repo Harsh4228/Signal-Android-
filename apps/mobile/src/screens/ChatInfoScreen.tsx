@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Alert, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
-import { BadgeCheck, Check, ChevronRight, Eraser, Mail, Phone, ShoppingBag, RotateCcw, ShieldX, UserMinus } from 'lucide-react-native';
-import { formatLastSeen, isGroupKey } from '@meetme/core';
+import { BadgeCheck, Check, ChevronRight, Eraser, Mail, MessageSquare, Phone, ShieldCheck, ShieldPlus, ShoppingBag, RotateCcw, ShieldX, UserMinus, UserPlus } from 'lucide-react-native';
+import { formatLastSeen, groupIdOf, isGroupKey, type UserProfile } from '@meetme/core';
 import { client, useClient } from '../messenger';
 import { colors, mono, s } from '../theme';
-import { Avatar, Button, ChatAvatar, Header, Row, errorText } from '../ui';
+import { Avatar, Button, ChatAvatar, Header, Row, Sheet, errorText, useBack } from '../ui';
 import type { Route } from '../App';
 import { MediaSection } from './MediaScreen';
 import { CatalogScreen } from './ChatExtras';
+import { GroupRightsScreen } from './RightsScreen';
 
 /** Confirm, then clear the chat and its saved files. */
 function confirmClear(chatKey: string) {
@@ -39,7 +40,17 @@ function GroupInfoScreen({
   const g = c.groupOf(chatKey);
   const me = c.account?.username;
   const [query, setQuery] = useState('');
-  const members = c.groupMembers(chatKey).filter((u) => u.includes(query.trim().toLowerCase()));
+  const [rights, setRights] = useState(false);
+  const [adding, setAdding] = useState(false);
+  const [acting, setActing] = useState<string | null>(null);
+  const manage = c.isGroupAdmin(chatKey);
+  const groupAdmins = g?.admins ?? [];
+  const q = query.trim().toLowerCase();
+  const members = c.groupMembers(chatKey).filter((u) => !q || ` ${client.displayName(u)}`.toLowerCase().includes(q));
+  const change = (changes: { members?: string[]; admins?: string[] }, done: string) =>
+    void client
+      .updateMyGroup(groupIdOf(chatKey), changes)
+      .then(() => onError(done), (e) => onError(errorText(e)));
   const count = g?.members.length ?? 0;
   useEffect(() => {
     void client.refreshPresence(g?.members ?? []);
@@ -60,11 +71,25 @@ function GroupInfoScreen({
             </Text>
           )}
           <Text style={[s.muted, { textAlign: 'center', lineHeight: 19, fontSize: 12 }]}>
-            Only admins can change the name or members. Every member gets their own end-to-end encrypted copy of each
-            message.
+            {manage
+              ? 'You manage this group: add people, choose group admins and set what members may do here.'
+              : 'Only admins can change the name or members.'}{' '}
+            Every member gets their own end-to-end encrypted copy of each message.
           </Text>
         </View>
         <MediaSection chatKey={chatKey} navigate={navigate} onError={onError} />
+        {manage && g && (
+          <View style={[s.card, { marginTop: 12, padding: 4 }]}>
+            <Row icon={UserPlus} title="Add members" onPress={() => setAdding(true)} right={<ChevronRight size={18} color={colors.faint} />} />
+            <Row
+              icon={ShieldCheck}
+              title="Group permissions"
+              subtitle="Downloads, screenshots, forwarding… in this group"
+              onPress={() => setRights(true)}
+              right={<ChevronRight size={18} color={colors.faint} />}
+            />
+          </View>
+        )}
         <Text style={s.section}>
           {count} member{count === 1 ? '' : 's'}
         </Text>
@@ -85,18 +110,21 @@ function GroupInfoScreen({
             <View key={u}>
               {i > 0 && <View style={[s.divider, { marginLeft: 64 }]} />}
               <Pressable
-                disabled={u === me}
+                disabled={u === me && !manage}
+                onLongPress={manage ? () => setActing(u) : undefined}
                 onPress={() =>
-                  void client
-                    .addContact(u)
-                    .then(() => navigate({ name: 'chat', peer: u }))
-                    .catch(() => {})
+                  manage
+                    ? setActing(u)
+                    : void client
+                        .addContact(u)
+                        .then(() => navigate({ name: 'chat', peer: u }))
+                        .catch(() => {})
                 }
                 style={({ pressed }) => [s.row, { gap: 12, padding: 12 }, pressed && { backgroundColor: colors.hover }]}
               >
                 <ChatAvatar chatKey={u} size={40} />
                 <View style={{ flex: 1 }}>
-                  <Text style={s.textStrong}>{u === me ? 'You' : u}</Text>
+                  <Text style={s.textStrong}>{u === me ? 'You' : client.displayName(u)}</Text>
                   {u !== me && (
                     <Text style={[s.muted, { fontSize: 12 }, c.getPresence(u)?.online && { color: colors.ok }]}>
                       {formatLastSeen(c.getPresence(u)) || 'Tap to message'}
@@ -108,6 +136,11 @@ function GroupInfoScreen({
                     </Text>
                   )}
                 </View>
+                {groupAdmins.includes(u) && !c.admins.includes(u) && (
+                  <View style={{ backgroundColor: colors.okSoft, borderRadius: 999, paddingHorizontal: 8, paddingVertical: 2 }}>
+                    <Text style={{ color: colors.ok, fontSize: 11, fontWeight: '600' }}>Group admin</Text>
+                  </View>
+                )}
                 {c.admins.includes(u) && (
                   <View style={{ backgroundColor: colors.accentSoft, borderRadius: 999, paddingHorizontal: 8, paddingVertical: 2 }}>
                     <Text style={{ color: colors.accentText, fontSize: 11, fontWeight: '600' }}>Admin</Text>
@@ -126,6 +159,91 @@ function GroupInfoScreen({
           </>
         )}
       </ScrollView>
+      {acting && g && (
+        <Sheet
+          title={acting === me ? 'You' : client.displayName(acting)}
+          onClose={() => setActing(null)}
+          actions={[
+            ...(acting !== me
+              ? [{ icon: MessageSquare, label: 'Message', onPress: () => void client.addContact(acting).then(() => navigate({ name: 'chat', peer: acting })) }]
+              : []),
+            groupAdmins.includes(acting)
+              ? { icon: ShieldX, label: 'Dismiss as group admin', onPress: () => change({ admins: groupAdmins.filter((u) => u !== acting) }, 'Group admins changed') }
+              : { icon: ShieldPlus, label: 'Make group admin', onPress: () => change({ admins: [...groupAdmins, acting] }, 'Group admins changed') },
+            ...(acting !== me
+              ? [{ icon: UserMinus, label: 'Remove from group', onPress: () => change({ members: g.members.filter((u) => u !== acting) }, 'Removed from the group') }]
+              : []),
+          ]}
+        />
+      )}
+      {adding && g && (
+        <AddMembers
+          members={g.members}
+          onClose={() => setAdding(false)}
+          onAdd={(list) => {
+            setAdding(false);
+            change({ members: [...g.members, ...list] }, `Added ${list.length} to the group`);
+          }}
+        />
+      )}
+      {rights && g && (
+        <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}>
+          <GroupRightsScreen group={g} onClose={() => setRights(false)} onToast={onError} />
+        </View>
+      )}
+    </View>
+  );
+}
+
+/** Group admins: pick colleagues to add (from the company directory). */
+function AddMembers({ members, onClose, onAdd }: { members: string[]; onClose: () => void; onAdd: (list: string[]) => void }) {
+  useBack(onClose);
+  const [people, setPeople] = useState<UserProfile[] | null>(null);
+  const [picked, setPicked] = useState<string[]>([]);
+  const [query, setQuery] = useState('');
+  useEffect(() => {
+    client.listDirectory().then(setPeople, () => setPeople([]));
+  }, []);
+  const q = query.trim().toLowerCase();
+  const shown = (people ?? []).filter((p) => !members.includes(p.username) && `${p.name} ${p.username}`.toLowerCase().includes(q));
+  return (
+    <View style={[s.fill, { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }]}>
+      <Header title="Add members" onBack={onClose} />
+      <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 100, gap: 8 }} keyboardShouldPersistTaps="handled">
+        <TextInput
+          style={s.input}
+          value={query}
+          onChangeText={setQuery}
+          placeholder="Search colleagues"
+          placeholderTextColor={colors.faint}
+          autoCapitalize="none"
+          autoCorrect={false}
+        />
+        {people === null && <Text style={s.muted}>Loading…</Text>}
+        {people && !shown.length && <Text style={s.muted}>Everyone is already in the group.</Text>}
+        <View style={[s.card, { paddingVertical: 4 }]}>
+          {shown.map((p) => {
+            const on = picked.includes(p.username);
+            return (
+              <Pressable
+                key={p.username}
+                onPress={() => setPicked(on ? picked.filter((u) => u !== p.username) : [...picked, p.username])}
+                style={({ pressed }) => [s.row, { gap: 12, padding: 12 }, pressed && { backgroundColor: colors.hover }]}
+              >
+                <Avatar name={p.username} size={38} />
+                <View style={{ flex: 1 }}>
+                  <Text style={s.textStrong}>{p.name || p.username}</Text>
+                  {!!p.departments.length && <Text style={s.muted}>{p.departments.join(', ')}</Text>}
+                </View>
+                {on && <Check size={20} color={colors.accent} strokeWidth={2.4} />}
+              </Pressable>
+            );
+          })}
+        </View>
+      </ScrollView>
+      <View style={{ position: 'absolute', left: 16, right: 16, bottom: 16 }}>
+        <Button variant="primary" title={picked.length ? `Add ${picked.length}` : 'Add'} disabled={!picked.length} onPress={() => onAdd(picked)} />
+      </View>
     </View>
   );
 }

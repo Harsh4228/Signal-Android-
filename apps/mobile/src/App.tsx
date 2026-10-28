@@ -10,7 +10,7 @@ import { Logo } from './ui';
 import { registerPush } from './push';
 import { RegisterScreen } from './screens/RegisterScreen';
 import { ChatListScreen } from './screens/ChatListScreen';
-import { DirectoryScreen } from './screens/DirectoryScreen';
+import { DirectoryScreen, openDirectChat } from './screens/DirectoryScreen';
 import { ChatScreen } from './screens/ChatScreen';
 import { ChatInfoScreen } from './screens/ChatInfoScreen';
 import { SettingsScreen } from './screens/SettingsScreen';
@@ -25,6 +25,7 @@ import { NewNoticeScreen, NoticePopup, NoticesScreen } from './screens/NoticesSc
 import { MediaScreen } from './screens/MediaScreen';
 import { StatusComposeScreen, StatusScreen, StatusViewerScreen } from './screens/StatusScreen';
 import { CatalogScreen, StarredScreen } from './screens/ChatExtras';
+import { HelpDeskScreen } from './screens/HelpDesk';
 
 export type Route =
   | { name: 'list' }
@@ -42,7 +43,8 @@ export type Route =
   | { name: 'status-view'; user: string; start: number }
   | { name: 'notices' }
   | { name: 'notice-new' }
-  | { name: 'applock' };
+  | { name: 'applock' }
+  | { name: 'help' };
 
 export default function App() {
   const c = useClient();
@@ -58,12 +60,6 @@ export default function App() {
   }, [call.status]);
 
   useEffect(() => {
-    // Block screenshots, screen recording and the app-switcher preview (iOS + Android).
-    CaptureProtection.prevent({
-      screenshot: true,
-      record: { text: 'Screen recording is blocked in CellMate', backgroundColor: '#ffffff', textColor: '#101828' },
-      appSwitcher: { text: 'CellMate', backgroundColor: '#ffffff', textColor: '#101828' },
-    }).catch(() => {});
     // iOS cannot fully stop a screenshot, so tell the other person if one happens.
     const sub = CaptureProtection.addListener((type) => {
       if (type === CaptureEventType.CAPTURED && client.activeChat) client.notifyScreenshot(client.activeChat);
@@ -103,6 +99,21 @@ export default function App() {
   useEffect(() => {
     client.setActiveChat(route.name === 'chat' ? route.peer : null);
   }, [route]);
+
+  // Screenshots, screen recording and the app-switcher preview are blocked unless the admin allows screenshots
+  // (for me, or in the chat that is open).
+  const chatOpen = route.name === 'chat' || route.name === 'info' || route.name === 'media' ? route.peer : null;
+  const mayCapture = c.account ? client.can('screenshot', chatOpen) : false;
+  useEffect(() => {
+    const done = mayCapture
+      ? CaptureProtection.allow()
+      : CaptureProtection.prevent({
+          screenshot: true,
+          record: { text: 'Screen recording is blocked in CellMate', backgroundColor: '#ffffff', textColor: '#101828' },
+          appSwitcher: { text: 'CellMate', backgroundColor: '#ffffff', textColor: '#101828' },
+        });
+    done.catch(() => {});
+  }, [mayCapture]);
 
   useEffect(() => {
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
@@ -158,6 +169,8 @@ export default function App() {
     screen = <NewNoticeScreen navigate={setRoute} onDone={setToast} />;
   } else if (route.name === 'applock') {
     screen = <AppLockScreen navigate={setRoute} onToast={setToast} />;
+  } else if (route.name === 'help') {
+    screen = <HelpDeskScreen onClose={() => setRoute({ name: 'list' })} onChat={(u) => void openDirectChat(u, setRoute, setToast)} />;
   } else if (route.name === 'settings') {
     screen = <SettingsScreen navigate={setRoute} />;
   } else {

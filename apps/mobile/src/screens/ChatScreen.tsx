@@ -9,6 +9,8 @@ import {
   CheckCheck,
   CircleAlert,
   Clock3,
+  Copy,
+  Download,
   File,
   FileText,
   Forward,
@@ -51,6 +53,7 @@ import {
   VoiceRecorder,
 } from './ChatExtras';
 import { pickFile, type PickKind } from '../files';
+import { copyText, saveToDevice } from '../deviceFiles';
 import { AttachmentView } from './AttachmentView';
 import { EventView, NewEvent, NewPoll, PollView } from './PollEvent';
 import { calls, client, useClient } from '../messenger';
@@ -164,7 +167,22 @@ export function ChatScreen({
   function actionsFor(m: ChatMessage): SheetAction[] {
     const list: SheetAction[] = [];
     if (online && !gone && c.canSendTo(peer)) list.push({ icon: Reply, label: 'Reply', onPress: () => setReplyTo(m) });
-    if (!m.poll && !m.event && (!m.attachment || m.attachment.data)) {
+    if (m.text && !m.deleted && c.can('copy', peer)) {
+      list.push({
+        icon: Copy,
+        label: 'Copy',
+        onPress: () => void copyText(m.text, peer).then(() => onError('Copied'), (e) => onError(errorText(e))),
+      });
+    }
+    if (m.attachment?.data && c.can('download', peer)) {
+      const a = m.attachment;
+      list.push({
+        icon: Download,
+        label: 'Save to phone',
+        onPress: () => void saveToDevice(a, peer).then((where) => onError(`Saved to ${where}`), (e) => onError(errorText(e))),
+      });
+    }
+    if (!m.poll && !m.event && (!m.attachment || m.attachment.data) && c.can('forward', peer)) {
       list.push({ icon: Forward, label: 'Forward', onPress: () => setForwarding(m) });
     }
     list.push({ icon: Star, label: m.starred ? 'Unstar' : 'Star', onPress: () => client.toggleStar(m) });
@@ -229,8 +247,8 @@ export function ChatScreen({
         }
         right={
           <>
-            {!group && <IconButton icon={Phone} label="Voice call" disabled={!online} onPress={() => call(false)} />}
-            {!group && <IconButton icon={Video} label="Video call" disabled={!online} onPress={() => call(true)} />}
+            {!group && c.can('voiceCall', peer) && <IconButton icon={Phone} label="Voice call" disabled={!online} onPress={() => call(false)} />}
+            {!group && c.can('videoCall', peer) && <IconButton icon={Video} label="Video call" disabled={!online} onPress={() => call(true)} />}
             <IconButton icon={Search} label="Search in chat" onPress={() => (setSearching(!searching), setQuery(''))} />
           </>
         }
@@ -431,7 +449,7 @@ export function ChatScreen({
                 importantForAutofill="no"
               />
             </View>
-            {!text.trim() && !editing ? (
+            {!text.trim() && !editing && c.can('sendFiles', peer) ? (
               <Pressable
                 style={[styles.send, !online && { opacity: 0.4 }]}
                 disabled={!online}
@@ -459,9 +477,13 @@ export function ChatScreen({
           title="Send securely"
           onClose={() => setAttachOpen(false)}
           actions={[
-            { icon: Image, label: 'Photo', onPress: () => void sendPicked('photo') },
-            { icon: FileText, label: 'PDF document', onPress: () => void sendPicked('pdf') },
-            { icon: File, label: 'Other file', onPress: () => void sendPicked('file') },
+            ...(c.can('sendFiles', peer)
+              ? [
+                  { icon: Image, label: 'Photo', onPress: () => void sendPicked('photo') },
+                  { icon: FileText, label: 'PDF document', onPress: () => void sendPicked('pdf') },
+                  { icon: File, label: 'Other file', onPress: () => void sendPicked('file') },
+                ]
+              : []),
             { icon: BarChart3, label: 'Poll', onPress: () => setCreating('poll') },
             { icon: CalendarDays, label: 'Event', onPress: () => setCreating('event') },
             { icon: MapPin, label: 'Location', onPress: () => setCreating('location') },

@@ -10,6 +10,8 @@ import {
   Clock3,
   File,
   FileText,
+  Copy,
+  Download,
   Forward,
   Image,
   Info,
@@ -46,6 +48,7 @@ import {
   type CallLog,
   type ChatMessage,
 } from '@meetme/core';
+import { copyText, saveToDevice } from '../deviceFiles';
 import { calls, client, useClient } from '../messenger';
 import { ChatInfo } from './ChatInfo';
 import { AttachmentView } from './AttachmentView';
@@ -285,12 +288,16 @@ export function ChatView({ peer, onError }: { peer: string; onError: (m: string)
         <div className="actions">
           {!group && (
             <>
-              <button className="icon" title="Voice call" disabled={!online} onClick={() => call(false)}>
-                <Phone size={19} />
-              </button>
-              <button className="icon" title="Video call" disabled={!online} onClick={() => call(true)}>
-                <Video size={20} />
-              </button>
+              {c.can('voiceCall', peer) && (
+                <button className="icon" title="Voice call" disabled={!online} onClick={() => call(false)}>
+                  <Phone size={19} />
+                </button>
+              )}
+              {c.can('videoCall', peer) && (
+                <button className="icon" title="Video call" disabled={!online} onClick={() => call(true)}>
+                  <Video size={20} />
+                </button>
+              )}
             </>
           )}
           <button
@@ -332,7 +339,7 @@ export function ChatView({ peer, onError }: { peer: string; onError: (m: string)
 
       <div className="body">
         <div
-          className="messages"
+          className={`messages${c.can('copy', peer) ? ' allow-copy' : ''}`}
           onClick={() => {
             setMenuFor(null);
             setReactingTo(null);
@@ -375,7 +382,11 @@ export function ChatView({ peer, onError }: { peer: string; onError: (m: string)
                     canDeleteAll={c.canEditDelete && (m.outgoing || c.isAdmin)}
                     canDeleteMine={c.canClearHistory}
                     canReply={canWrite && c.canSendTo(peer)}
-                    canForward={!m.poll && !m.event && (!m.attachment || !!m.attachment.data)}
+                    canForward={!m.poll && !m.event && (!m.attachment || !!m.attachment.data) && c.can('forward', peer)}
+                    canCopy={!!m.text && c.can('copy', peer)}
+                    canSave={!!m.attachment?.data && c.can('download', peer)}
+                    onCopy={() => void copyText(m.text, peer).then(() => onError('Copied'), (e) => onError(errorText(e)))}
+                    onSave={() => void saveToDevice(m.attachment!, peer).then((p) => p && onError(`Saved to ${p}`), (e) => onError(errorText(e)))}
                     onMenu={() => setMenuFor(menuFor === m.id ? null : m.id)}
                     onEdit={() => startEdit(m)}
                     onDelete={(all) => void remove(m, all)}
@@ -499,15 +510,19 @@ export function ChatView({ peer, onError }: { peer: string; onError: (m: string)
                   </button>
                   {menu && (
                     <div className="attach-menu" onMouseLeave={() => setMenu(false)}>
-                      <button type="button" onClick={() => pick('image/*')}>
-                        <Image size={17} /> Photo
-                      </button>
-                      <button type="button" onClick={() => pick('application/pdf,.pdf')}>
-                        <FileText size={17} /> PDF document
-                      </button>
-                      <button type="button" onClick={() => pick('')}>
-                        <File size={17} /> Other file
-                      </button>
+                      {c.can('sendFiles', peer) && (
+                        <>
+                          <button type="button" onClick={() => pick('image/*')}>
+                            <Image size={17} /> Photo
+                          </button>
+                          <button type="button" onClick={() => pick('application/pdf,.pdf')}>
+                            <FileText size={17} /> PDF document
+                          </button>
+                          <button type="button" onClick={() => pick('')}>
+                            <File size={17} /> Other file
+                          </button>
+                        </>
+                      )}
                       <button type="button" onClick={() => (setMenu(false), setCreating('poll'))}>
                         <BarChart3 size={17} /> Poll
                       </button>
@@ -541,7 +556,7 @@ export function ChatView({ peer, onError }: { peer: string; onError: (m: string)
               />
             </div>
           </div>
-          {!text.trim() && !editing ? (
+          {!text.trim() && !editing && c.can('sendFiles', peer) ? (
             <button type="button" className="primary send" disabled={!canWrite} title="Record a voice message" onClick={() => setRecording(true)}>
               <Mic size={19} />
             </button>
@@ -564,6 +579,10 @@ function MessageActions({
   canDeleteMine,
   canReply,
   canForward,
+  canCopy,
+  canSave,
+  onCopy,
+  onSave,
   onMenu,
   onEdit,
   onDelete,
@@ -580,6 +599,10 @@ function MessageActions({
   canDeleteMine: boolean;
   canReply: boolean;
   canForward: boolean;
+  canCopy: boolean;
+  canSave: boolean;
+  onCopy: () => void;
+  onSave: () => void;
   onMenu: () => void;
   onEdit: () => void;
   onDelete: (forEveryone: boolean) => void;
@@ -596,6 +619,16 @@ function MessageActions({
       {canReply && (
         <button className="icon" title="Reply" onClick={onReply}>
           <Reply size={14} />
+        </button>
+      )}
+      {canCopy && (
+        <button className="icon" title="Copy text" onClick={onCopy}>
+          <Copy size={14} />
+        </button>
+      )}
+      {canSave && (
+        <button className="icon" title="Save to PC" onClick={onSave}>
+          <Download size={14} />
         </button>
       )}
       {canForward && (

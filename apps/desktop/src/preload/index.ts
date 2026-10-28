@@ -2,7 +2,8 @@ import { contextBridge, ipcRenderer } from 'electron';
 
 /**
  * The ONLY bridge between the sandboxed UI and the system: an encrypted key/value store and a folder for saved
- * chat media (the app encrypts it before it gets here). Nothing lets a file leave the app.
+ * chat media (the app encrypts it before it gets here). A file leaves the app only through saveFile, which the UI
+ * offers only when the admin allows downloads.
  */
 contextBridge.exposeInMainWorld('meetme', {
   platform: process.platform,
@@ -12,6 +13,10 @@ contextBridge.exposeInMainWorld('meetme', {
   checkUpdates: (serverUrl: string): Promise<void> => ipcRenderer.invoke('updates:check', serverUrl),
   /** Server owner: open the companies page of this server in the system browser. */
   openSuper: (serverUrl: string): Promise<void> => ipcRenderer.invoke('super:open', serverUrl),
+  /** Screenshot protection off only when the admin allows screenshots (the UI checks the rights). */
+  setCapture: (allow: boolean): Promise<void> => ipcRenderer.invoke('capture:set', allow),
+  /** "Save to PC" with the normal save dialog (only offered with the download right). Resolves with the path, or null. */
+  saveFile: (name: string, data: Uint8Array): Promise<string | null> => ipcRenderer.invoke('file:save', name, data),
   store: {
     getItem: (key: string): Promise<string | null> => ipcRenderer.invoke('store:get', key),
     setItem: (key: string, value: string): Promise<void> => ipcRenderer.invoke('store:set', key, value),

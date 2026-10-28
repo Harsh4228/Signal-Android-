@@ -22,6 +22,7 @@ class MainApplication : Application(), ReactApplication {
         PackageList(this).packages.apply {
           add(PinHashPackage())
           add(CallNotificationPackage())
+          add(DeviceFilesPackage())
         },
     )
   }

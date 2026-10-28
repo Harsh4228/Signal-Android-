@@ -1078,8 +1078,8 @@ export class MessengerClient extends Emitter<Events> {
   }
 
   /** `senders`: who may send (admins always may); null/omitted = every member. */
-  createGroup(name: string, members: string[], senders: string[] | null = null): Promise<GroupInfo> {
-    return this.http<GroupInfo>('POST', '/v1/admin/groups', { name, members, senders });
+  createGroup(name: string, members: string[], senders: string[] | null = null, admins: string[] = []): Promise<GroupInfo> {
+    return this.http<GroupInfo>('POST', '/v1/admin/groups', { name, members, senders, admins });
   }
 
   /** `admins`: the group's own admins (members who may manage it). */
@@ -3072,6 +3072,10 @@ export const AUDIT_LABELS: Record<string, string> = {
   'group.update': 'Changed group',
   'group.delete': 'Deleted group',
   'settings.update': 'Changed settings',
+  'rights.update': 'Changed permission',
+  'helpdesk.update': 'Changed help desk',
+  'user.admin_on': 'Made admin',
+  'user.admin_off': 'Removed as admin',
 };
 
 export function formatDuration(s: number): string {

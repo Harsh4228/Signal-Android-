@@ -48,14 +48,18 @@ import { client, useClient } from '../messenger';
 import { colors, s } from '../theme';
 import { Avatar, Banner, Button, Field, Header, IconButton, errorText, shortTime, useBack } from '../ui';
 import type { Route } from '../App';
+import { HelpDeskTab } from './HelpDesk';
+import { RightsTab } from './RightsScreen';
 
-type Tab = 'overview' | 'users' | 'departments' | 'groups' | 'activity' | 'settings';
+type Tab = 'overview' | 'users' | 'departments' | 'groups' | 'rights' | 'helpdesk' | 'activity' | 'settings';
 type Toast = (m: string) => void;
 const TABS: [Tab, string][] = [
   ['overview', 'Overview'],
   ['users', 'Users'],
   ['departments', 'Departments'],
   ['groups', 'Groups'],
+  ['rights', 'Permissions'],
+  ['helpdesk', 'Help desk'],
   ['activity', 'Activity'],
   ['settings', 'Settings'],
 ];
@@ -236,6 +240,8 @@ export function AdminScreen({ navigate, onToast }: { navigate: (r: Route) => voi
       )}
       {tab === 'departments' && <DepartmentsTab departments={departments} users={users} reload={reload} onToast={onToast} />}
       {tab === 'groups' && <GroupsTab groups={groups} users={users} reload={reload} onToast={onToast} openChat={openChat} />}
+      {tab === 'rights' && <RightsTab users={users} groups={groups} departments={departments ?? []} onToast={onToast} />}
+      {tab === 'helpdesk' && <HelpDeskTab users={users} departments={departments ?? []} onToast={onToast} />}
       {tab === 'activity' && <Activity />}
       {tab === 'settings' && <SettingsTab onToast={onToast} />}
     </View>
@@ -951,6 +957,8 @@ function GroupEditor({
   // Who can send: everyone, or only the people ticked here (admins always can).
   const [restrict, setRestrict] = useState(!!group?.senders);
   const [senders, setSenders] = useState<Set<string>>(() => new Set(group?.senders ?? []));
+  // Group admins: members who may manage the group themselves (members, who sends, its permissions).
+  const [groupAdmins, setGroupAdmins] = useState<Set<string>>(() => new Set(group?.admins ?? []));
   const [query, setQuery] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -982,8 +990,8 @@ function GroupEditor({
       const who = restrict ? [...senders].filter((u) => members.has(u)) : null;
       onSaved(
         group
-          ? await client.updateGroup(group.id, { name: name.trim(), members: list, senders: who })
-          : await client.createGroup(name.trim(), list, who),
+          ? await client.updateGroup(group.id, { name: name.trim(), members: list, senders: who, admins: [...groupAdmins].filter((u) => members.has(u)) })
+          : await client.createGroup(name.trim(), list, who, [...groupAdmins].filter((u) => members.has(u))),
       );
     } catch (e) {
       setError(errorText(e));
@@ -1055,6 +1063,33 @@ function GroupEditor({
               </View>
             </View>
           )}
+          <Text style={s.label}>Group admins</Text>
+          <Text style={[s.muted, { fontSize: 12 }]}>They can add or remove members and set what members may do in this group.</Text>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+            {senderChoices.map((u) => {
+              const on = groupAdmins.has(u);
+              return (
+                <Pressable
+                  key={u}
+                  onPress={() =>
+                    setGroupAdmins((cur) => {
+                      const n = new Set(cur);
+                      if (n.has(u)) n.delete(u);
+                      else n.add(u);
+                      return n;
+                    })
+                  }
+                  accessibilityRole="checkbox"
+                  accessibilityState={{ checked: on }}
+                  style={[styles.chip, on && styles.chipActive, s.row, { gap: 4 }]}
+                >
+                  {on && <Check size={13} color={colors.accentText} />}
+                  <Text style={{ fontSize: 13, color: on ? colors.accentText : colors.text2, fontWeight: '500' }}>{shortId(u)}</Text>
+                </Pressable>
+              );
+            })}
+            {!senderChoices.length && <Text style={[s.muted, { fontSize: 12 }]}>Pick members below first.</Text>}
+          </View>
           <SearchBox value={query} onChange={setQuery} placeholder="Find people" />
           <Text style={s.muted}>{members.size} selected</Text>
         </View>
@@ -1104,16 +1139,24 @@ function AuditCards({ entries }: { entries: AuditEntry[] }) {
   );
 }
 
+/** The activity log, 50 at a time (newest first); "Load older" fetches the next page. */
 function Activity() {
   const [entries, setEntries] = useState<AuditEntry[] | null>(null);
+  const [next, setNext] = useState<number | null>(null);
+  const [loading, setLoading] = useState(false);
   const [query, setQuery] = useState('');
-  const load = useCallback(() => {
-    void client
-      .getAuditLog(500)
-      .then(setEntries)
-      .catch(() => setEntries([]));
+  const load = useCallback((before: number | null) => {
+    setLoading(true);
+    client
+      .getAuditPage(before)
+      .then((p) => {
+        setEntries((cur) => (before && cur ? [...cur, ...p.items] : p.items));
+        setNext(p.next);
+      })
+      .catch(() => setEntries((cur) => cur ?? []))
+      .finally(() => setLoading(false));
   }, []);
-  useEffect(load, [load]);
+  useEffect(() => load(null), [load]);
   const q = query.trim().toLowerCase();
   const shown = (entries ?? []).filter((e) =>
     `${e.actor} ${AUDIT_LABELS[e.action] ?? e.action} ${e.target} ${e.detail}`.toLowerCase().includes(q),
@@ -1122,9 +1165,9 @@ function Activity() {
     <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40, gap: 12 }} keyboardShouldPersistTaps="handled">
       <View style={[s.row, { gap: 4 }]}>
         <View style={{ flex: 1 }}>
-          <SearchBox value={query} onChange={setQuery} placeholder="Search the log" />
+          <SearchBox value={query} onChange={setQuery} placeholder="Search the loaded entries" />
         </View>
-        <IconButton icon={RefreshCw} label="Refresh" onPress={load} />
+        <IconButton icon={RefreshCw} label="Refresh" onPress={() => load(null)} />
       </View>
       {entries === null ? (
         <Text style={s.muted}>Loading…</Text>
@@ -1133,11 +1176,11 @@ function Activity() {
       ) : (
         <Text style={s.muted}>No admin actions logged{q ? ' that match' : ' yet'}.</Text>
       )}
-      <Text style={s.muted}>Every account, ban, group and settings change made by an admin is recorded here.</Text>
+      {next !== null && <Button title="Load older entries" busy={loading} onPress={() => load(next)} />}
+      <Text style={s.muted}>Every account, ban, group, permission and settings change is recorded here.</Text>
     </ScrollView>
   );
 }
-
 // ------------------------------------------------------------------ settings
 
 function SettingsTab({ onToast }: { onToast: Toast }) {

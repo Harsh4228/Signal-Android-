@@ -17,6 +17,8 @@
     <!-- incoming call screen over the lock screen, with ringtone + vibration -->
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
     <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- Saving a file to Downloads on Android 9 and older (only when the admin allows downloads). -->
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
     <!-- NOTE: no storage permissions at all - the app cannot read or write files on the device. -->

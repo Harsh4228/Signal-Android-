@@ -9,6 +9,7 @@ import { Settings } from './components/Settings';
 import { LockScreen } from './components/LockScreen';
 import { NoticePopup } from './components/Notices';
 import { Logo } from './components/ui';
+import { applyCaptureRight } from './deviceFiles';
 
 /**
  * Esc closes the topmost popup, like its ✕ (each popup's backdrop closes it when clicked). It runs after the
@@ -95,6 +96,10 @@ export function App() {
     if (call.status === 'idle' && call.endReason) setToast(call.endReason);
   }, [call.status, call.endReason]);
 
+  // Screenshots of the window: blocked unless the admin allows them (for me, or in the open chat).
+  const mayCapture = !!c.account && c.can('screenshot', c.activeChat);
+  useEffect(() => applyCaptureRight(client.activeChat), [mayCapture]);
+
   if (!ready)
     return (
       <div className="splash">
@@ -138,7 +143,7 @@ export function App() {
           </div>
           <h2>Select a conversation</h2>
           <p className="muted">Messages and calls are end-to-end encrypted.</p>
-          <p className="muted small">Messages are never saved to disk; photos and documents are kept encrypted. Screenshots of this window are blocked.</p>
+          <p className="muted small">Chats and files are kept encrypted on this computer. Screenshots of this window are blocked unless your admin allows them.</p>
         </div>
       )}
       {call.status !== 'idle' && <CallView />}

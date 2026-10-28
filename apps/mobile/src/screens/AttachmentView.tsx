@@ -2,6 +2,7 @@ import { useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { ActivityIndicator, BackHandler, Image, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
 import {
+  Download,
   File,
   FileText,
   Forward,
@@ -18,6 +19,7 @@ import { formatBytes, isGroupKey, toBase64, type Attachment } from '@meetme/core
 import { client, useClient } from '../messenger';
 import { colors, s } from '../theme';
 import { IconButton, Sheet, errorText } from '../ui';
+import { saveToDevice } from '../deviceFiles';
 
 const ICON: Record<Attachment['kind'], LucideIcon> = { image: ImageIcon, pdf: FileText, audio: Mic, file: File };
 
@@ -66,7 +68,7 @@ export function MediaViewerHost({ onToast }: { onToast: (m: string) => void }) {
 
   const forward = async (key: string, a: Attachment) => {
     try {
-      await client.forwardAttachment(key, a);
+      await client.forwardAttachment(key, a, client.activeChat ?? undefined);
       onToast(`Shared ${a.name} with ${c.chatTitle(key)}`);
     } catch (e) {
       onToast(errorText(e));
@@ -86,10 +88,17 @@ export function MediaViewerHost({ onToast }: { onToast: (m: string) => void }) {
               </Text>
               <View style={[s.row, { gap: 4 }]}>
                 <Lock size={11} color={colors.muted} />
-                <Text style={[s.muted, { fontSize: 12 }]}>Stays inside CellMate</Text>
+                <Text style={[s.muted, { fontSize: 12 }]}>{c.can('download', c.activeChat) ? 'End-to-end encrypted' : 'Stays inside CellMate'}</Text>
               </View>
             </View>
-            <IconButton icon={Forward} label="Share to a chat" onPress={() => showForward(o.a)} />
+            {c.can('download', c.activeChat) && (
+              <IconButton
+                icon={Download}
+                label="Save to phone"
+                onPress={() => void saveToDevice(o.a, c.activeChat ?? '').then((where) => onToast(`Saved to ${where}`), (e) => onToast(errorText(e)))}
+              />
+            )}
+            {c.can('forward', c.activeChat) && <IconButton icon={Forward} label="Share to a chat" onPress={() => showForward(o.a)} />}
           </View>
           {o.kind === 'image' ? (
             <Image source={{ uri: `data:${o.a.mime};base64,${o.b64}` }} style={{ flex: 1 }} resizeMode="contain" />
@@ -120,7 +129,7 @@ export function MediaViewerHost({ onToast }: { onToast: (m: string) => void }) {
  */
 export function AttachmentView({ a }: { a: Attachment }) {
   const b64 = useMemo(() => (a.data ? toBase64(a.data) : null), [a.data]);
-  const actions = b64 ? () => showForward(a) : undefined;
+  const actions = b64 && client.can('forward', client.activeChat) ? () => showForward(a) : undefined;
 
   if (a.state === 'uploading' || a.state === 'downloading' || !b64) {
     const failed = a.state === 'failed' || (a.state === 'ready' && !b64);

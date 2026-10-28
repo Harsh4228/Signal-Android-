@@ -2852,3 +2852,32 @@ label.photo-pick img + span {
   border-radius: 8px;
   background: var(--surface-2);
 }
+/* Copying is allowed for me in this chat (rights): message text can be selected. */
+.messages.allow-copy .bubble .text {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+
+/* ---- rights / help desk ---- */
+.state-pill { border: 0; border-radius: 999px; padding: 3px 10px; font-size: 12px; font-weight: 700; cursor: default; }
+.state-pill:not(:disabled) { cursor: pointer; }
+.state-pill.allow { background: #ecfdf3; color: #067647; }
+.state-pill.block { background: #fef3f2; color: #b42318; }
+.seg { display: inline-flex; background: #f2f4f7; border-radius: 10px; padding: 3px; gap: 3px; }
+.seg button { border: 1px solid transparent; background: transparent; padding: 6px 12px; border-radius: 8px; font-weight: 600; color: #667085; box-shadow: none; }
+.seg button.active { background: #fff; border-color: #2455d8; color: #2455d8; }
+.seg button.allow.active { border-color: #079455; color: #079455; }
+.seg button.block.active { border-color: #d92d20; color: #d92d20; }
+.choose-list { display: flex; flex-wrap: wrap; gap: 6px; max-height: 220px; overflow: auto; }
+.choose-list button { border-radius: 999px; padding: 5px 12px; font-size: 13px; }
+.choose-list button.active { background: #eaf0fd; border-color: #b9cbf7; color: #1a3f9e; font-weight: 600; }
+.emp-list li.clickable { cursor: pointer; }
+.emp-list li.clickable:hover { background: #f8f9fb; }
+.help-list { display: grid; gap: 10px; }
+.help-card { border: 1px solid #e4e7ec; border-radius: 12px; padding: 12px 14px; display: grid; gap: 8px; background: #fff; }
+.help-card .name { font-weight: 600; }
+a.button { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border: 1px solid #d0d5dd; border-radius: 8px; color: #344054; text-decoration: none; font-size: 13px; font-weight: 600; }
+a.button:hover { background: #f8f9fb; }
+.form-grid { display: grid; gap: 10px; max-width: 520px; }
+.form-grid label { display: grid; gap: 4px; font-size: 13px; color: #344054; font-weight: 500; }

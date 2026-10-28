@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { File, FileText, Forward, Image, Loader2, Lock, TriangleAlert, X } from 'lucide-react';
+import { Download, File, FileText, Forward, Image, Loader2, Lock, TriangleAlert, X } from 'lucide-react';
 import { formatBytes, type Attachment } from '@meetme/core';
 import { client, useClient } from '../messenger';
 import { ChatAvatar, errorText } from './ui';
+import { saveToDevice } from '../deviceFiles';
 import * as pdfjs from 'pdfjs-dist';
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 
@@ -27,17 +28,30 @@ function KindIcon({ kind }: { kind: Attachment['kind'] }) {
   );
 }
 
-/** Share to another chat inside CellMate (everyone may). There is no way to save a file outside the app. */
+/** Share to another chat, and Save to PC: each only when the admin allows it (rights of the open chat). */
 export function FileActions({ a, onToast, compact }: { a: Attachment; onToast: (m: string) => void; compact?: boolean }) {
+  const c = useClient();
   const [forwarding, setForwarding] = useState(false);
-  if (!a.data) return null;
+  const chat = c.activeChat;
+  if (!a.data || (!c.can('forward', chat) && !c.can('download', chat))) return null;
 
   return (
     <>
       <span className={`att-actions ${compact ? 'compact' : ''}`} onClick={(e) => e.stopPropagation()}>
-        <button className="icon" title="Share to another chat" onClick={() => setForwarding(true)}>
-          <Forward size={16} />
-        </button>
+        {c.can('download', chat) && (
+          <button
+            className="icon"
+            title="Save to PC"
+            onClick={() => void saveToDevice(a, chat ?? '').then((p) => p && onToast(`Saved to ${p}`), (e) => onToast(errorText(e)))}
+          >
+            <Download size={16} />
+          </button>
+        )}
+        {c.can('forward', chat) && (
+          <button className="icon" title="Share to another chat" onClick={() => setForwarding(true)}>
+            <Forward size={16} />
+          </button>
+        )}
       </span>
       {forwarding && <ForwardPicker a={a} onClose={() => setForwarding(false)} onToast={onToast} />}
     </>
@@ -51,7 +65,7 @@ function ForwardPicker({ a, onClose, onToast }: { a: Attachment; onClose: () => 
   async function send(key: string) {
     setBusy(key);
     try {
-      await client.forwardAttachment(key, a);
+      await client.forwardAttachment(key, a, client.activeChat ?? undefined);
       onToast(`Shared ${a.name} with ${c.chatTitle(key)}`);
       onClose();
     } catch (e) {

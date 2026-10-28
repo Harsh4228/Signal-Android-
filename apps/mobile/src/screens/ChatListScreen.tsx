@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { FlatList, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
-import { Ban, Bell, CircleDashed, EllipsisVertical, Megaphone, ShoppingBag, Star, MessageSquarePlus, Search, Settings, ShieldCheck } from 'lucide-react-native';
+import { Ban, Bell, CircleDashed, EllipsisVertical, LifeBuoy, Megaphone, ShoppingBag, Star, MessageSquarePlus, Search, Settings, ShieldCheck } from 'lucide-react-native';
 import { MessengerClient, isGroupKey } from '@meetme/core';
 import { client, useClient } from '../messenger';
 import { colors, s } from '../theme';
@@ -51,6 +51,7 @@ export function ChatListScreen({ navigate, onError }: { navigate: (r: Route) => 
                 />
               )}
             </View>
+            <IconButton icon={LifeBuoy} label="Help desk" onPress={() => navigate({ name: 'help' })} />
             <IconButton icon={Bell} label="Notices" onPress={() => navigate({ name: 'notices' })} />
             {/* Everything else lives in the ⋮ menu, like WhatsApp. */}
             <IconButton icon={EllipsisVertical} label="Menu" onPress={() => setMore(true)} />

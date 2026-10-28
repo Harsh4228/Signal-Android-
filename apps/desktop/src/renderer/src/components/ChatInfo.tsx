@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
-import { BadgeCheck, ChevronRight, Eraser, Mail, Phone, RotateCcw, Search, ShieldX, UserMinus, X } from 'lucide-react';
+import { BadgeCheck, Check, ChevronRight, Eraser, KeyRound, Mail, Phone, RotateCcw, Search, ShieldPlus, ShieldX, UserMinus, UserPlus, X } from 'lucide-react';
 import { CatalogPanel } from './Catalog';
-import { formatLastSeen, isGroupKey } from '@meetme/core';
+import { formatLastSeen, groupIdOf, isGroupKey, type UserProfile } from '@meetme/core';
 import { client, useClient } from '../messenger';
 import { Avatar, ChatAvatar, errorText } from './ui';
 import { MediaSection } from './MediaGallery';
+import { GroupRightsModal } from './AdminRights';
 
 const TIMERS: [number, string][] = [
   [0, 'Off'],
@@ -20,7 +21,14 @@ function GroupDetails({ chatKey, onClose, onError }: { chatKey: string; onClose:
   const g = c.groupOf(chatKey);
   const me = c.account?.username;
   const [query, setQuery] = useState('');
-  const members = c.groupMembers(chatKey).filter((u) => u.includes(query.trim().toLowerCase()));
+  const [rights, setRights] = useState(false);
+  const [adding, setAdding] = useState(false);
+  const manage = c.isGroupAdmin(chatKey);
+  const groupAdmins = g?.admins ?? [];
+  const q = query.trim().toLowerCase();
+  const members = c.groupMembers(chatKey).filter((u) => !q || ` ${client.displayName(u)}`.toLowerCase().includes(q));
+  const change = (changes: { members?: string[]; admins?: string[] }, done: string) =>
+    void client.updateMyGroup(groupIdOf(chatKey), changes).then(() => onError(done), (e) => onError(errorText(e)));
   const count = g?.members.length ?? 0;
   useEffect(() => {
     void client.refreshPresence(g?.members ?? []);
@@ -46,8 +54,19 @@ function GroupDetails({ chatKey, onClose, onError }: { chatKey: string; onClose:
         )}
       </div>
       <p className="muted small" style={{ marginTop: 0 }}>
-        Only admins can change the name or members. Every member gets their own end-to-end encrypted copy of each message.
+        {manage ? 'You manage this group: add people, choose group admins and set what members may do here.' : 'Only admins can change the name or members.'}{' '}
+        Every member gets their own end-to-end encrypted copy of each message.
       </p>
+      {manage && g && (
+        <div className="row" style={{ gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
+          <button onClick={() => setAdding(true)}>
+            <UserPlus size={15} /> Add members
+          </button>
+          <button onClick={() => setRights(true)}>
+            <KeyRound size={15} /> Group permissions
+          </button>
+        </div>
+      )}
       <MediaSection chatKey={chatKey} onToast={onError} />
       <div className="section-title">
         {count} member{count === 1 ? '' : 's'}
@@ -70,7 +89,8 @@ function GroupDetails({ chatKey, onClose, onError }: { chatKey: string; onClose:
             <ChatAvatar chatKey={u} size="sm" />
             <div className="grow">
               <div className="name">
-                {u === me ? 'You' : u} {c.admins.includes(u) && <span className="tag admin">Admin</span>}{' '}
+                {u === me ? 'You' : client.displayName(u)} {c.admins.includes(u) && <span className="tag admin">Admin</span>}{' '}
+                {groupAdmins.includes(u) && !c.admins.includes(u) && <span className="tag share">Group admin</span>}{' '}
                 {g?.senders && !c.admins.includes(u) && g.senders.includes(u) && <span className="tag share">Can send</span>}
               </div>
               {u !== me && (
@@ -80,6 +100,24 @@ function GroupDetails({ chatKey, onClose, onError }: { chatKey: string; onClose:
               )}
               {c.profileOf(u)?.departments.length ? <div className="profile-line">{c.profileOf(u)!.departments.join(', ')}</div> : null}
             </div>
+            {manage && g && (
+              <span className="row" style={{ gap: 2 }} onClick={(e) => e.stopPropagation()}>
+                {groupAdmins.includes(u) ? (
+                  <button className="icon" title="Dismiss as group admin" onClick={() => change({ admins: groupAdmins.filter((x) => x !== u) }, 'Group admins changed')}>
+                    <ShieldX size={15} />
+                  </button>
+                ) : (
+                  <button className="icon" title="Make group admin" onClick={() => change({ admins: [...groupAdmins, u] }, 'Group admins changed')}>
+                    <ShieldPlus size={15} />
+                  </button>
+                )}
+                {u !== me && (
+                  <button className="icon danger-text" title="Remove from group" onClick={() => change({ members: g.members.filter((x) => x !== u) }, 'Removed from the group')}>
+                    <UserMinus size={15} />
+                  </button>
+                )}
+              </span>
+            )}
           </li>
         ))}
       </ul>
@@ -91,7 +129,68 @@ function GroupDetails({ chatKey, onClose, onError }: { chatKey: string; onClose:
           </button>
         </>
       )}
+      {rights && g && <GroupRightsModal group={g} onClose={() => setRights(false)} onToast={onError} />}
+      {adding && g && (
+        <AddMembers
+          members={g.members}
+          onClose={() => setAdding(false)}
+          onAdd={(list) => {
+            setAdding(false);
+            change({ members: [...g.members, ...list] }, `Added ${list.length} to the group`);
+          }}
+        />
+      )}
     </aside>
+  );
+}
+
+/** Group admins: pick colleagues to add (from the company directory). */
+function AddMembers({ members, onClose, onAdd }: { members: string[]; onClose: () => void; onAdd: (list: string[]) => void }) {
+  const [people, setPeople] = useState<UserProfile[] | null>(null);
+  const [picked, setPicked] = useState<string[]>([]);
+  const [query, setQuery] = useState('');
+  useEffect(() => {
+    client.listDirectory().then(setPeople, () => setPeople([]));
+  }, []);
+  const q = query.trim().toLowerCase();
+  const shown = (people ?? []).filter((p) => !members.includes(p.username) && ` ${p.username}`.toLowerCase().includes(q));
+  return (
+    <div className="modal-bg" onClick={onClose}>
+      <div className="modal" style={{ width: 460 }} onClick={(e) => e.stopPropagation()}>
+        <header>
+          <div className="title">Add members</div>
+          <button className="icon" onClick={onClose} title="Close">
+            <X size={18} />
+          </button>
+        </header>
+        <div className="admin-body">
+          <div className="search" style={{ marginBottom: 8 }}>
+            <Search size={16} />
+            <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search colleagues" autoFocus />
+          </div>
+          {people === null && <p className="muted">Loading…</p>}
+          {people && !shown.length && <p className="muted small">Everyone is already in the group.</p>}
+          <ul className="member-list">
+            {shown.map((p) => {
+              const on = picked.includes(p.username);
+              return (
+                <li key={p.username} className="clickable" onClick={() => setPicked(on ? picked.filter((u) => u !== p.username) : [...picked, p.username])}>
+                  <Avatar name={p.username} size="sm" />
+                  <div className="grow">
+                    <div className="name">{p.name || p.username}</div>
+                    {p.departments.length ? <div className="profile-line">{p.departments.join(', ')}</div> : null}
+                  </div>
+                  {on && <Check size={17} />}
+                </li>
+              );
+            })}
+          </ul>
+          <button className="primary" disabled={!picked.length} onClick={() => onAdd(picked)} style={{ marginTop: 10 }}>
+            Add {picked.length || ''}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 
