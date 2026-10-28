@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "start": "tsx src/index.ts",
-    "test": "tsx --test test/*.test.ts",
+    "test": "tsx --test --test-timeout=120000 test/*.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

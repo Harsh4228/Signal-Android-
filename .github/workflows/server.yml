@@ -32,7 +32,8 @@ jobs:
       - id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/${{ github.repository_owner }}/meetme-server
+          # Its own name: meetme-server belongs to the older meetme repository.
+          images: ghcr.io/${{ github.repository_owner }}/cellmate-server
           tags: |
             type=raw,value=latest
             type=sha
