@@ -3,6 +3,7 @@ import { Camera, CircleCheck, CloudUpload, LogOut, Settings as SettingsIcon, Tra
 import { MAX_ABOUT, MAX_EMAIL, MAX_PHONE, MIN_PASSWORD_LENGTH, shortId } from '@meetme/core';
 import { appLock, client, useClient } from '../messenger';
 import { AppLockSettings } from './AppLockSettings';
+import { enableWebPush, needsHomeScreen, webPushState, webPushSupported } from '../webPush';
 import { Avatar, PasswordInput, errorText } from './ui';
 
 const SECURITY = [
@@ -241,6 +242,13 @@ export function Settings({ onClose, onToast }: { onClose: () => void; onToast: (
         <div className="section-title">{canEditProfile ? 'Mobile number & email' : 'My profile'}</div>
         <ContactSettings onToast={onToast} editable={canEditProfile} />
 
+        {(webPushSupported() || needsHomeScreen()) && (
+          <>
+            <div className="section-title">Notifications</div>
+            <WebNotifications />
+          </>
+        )}
+
         <div className="section-title">Privacy</div>
         <PrivacySettings />
 
@@ -403,6 +411,37 @@ function PrivacySettings() {
         />
       </label>
       {msg && <p className="muted small" style={{ margin: 0 }}>{msg}</p>}
+    </div>
+  );
+}
+/** Web app only: turn on message and call notifications (iPhone: from the home-screen app). */
+function WebNotifications() {
+  const [state, setState] = useState(webPushState());
+  const [msg, setMsg] = useState<string | null>(null);
+  if (needsHomeScreen()) {
+    return (
+      <p className="muted small" style={{ margin: 0 }}>
+        To get notifications on iPhone, add CellMate to your home screen first: tap Share, then Add to Home Screen, and open it from
+        there.
+      </p>
+    );
+  }
+  const on = async () => {
+    try {
+      const ok = await enableWebPush(true);
+      setState(webPushState());
+      setMsg(ok ? 'Notifications are on' : 'Notifications are blocked: allow them for this site in the browser settings');
+    } catch (e) {
+      setMsg(errorText(e));
+    }
+  };
+  return (
+    <div className="stack">
+      <p className="muted small" style={{ margin: 0 }}>
+        Get told about new messages and calls when CellMate is closed. The notification never shows who wrote or what.
+      </p>
+      {state === 'granted' ? <div className="notice">Notifications are on</div> : <button onClick={() => void on()}>Turn on notifications</button>}
+      {msg && state !== 'granted' && <p className="muted small" style={{ margin: 0 }}>{msg}</p>}
     </div>
   );
 }

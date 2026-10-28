@@ -305,6 +305,8 @@ export interface PublicConfig {
   serverUrl?: string;
   /** true = nobody has set the server up yet: the first administrator still has to create their company. */
   needsSetup?: boolean;
+  /** Web Push: the server's VAPID public key (base64url), for the web app's notifications. */
+  vapidKey?: string;
 }
 
 /** A company on the server (super admin view). */

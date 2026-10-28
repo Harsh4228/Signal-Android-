@@ -48,7 +48,7 @@ const SCHEMA = `
   ALTER TABLE users ADD COLUMN IF NOT EXISTS last_seen BIGINT;
   ALTER TABLE users ADD COLUMN IF NOT EXISTS department TEXT;
   DO $$ BEGIN
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'departments') THEN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'users' AND column_name = 'departments') THEN
       ALTER TABLE users ADD COLUMN departments TEXT NOT NULL DEFAULT '[]';
       UPDATE users SET departments = json_build_array(department)::text WHERE department IS NOT NULL AND department <> '';
     END IF;
@@ -106,12 +106,10 @@ const SCHEMA = `
     target TEXT NOT NULL,
     detail TEXT NOT NULL
   );
-  DO $$ BEGIN
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'audit_log' AND column_name = 'company') THEN
-      ALTER TABLE audit_log ADD COLUMN company TEXT NOT NULL DEFAULT '';
-      UPDATE audit_log SET company = regexp_replace(actor, '^.*-', '') WHERE actor LIKE '%-%';
-    END IF;
-  END $$;
+  -- Each audit entry knows its company (indexed, for paging). Older rows get it from the actor (runs once: then
+  -- every row with a company part has it).
+  ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS company TEXT NOT NULL DEFAULT '';
+  UPDATE audit_log SET company = regexp_replace(actor, '^.*-', '') WHERE company = '' AND actor LIKE '%-%';
   CREATE INDEX IF NOT EXISTS audit_log_company ON audit_log(company, id);
   CREATE TABLE IF NOT EXISTS backups (
     username   TEXT PRIMARY KEY REFERENCES users(username) ON DELETE CASCADE,

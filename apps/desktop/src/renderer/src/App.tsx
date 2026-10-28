@@ -10,6 +10,7 @@ import { LockScreen } from './components/LockScreen';
 import { NoticePopup } from './components/Notices';
 import { Logo } from './components/ui';
 import { applyCaptureRight } from './deviceFiles';
+import { enableWebPush } from './webPush';
 
 /**
  * Esc closes the topmost popup, like its ✕ (each popup's backdrop closes it when clicked). It runs after the
@@ -101,6 +102,11 @@ export function App() {
   useEffect(() => {
     if (call.status === 'idle' && call.endReason) setToast(call.endReason);
   }, [call.status, call.endReason]);
+
+  // Web app: once notifications were allowed, renew the push subscription with every start (it can change).
+  useEffect(() => {
+    if (c.account && c.status === 'online') void enableWebPush(false).catch(() => {});
+  }, [c.account, c.status]);
 
   // Screenshots of the window: blocked unless the admin allows them (for me, or in the open chat).
   const mayCapture = !!c.account && c.can('screenshot', c.activeChat);

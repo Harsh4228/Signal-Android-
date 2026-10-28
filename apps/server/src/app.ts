@@ -86,6 +86,7 @@ import {
 import { LocalBus, type Bus, type BusEvent } from './bus';
 import { MOVED, isActive, isOnlineRow, openSqlite, type Db, type GroupRow, type ProductPhoto, type ProductRow, type UserRow } from './db';
 import { CALL_UI_PREFIX, type PushSender } from './push';
+import { WEB_PUSH_PREFIX, WebPushSender, newVapidKeys, parseSubscription, type VapidKeys } from './webpush';
 
 export interface ServerConfig {
   /** SQLite file (used when no Postgres db is passed in). Attachments go next to it unless attachmentsDir is set. */
@@ -320,6 +321,14 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
       return { priv: fromBase64(priv), pub: fromBase64(pub) };
     });
   certKey.catch((e) => console.error('could not load the sender certificate key', e));
+  // Web Push for the web app (iPhone home screen): the server's own VAPID key, made once and kept in the database.
+  const webPush = db
+    .getOrCreateMeta('vapid_keys', () => JSON.stringify(newVapidKeys()))
+    .then((v) => {
+      const keys = JSON.parse(v) as VapidKeys;
+      return { keys, sender: new WebPushSender(keys, config.publicUrl || 'mailto:admin@localhost') };
+    });
+  webPush.catch((e) => console.error('could not load the web push key', e));
   const sealedLimit = new RateLimiter(600, 60_000);
   /** Super admin web sign-ins: SHA-256 of the token -> who and until when (memory only; a restart signs out). */
   const webSessions = new Map<string, { user: string; until: number }>();
@@ -946,6 +955,7 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
         certKey: toBase64((await certKey).pub),
         ...(config.publicUrl ? { serverUrl: config.publicUrl } : {}),
         needsSetup: !(await superAdmins()).length,
+        vapidKey: (await webPush.catch(() => null))?.keys.publicKey,
       };
       return send(200, pub);
     }
@@ -1179,8 +1189,14 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
         if (typeof body.token !== "string" || body.token.length < 20 || body.token.length > 4096) {
           throw new HttpError(400, 'invalid push token');
         }
-        // Kept with the token, so it is cleared with it (new device, logout): see push.ts.
-        token = body.callUi === true ? `${CALL_UI_PREFIX}${body.token}` : body.token;
+        if (body.token.startsWith(WEB_PUSH_PREFIX)) {
+          // A browser's Web Push subscription (web app).
+          if (!parseSubscription(body.token)) throw new HttpError(400, 'invalid web push subscription');
+          token = body.token;
+        } else {
+          // Kept with the token, so it is cleared with it (new device, logout): see push.ts.
+          token = body.callUi === true ? `${CALL_UI_PREFIX}${body.token}` : body.token;
+        }
       }
       await db.setPushToken(me, token);
       return send(204);
@@ -1971,7 +1987,6 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
   const pushTimers = new Set<NodeJS.Timeout>();
   const lastMessagePush = new Map<string, number>();
   function schedulePush(to: string, envelopeId: number, kind: PushKind) {
-    if (!push) return;
     const t = setTimeout(() => {
       pushTimers.delete(t);
       void (async () => {
@@ -1983,7 +1998,10 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
         }
         const user = await db.getUser(to);
         if (!user?.push_token) return;
-        if ((await push.send(user.push_token, kind)) === 'invalid') await db.setPushToken(to, null);
+        // Browsers (web app) get Web Push; the phone apps get Firebase.
+        const sender = user.push_token.startsWith(WEB_PUSH_PREFIX) ? (await webPush).sender : push;
+        if (!sender) return;
+        if ((await sender.send(user.push_token, kind)) === 'invalid') await db.setPushToken(to, null);
       })().catch((e) => console.error('push failed', e));
     }, config.pushDelayMs ?? (kind === 'call' ? 1500 : 3000));
     pushTimers.add(t);
