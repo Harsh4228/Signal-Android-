@@ -27,5 +27,7 @@ mac:
     NSCameraUsageDescription: CellMate needs the camera for video calls.
     NSMicrophoneUsageDescription: CellMate needs the microphone for calls.
 linux:
+  # The package name (@meetme/desktop) can't be a file name.
+  executableName: cellmate
   target: AppImage
   category: Network
