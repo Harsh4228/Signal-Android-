@@ -1,6 +1,7 @@
-# Compiles the iOS app on a GitHub-hosted Mac, so you don't need your own Mac to check it builds.
-# This build is unsigned (simulator). Signed .ipa / TestFlight uploads need an Apple Developer
-# account ($99/year) and signing certificates added as secrets later.
+# Builds the iOS app on a GitHub-hosted Mac, so you don't need your own Mac.
+# Result: an UNSIGNED CellMate.ipa (artifact). Testers install it for free with Sideloadly (Windows / Mac) and their
+# own Apple ID; with a free Apple ID it runs 7 days, then install it again. Push notifications need a paid Apple
+# Developer account ($99/year); App Store / TestFlight builds need signing certificates added as secrets later.
 # Manual only (Actions tab > iOS > Run workflow): Mac minutes cost 10x on GitHub's free plan.
 name: iOS
 
@@ -25,9 +26,21 @@ jobs:
         run: echo "$GOOGLE_SERVICE_INFO_PLIST" > apps/mobile/ios/MeetMe/GoogleService-Info.plist
       - run: pod install
         working-directory: apps/mobile/ios
-      - name: Build (simulator, unsigned)
+      - name: Build for iPhone (unsigned)
         working-directory: apps/mobile/ios
         run: |
           xcodebuild -workspace MeetMe.xcworkspace -scheme MeetMe \
-            -configuration Release -sdk iphonesimulator \
-            -derivedDataPath build CODE_SIGNING_ALLOWED=NO build
+            -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' \
+            -derivedDataPath build CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build
+      - name: Package CellMate.ipa
+        working-directory: apps/mobile/ios
+        run: |
+          APP=$(find build/Build/Products/Release-iphoneos -maxdepth 1 -name '*.app' | head -1)
+          mkdir -p Payload && cp -R "$APP" Payload/
+          zip -qry CellMate.ipa Payload
+          ls -lh CellMate.ipa
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cellmate-ios-unsigned
+          retention-days: 7
+          path: apps/mobile/ios/CellMate.ipa
