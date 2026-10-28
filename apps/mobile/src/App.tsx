@@ -70,7 +70,10 @@ export default function App() {
     const offErr = client.on('error', setToast);
     const appState = AppState.addEventListener('change', (st) => {
       if (st === 'active') appLock.onForeground();
-      else if (st === 'background') appLock.onBackground();
+      else if (st === 'background') {
+        appLock.onBackground();
+        void client.flushHistory().catch(() => {}); // the newest chats into the device file and the backup
+      }
       if (st === 'active' && client.account && client.status === 'offline') client.connect();
     });
     return () => {

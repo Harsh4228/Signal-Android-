@@ -1,10 +1,31 @@
-import { useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { ArrowLeft, Building2, CircleAlert, KeyRound, LockKeyhole, QrCode } from 'lucide-react';
-import { MIN_PASSWORD_LENGTH, MustChangePasswordError, makeUsername, normalizeServerUrl, parseInviteCode, shortId } from '@meetme/core';
+import { MIN_PASSWORD_LENGTH, MustChangePasswordError, companyOf, makeUsername, normalizeServerUrl, parseInviteCode, shortId } from '@meetme/core';
 import { client } from '../messenger';
-import { Logo, errorText } from './ui';
+import { Logo, PasswordInput, errorText } from './ui';
 
 type Mode = 'join' | 'login' | 'company';
+
+/** Remember me: the desktop app keeps it OS-encrypted; in a browser only the company and ID (never the password). */
+type Remembered = { server: string; company: string; id: string; password: string };
+async function loadRemembered(): Promise<Remembered | null> {
+  try {
+    const raw = window.meetme.remember ? await window.meetme.remember.get() : localStorage.getItem('cellmate:remember');
+    const v = raw ? (JSON.parse(raw) as Partial<Remembered>) : null;
+    return v && typeof v.id === 'string' ? { server: v.server ?? '', company: v.company ?? '', id: v.id, password: v.password ?? '' } : null;
+  } catch {
+    return null;
+  }
+}
+async function saveRemembered(v: Remembered | null): Promise<void> {
+  try {
+    if (window.meetme.remember) await window.meetme.remember.set(v && JSON.stringify(v));
+    else if (v) localStorage.setItem('cellmate:remember', JSON.stringify({ ...v, password: '' }));
+    else localStorage.removeItem('cellmate:remember');
+  } catch (e) {
+    console.warn('could not save the sign-in details', e);
+  }
+}
 
 /**
  * The CellMate server. People never type it: they sign in with company code, ID and password. Installed apps
@@ -33,9 +54,21 @@ export function Register({ onDone, moved }: { onDone: () => void; moved?: boolea
   const [newPw2, setNewPw2] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [remember, setRemember] = useState(true);
   const invite = mode === 'join' ? parseInviteCode(code) : null;
   const choosing = mode === 'join' || mode === 'company' || mustChange;
 
+  // Remember me: fill in what was saved the last time (signing out keeps it).
+  useEffect(() => {
+    if (moved) return;
+    void loadRemembered().then((r) => {
+      if (!r) return;
+      if (r.server) setServer(r.server);
+      setCompany(r.company);
+      setUsername(r.id);
+      setPassword(r.password);
+    });
+  }, [moved]);
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -52,6 +85,11 @@ export function Register({ onDone, moved }: { onDone: () => void; moved?: boolea
       if (mode === 'join') await client.join(code, newPw);
       else if (mode === 'company') await client.requestCompany(url, { companyCode: co, companyName, id, password: newPw });
       else await client.login(url, makeUsername(id, co), password, mustChange ? newPw : undefined);
+      const finalPw = mode === 'login' && !mustChange ? password : newPw;
+      const who = mode === 'join' && invite ? invite.username : makeUsername(id, co);
+      await saveRemembered(
+        remember ? { server: mode === 'join' && invite ? invite.serverUrl : url, company: companyOf(who), id: shortId(who), password: finalPw } : null,
+      );
       onDone();
     } catch (err) {
       if (err instanceof MustChangePasswordError) setMustChange(true);
@@ -151,12 +189,18 @@ export function Register({ onDone, moved }: { onDone: () => void; moved?: boolea
             </label>
             <label>
               {mode === 'login' ? 'Your ID' : 'Your ID (you will be its admin)'}
-              <input value={username} onChange={(e) => setUsername(e.target.value.toLowerCase())} placeholder="e.g. ravi.k" disabled={mustChange} />
+              <input
+                value={username}
+                onChange={(e) => setUsername(e.target.value.toLowerCase())}
+                placeholder="e.g. ravi.k"
+                disabled={mustChange}
+                autoComplete="username"
+              />
             </label>
             {mode === 'login' && (
               <label>
                 Password
-                <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} disabled={mustChange} />
+                <PasswordInput value={password} onChange={(e) => setPassword(e.target.value)} disabled={mustChange} autoComplete="current-password" />
               </label>
             )}
             {mustChange && (
@@ -172,11 +216,11 @@ export function Register({ onDone, moved }: { onDone: () => void; moved?: boolea
           <>
             <label>
               {mode === 'login' ? 'New password' : 'Choose a password'}
-              <input type="password" value={newPw} onChange={(e) => setNewPw(e.target.value)} />
+              <PasswordInput value={newPw} onChange={(e) => setNewPw(e.target.value)} />
             </label>
             <label>
               Confirm password
-              <input type="password" value={newPw2} onChange={(e) => setNewPw2(e.target.value)} />
+              <PasswordInput value={newPw2} onChange={(e) => setNewPw2(e.target.value)} />
             </label>
             {mode === 'company' && (
               <p className="muted small" style={{ margin: 0 }}>
@@ -186,6 +230,10 @@ export function Register({ onDone, moved }: { onDone: () => void; moved?: boolea
           </>
         )}
 
+        <label className="remember">
+          <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} />
+          Remember me on this computer
+        </label>
         {error && (
           <div className="error">
             <CircleAlert size={16} />

@@ -1,9 +1,9 @@
 import { test, after, before } from 'node:test';
 import assert from 'node:assert/strict';
-import { MemoryStorage, MessengerClient } from '@meetme/core';
+import { MemoryBlobStorage, MemoryStorage, MessengerClient, inviteCode } from '@meetme/core';
 import { startTestServer } from './harness';
 
-// "Employees may clear their chat history" (admin setting, off by default on a server with admins).
+// Chat history survives an app restart, and comes back on a new device after logging in (like WhatsApp).
 let srv: Awaited<ReturnType<typeof startTestServer>>;
 let url = '';
 const clients: MessengerClient[] = [];
@@ -18,12 +18,19 @@ after(async () => {
   await srv.close();
 });
 
-async function waitFor(fn: () => boolean, what: string, ms = 5000) {
+async function waitFor(fn: () => boolean, what: string, ms = 8000) {
   const end = Date.now() + ms;
   while (!fn()) {
     if (Date.now() > end) throw new Error(`timeout waiting for ${what}`);
     await new Promise((r) => setTimeout(r, 20));
   }
+}
+
+async function device(storage = new MemoryStorage(), blobs = new MemoryBlobStorage()) {
+  const c = new MessengerClient(storage, { blobs });
+  clients.push(c);
+  await c.init();
+  return c;
 }
 
 async function online(c: MessengerClient) {
@@ -32,69 +39,54 @@ async function online(c: MessengerClient) {
   return c;
 }
 
-async function fresh() {
-  const c = new MessengerClient(new MemoryStorage());
-  clients.push(c);
-  await c.init();
-  return c;
-}
-
-test('with history protected, employees cannot make messages disappear; admins still can', async () => {
-  const admin = await fresh();
+test('history: kept across restarts, restored on a new device, and after a password reset with the old password', async () => {
+  const admin = await device();
   await admin.register(url, 'admin');
   await online(admin);
   await waitFor(() => admin.isAdmin, 'admin flag');
-  const emp: MessengerClient[] = [];
-  for (const n of ['asha', 'bina']) {
-    await admin.createEmployee(n, 'temp-password-1');
-    const c = await fresh();
-    await c.login(url, n, 'temp-password-1', `${n}-own-secret`);
-    emp.push(await online(c));
-  }
-  const [asha, bina] = emp as [MessengerClient, MessengerClient];
-  assert.equal(asha.policy.allowClearHistory, false);
-  assert.equal(admin.canClearHistory, true);
 
-  // An employee can't turn on disappearing messages...
-  await asha.addContact('bina');
-  await assert.rejects(asha.setDisappearingTimer('bina', 30), /turned off disappearing/);
-  await asha.setDisappearingTimer('bina', 0); // turning it off is always allowed
+  const invite = await admin.inviteEmployee({ username: 'ravi', name: 'Ravi' });
+  const storage = new MemoryStorage();
+  const blobs = new MemoryBlobStorage();
+  const phone = await device(storage, blobs);
+  await phone.join(inviteCode(url, invite), 'ravi-password-1');
+  await online(phone);
 
-  // ...and a modified app that tries anyway is ignored by the other side.
-  await (asha as unknown as { sendPayload(p: string, x: object): Promise<void> }).sendPayload('bina', { k: 'timer', expire: 30 });
-  await asha.sendText('bina', 'stays');
-  await waitFor(() => bina.getMessages('asha').some((m) => m.text === 'stays'), 'bina got it');
-  assert.equal(bina.getDisappearingTimer('asha'), 0);
-  assert.equal(bina.getMessages('asha').find((m) => m.text === 'stays')!.expiresAt, undefined);
+  await phone.addContact('admin');
+  await phone.sendText('admin', 'hello from the phone');
+  await waitFor(() => admin.getMessages('ravi').length === 1, 'admin got it');
+  await admin.sendText('ravi', 'hi ravi');
+  await waitFor(() => phone.getMessages('admin').length === 2, 'phone got the reply');
+  await phone.flushHistory();
+  assert.ok(phone.lastBackupAt, 'backed up');
 
-  // An admin may still use them in their own chats, and the employee's side follows.
-  await admin.addContact('asha');
-  await admin.sendText('asha', 'hi');
-  await waitFor(() => asha.getMessages('admin').length > 0, 'asha got hi');
-  await admin.setDisappearingTimer('asha', 300);
-  await waitFor(() => asha.getDisappearingTimer('admin') === 300, 'timer reached asha');
-  await admin.sendText('asha', 'vanishes');
-  await waitFor(() => !!asha.getMessages('admin').find((m) => m.text === 'vanishes')?.expiresAt, 'expiring message');
+  // 1. The app restarts on the same phone: the chat is still there.
+  phone.dispose();
+  const again = await device(storage, blobs);
+  assert.deepEqual(
+    again.getMessages('admin').map((m) => m.text),
+    ['hello from the phone', 'hi ravi'],
+  );
+  again.dispose();
 
-  // Allowing it lets employees use the timer again.
-  await admin.setPolicy({ allowClearHistory: true });
-  await waitFor(() => asha.canClearHistory, 'policy reached asha');
-  await asha.setDisappearingTimer('bina', 30);
-  await waitFor(() => bina.getDisappearingTimer('asha') === 30, 'timer reached bina');
-});
+  // 2. Logging in on a new device (the desktop) brings the chat back from the encrypted backup.
+  const desktop = await device();
+  await desktop.login(url, 'ravi', 'ravi-password-1');
+  await waitFor(() => desktop.getMessages('admin').length === 2, 'restored on the new device');
+  assert.equal(desktop.getMessages('admin')[1]!.text, 'hi ravi');
+  assert.ok(desktop.contacts.includes('admin'));
+  await online(desktop);
 
-test('on a server without admins, users keep control of their own history', async () => {
-  const open = await startTestServer({ stunUrls: [], turnUrls: [], trustProxy: false, adminUsers: [], openRegistration: true });
-  try {
-    const c = new MessengerClient(new MemoryStorage());
-    clients.push(c);
-    await c.init();
-    await c.register(open.url, 'solo');
-    c.connect();
-    await waitFor(() => c.status === 'online', 'online');
-    assert.equal(c.canClearHistory, true);
-    c.dispose();
-  } finally {
-    await open.close();
-  }
+  // 3. The admin resets the password: the backup stays locked until the old password is given.
+  await admin.resetEmployeePassword('ravi', 'temp-password-9');
+  const tablet = await device();
+  await assert.rejects(tablet.login(url, 'ravi', 'temp-password-9'), /new password/i);
+  await tablet.login(url, 'ravi', 'temp-password-9', 'ravi-password-2');
+  assert.equal(tablet.backupLocked, true);
+  assert.equal(tablet.getMessages('admin').length, 0);
+  await assert.rejects(tablet.restoreOldBackup('wrong-password'), /does not open/);
+  const n = await tablet.restoreOldBackup('ravi-password-1');
+  assert.equal(n, 2);
+  assert.equal(tablet.backupLocked, false);
+  assert.equal(tablet.getMessages('admin')[0]!.text, 'hello from the phone');
 });

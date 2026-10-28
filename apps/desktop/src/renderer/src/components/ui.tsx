@@ -1,4 +1,5 @@
-import { ShieldCheck, UsersRound } from 'lucide-react';
+import { useState, type InputHTMLAttributes } from 'react';
+import { Eye, EyeOff, ShieldCheck, UsersRound } from 'lucide-react';
 import { isGroupKey } from '@meetme/core';
 import { client } from '../messenger';
 
@@ -73,4 +74,17 @@ export function shortTime(ts: number): string {
   if (d.toDateString() === now.toDateString()) return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   if (now.getTime() - ts < 6 * 86400_000) return d.toLocaleDateString([], { weekday: 'short' });
   return d.toLocaleDateString([], { day: '2-digit', month: '2-digit', year: '2-digit' });
+}
+
+/** A password box with an eye button to show / hide what was typed. */
+export function PasswordInput(props: Omit<InputHTMLAttributes<HTMLInputElement>, 'type'>) {
+  const [shown, setShown] = useState(false);
+  return (
+    <span className="password-field">
+      <input {...props} type={shown ? 'text' : 'password'} />
+      <button type="button" className="icon" tabIndex={-1} title={shown ? 'Hide password' : 'Show password'} onClick={() => setShown((v) => !v)}>
+        {shown ? <EyeOff size={17} /> : <Eye size={17} />}
+      </button>
+    </span>
+  );
 }

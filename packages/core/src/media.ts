@@ -1,7 +1,7 @@
 import { bytesToHex } from '@noble/hashes/utils';
 import type { AttachmentKind } from './attachments';
 import { hmacSha256, openWithKey, randomBytes, sealWithKey } from './crypto/primitives';
-import { fromBase64, toBase64 } from './encoding';
+import { fromBase64, toBase64, utf8 } from './encoding';
 import type { ProtocolStore } from './store';
 
 /**
@@ -88,6 +88,10 @@ export class MediaStore {
     return this.items.filter((m) => m.chat === chat).sort((a, b) => b.ts - a.ts);
   }
 
+  find(chat: string, msgId: string): MediaItem | undefined {
+    return this.items.find((m) => m.chat === chat && m.msgId === msgId);
+  }
+
   has(chat: string, msgId: string): boolean {
     return this.items.some((m) => m.chat === chat && m.msgId === msgId);
   }
@@ -128,6 +132,25 @@ export class MediaStore {
     await Promise.all([...unused].map((b) => this.blobs.remove(b)));
     await this.save();
     return gone.length;
+  }
+
+  /** A named document of this app (e.g. the chat history), encrypted with the media key. */
+  private async docId(name: string): Promise<string> {
+    return bytesToHex(hmacSha256(await this.mediaKey(), utf8(`doc:${name}`))).slice(0, 32);
+  }
+
+  async saveDoc(name: string, data: Uint8Array): Promise<void> {
+    const key = await this.mediaKey();
+    await this.blobs.write(await this.docId(name), sealWithKey(key, data));
+  }
+
+  async readDoc(name: string): Promise<Uint8Array | null> {
+    const sealed = await this.blobs.read(await this.docId(name));
+    return sealed ? openWithKey(await this.mediaKey(), sealed) : null;
+  }
+
+  async removeDoc(name: string): Promise<void> {
+    await this.blobs.remove(await this.docId(name));
   }
 
   /** Forget everything (the key store is wiped separately). */

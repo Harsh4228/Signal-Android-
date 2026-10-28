@@ -6,6 +6,8 @@ declare global {
     meetme: {
       platform: string;
       store: SecureStorage;
+      /** Desktop app only: remembered sign-in details (JSON), OS-encrypted. */
+      remember?: { get(): Promise<string | null>; set(value: string | null): Promise<void> };
       /** Saved chat media (missing in the browser dev build, which keeps it in memory). */
       media?: BlobStorage;
       /** Desktop app only. */

@@ -17,6 +17,11 @@ contextBridge.exposeInMainWorld('meetme', {
   setCapture: (allow: boolean): Promise<void> => ipcRenderer.invoke('capture:set', allow),
   /** "Save to PC" with the normal save dialog (only offered with the download right). Resolves with the path, or null. */
   saveFile: (name: string, data: Uint8Array): Promise<string | null> => ipcRenderer.invoke('file:save', name, data),
+  /** Remember me: the sign-in details, OS-encrypted, kept when signing out. */
+  remember: {
+    get: (): Promise<string | null> => ipcRenderer.invoke('remember:get'),
+    set: (value: string | null): Promise<void> => ipcRenderer.invoke('remember:set', value),
+  },
   store: {
     getItem: (key: string): Promise<string | null> => ipcRenderer.invoke('store:get', key),
     setItem: (key: string, value: string): Promise<void> => ipcRenderer.invoke('store:set', key, value),

@@ -91,6 +91,26 @@ ipcMain.handle('store:clear', async (e) => {
   await fs.rm(storeDir(), { recursive: true, force: true });
 });
 
+// ---------------------------------------------------------------- "remember me" on the sign-in screen
+
+// Company code, ID and password, encrypted with the OS keychain. Outside the key store, so signing out keeps it.
+const rememberFile = () => join(app.getPath('userData'), 'remember.bin');
+ipcMain.handle('remember:get', async (e) => {
+  assertTrusted(e);
+  if (!safeStorage.isEncryptionAvailable()) return null;
+  try {
+    return safeStorage.decryptString(await fs.readFile(rememberFile()));
+  } catch {
+    return null;
+  }
+});
+ipcMain.handle('remember:set', async (e, value: string | null) => {
+  assertTrusted(e);
+  if (value === null) return fs.rm(rememberFile(), { force: true });
+  assertEncryption();
+  if (typeof value !== 'string' || value.length > 4096) throw new Error('invalid value');
+  await fs.writeFile(rememberFile(), safeStorage.encryptString(value));
+});
 // ---------------------------------------------------------------- saved chat media (already encrypted)
 
 const mediaDir = () => join(app.getPath('userData'), 'media');

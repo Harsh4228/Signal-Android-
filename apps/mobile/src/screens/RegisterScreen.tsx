@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { BackHandler, PermissionsAndroid, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Camera, CameraType } from 'react-native-camera-kit';
-import { ArrowLeft, Building2, CircleAlert, KeyRound, LockKeyhole, QrCode, ScanLine, X } from 'lucide-react-native';
-import { MIN_PASSWORD_LENGTH, MustChangePasswordError, makeUsername, normalizeServerUrl, parseInviteCode, shortId } from '@meetme/core';
+import { ArrowLeft, Building2, CircleAlert, KeyRound, LockKeyhole, QrCode, ScanLine, Square, SquareCheck, X } from 'lucide-react-native';
+import { MIN_PASSWORD_LENGTH, MustChangePasswordError, companyOf, makeUsername, normalizeServerUrl, parseInviteCode, shortId } from '@meetme/core';
 import { DEFAULT_SERVER } from '../config';
 import { client } from '../messenger';
 import { colors, s } from '../theme';
 import { Banner, Button, Field, IconButton, Logo, errorText } from '../ui';
+import { loadRemembered, saveRemembered } from '../remember';
 
 type Mode = 'join' | 'login' | 'company';
 
@@ -32,9 +33,20 @@ export function RegisterScreen({ onDone, moved }: { onDone: () => void; moved?: 
   const [newPw2, setNewPw2] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [remember, setRemember] = useState(true);
   const invite = mode === 'join' ? parseInviteCode(code) : null;
   const choosing = (mode === 'join' && !!invite) || mode === 'company' || mustChange;
 
+  // Remember me: fill in what was saved the last time (signing out keeps it).
+  useEffect(() => {
+    void loadRemembered().then((r) => {
+      if (!r || moved) return;
+      if (r.server) setServer(r.server);
+      setCompany(r.company);
+      setUsername(r.id);
+      setPassword(r.password);
+    });
+  }, [moved]);
 
   async function submit() {
     setError(null);
@@ -50,6 +62,12 @@ export function RegisterScreen({ onDone, moved }: { onDone: () => void; moved?: 
       if (mode === 'join') await client.join(code, newPw);
       else if (mode === 'company') await client.requestCompany(url, { companyCode: co, companyName, id, password: newPw });
       else await client.login(url, makeUsername(id, co), password, mustChange ? newPw : undefined);
+      // The password that works from now on: the new one, if one was just chosen.
+      const finalPw = mode === 'login' && !mustChange ? password : newPw;
+      const who = mode === 'join' && invite ? invite.username : makeUsername(id, co);
+      await saveRemembered(
+        remember ? { server: mode === 'join' && invite ? invite.serverUrl : url, company: companyOf(who), id: shortId(who), password: finalPw } : null,
+      );
       onDone();
     } catch (e) {
       if (e instanceof MustChangePasswordError) setMustChange(true);
@@ -179,6 +197,17 @@ export function RegisterScreen({ onDone, moved }: { onDone: () => void; moved?: 
             </>
           )}
 
+          {(mode !== 'join' || invite) && (
+            <Pressable
+              onPress={() => setRemember((v) => !v)}
+              accessibilityRole="checkbox"
+              accessibilityState={{ checked: remember }}
+              style={[s.row, { gap: 10 }]}
+            >
+              {remember ? <SquareCheck size={22} color={colors.accent} /> : <Square size={22} color={colors.faint} />}
+              <Text style={[s.text, { flex: 1 }]}>Remember me on this phone</Text>
+            </Pressable>
+          )}
           {error && (
             <Banner kind="error" icon={CircleAlert}>
               {error}

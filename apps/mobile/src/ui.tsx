@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   ActivityIndicator,
   BackHandler,
@@ -12,7 +12,7 @@ import {
   type TextInputProps,
   type ViewStyle,
 } from 'react-native';
-import { ChevronLeft, ShieldCheck, UsersRound, type LucideIcon } from 'lucide-react-native';
+import { ChevronLeft, Eye, EyeOff, ShieldCheck, UsersRound, type LucideIcon } from 'lucide-react-native';
 import { isGroupKey } from '@meetme/core';
 import { client } from './messenger';
 import { colors, s } from './theme';
@@ -234,17 +234,39 @@ export function Button({
   );
 }
 
+/** A text box. Password boxes (secureTextEntry) get an eye button to show / hide what was typed. */
 export function Field({ label, ...props }: TextInputProps & { label?: string }) {
+  const [shown, setShown] = useState(false);
+  const secret = !!props.secureTextEntry;
   return (
     <View>
       {label && <Text style={s.label}>{label}</Text>}
-      <TextInput
-        placeholderTextColor={colors.faint}
-        autoCapitalize="none"
-        autoCorrect={false}
-        {...props}
-        style={[s.input, props.editable === false && { backgroundColor: colors.surface2, color: colors.muted }, props.style]}
-      />
+      <View style={{ justifyContent: 'center' }}>
+        <TextInput
+          placeholderTextColor={colors.faint}
+          autoCapitalize="none"
+          autoCorrect={false}
+          {...props}
+          secureTextEntry={secret && !shown}
+          style={[
+            s.input,
+            secret && { paddingRight: 46 },
+            props.editable === false && { backgroundColor: colors.surface2, color: colors.muted },
+            props.style,
+          ]}
+        />
+        {secret && (
+          <Pressable
+            onPress={() => setShown((v) => !v)}
+            accessibilityRole="button"
+            accessibilityLabel={shown ? 'Hide password' : 'Show password'}
+            hitSlop={10}
+            style={{ position: 'absolute', right: 12 }}
+          >
+            {shown ? <EyeOff size={20} color={colors.muted} /> : <Eye size={20} color={colors.muted} />}
+          </Pressable>
+        )}
+      </View>
     </View>
   );
 }

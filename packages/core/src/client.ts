@@ -67,13 +67,14 @@ import {
   type EmployeeInput,
   type InviteResponse,
   type JoinRequest,
+  type HistoryBackup,
 } from './api';
 import { attachmentKind, decryptAttachment, encryptAttachment, safeFileName, type AttachmentKind } from './attachments';
 import { randomBytes } from './crypto/primitives';
 import { DuplicateMessageError } from './crypto/ratchet';
 import type { PreKeyBundle } from './crypto/x3dh';
 import { Emitter } from './emitter';
-import { fromBase64, toBase64, utf8 } from './encoding';
+import { fromBase64, fromUtf8, toBase64, utf8 } from './encoding';
 import { safetyNumber } from './fingerprint';
 import {
   deliveryKeyHash,
@@ -94,6 +95,18 @@ import {
   ONE_TIME_PREKEY_LOW_WATER,
 } from './keys';
 import { MediaStore, MemoryBlobStorage, type BlobStorage, type MediaItem } from './media';
+import {
+  makeSnapshot,
+  mergeSnapshot,
+  lockBackupKey,
+  newBackupKeys,
+  openBackup,
+  parseSnapshot,
+  sealBackup,
+  unlockBackupKey,
+  type BackupKeys,
+  type HistorySnapshot,
+} from './history';
 import { SessionCipher, type WireMessage } from './session';
 import { ProtocolStore, type Account, type SecureStorage } from './store';
 
@@ -336,6 +349,11 @@ export interface Attachment {
   kind: AttachmentKind;
   state: 'uploading' | 'downloading' | 'ready' | 'failed';
   data?: Uint8Array;
+  /**
+   * Where the encrypted file is on the server, with its key (kept in the encrypted history, so a restored chat on
+   * another device can still fetch the file while the server keeps it: 14 days).
+   */
+  ptr?: AttachmentPointer;
 }
 
 export interface OutgoingFile {
@@ -536,6 +554,8 @@ export class ApiError extends Error {
 }
 
 const newId = () => bytesToHex(randomBytes(16));
+/** The encrypted chat history file on this device (see history.ts). */
+const HISTORY_DOC = 'history';
 const PAD_BLOCK = 160; // hide exact message length, like Signal
 const pad = (s: string) => s + ' '.repeat((PAD_BLOCK - (utf8(s).length % PAD_BLOCK)) % PAD_BLOCK);
 
@@ -652,6 +672,8 @@ export class MessengerClient extends Emitter<Events> {
     this.media = new MediaStore(this.store, opts.blobs ?? new MemoryBlobStorage());
     this.WS = opts.WebSocket ?? globalThis.WebSocket;
     this.fetchImpl = opts.fetch ?? globalThis.fetch.bind(globalThis);
+    // Every change is saved to this device's encrypted history file (and from there to the backup).
+    this.on('change', () => this.scheduleHistorySave());
   }
 
   /** Loads the saved account. Returns false if the user still has to register. */
@@ -663,6 +685,7 @@ export class MessengerClient extends Emitter<Events> {
     this.statuses = await this.store.getSetting<StatusUpdate[]>('statuses', []);
     this.starred = await this.store.getSetting<StarredMessage[]>('starred', []);
     await this.media.load();
+    if (this.account) await this.loadHistory();
     this.sweepTimer ??= setInterval(() => this.sweepExpired(), 1000);
     return !!this.account;
   }
@@ -725,6 +748,7 @@ export class MessengerClient extends Emitter<Events> {
     this.contacts = [];
     this.certificate = null; // issued for the previous account's key
     this.emit('change');
+    if (opts.loginPassword) await this.afterSignIn(opts.loginPassword);
   }
 
   /** Public server settings (no account needed), e.g. whether self sign-up is allowed. */
@@ -771,6 +795,7 @@ export class MessengerClient extends Emitter<Events> {
     this.contacts = [];
     this.certificate = null; // issued for the previous account's key
     this.emit('change');
+    await this.afterSignIn(newPassword ?? password);
   }
 
   /** My own profile as colleagues see it (name, mobile, email). Only an admin can change it. */
@@ -788,6 +813,13 @@ export class MessengerClient extends Emitter<Events> {
 
   async changePassword(oldPassword: string, newPassword: string): Promise<void> {
     await this.http('POST', '/v1/password', { oldPassword, newPassword });
+    // The chat backup opens with the login password: lock its key with the new one.
+    if (this.backupKeys) {
+      this.backupKeys = await lockBackupKey(fromBase64(this.backupKeys.key), newPassword);
+      await this.store.setSetting('backupKeys', this.backupKeys);
+      this.backedUpJson = '';
+      await this.uploadBackup().catch((e) => console.warn('backup failed', e));
+    }
   }
 
   /**
@@ -885,6 +917,7 @@ export class MessengerClient extends Emitter<Events> {
     this.contacts = [];
     this.certificate = null; // issued for the previous account's key
     this.emit('change');
+    await this.afterSignIn(newPassword);
   }
 
   /**
@@ -931,6 +964,9 @@ export class MessengerClient extends Emitter<Events> {
     this.profiles.clear();
     this.presence.clear();
     this.emit('change');
+    // The chats stay; the new account gets its own backup, locked with the new password.
+    this.backupKeys = await newBackupKeys(newPassword);
+    await this.store.setSetting('backupKeys', this.backupKeys);
   }
 
   /** Admin: make someone an admin of our company too, or take it away (a company keeps at least one admin). */
@@ -1152,6 +1188,11 @@ export class MessengerClient extends Emitter<Events> {
     this.disconnect();
     if (this.sweepTimer) clearInterval(this.sweepTimer);
     this.sweepTimer = null;
+    // Pending saves are dropped (call flushHistory() first to keep them).
+    if (this.historyTimer) clearTimeout(this.historyTimer);
+    if (this.backupTimer) clearTimeout(this.backupTimer);
+    this.historyTimer = this.backupTimer = null;
+    this.historyLoaded = false;
   }
 
   private stopPresence() {
@@ -1492,6 +1533,7 @@ export class MessengerClient extends Emitter<Events> {
             size: att.size,
             kind: attachmentKind(att.mime, name),
             state: 'downloading',
+            ptr: att,
           };
           void this.fetchAttachment(msg, att);
         }
@@ -1959,6 +2001,7 @@ export class MessengerClient extends Emitter<Events> {
       if (opts.file) {
         att = opts.uploaded ?? (await this.uploadAttachment(opts.file));
         msg.attachment!.state = 'ready';
+        msg.attachment!.ptr = att;
         void this.keepMedia(msg, opts.file.data);
       }
       const payload: Payload = {
@@ -2938,8 +2981,185 @@ export class MessengerClient extends Emitter<Events> {
 
   /** Log out on this device: delete keys + in-memory chats. The account stays; log in again with ID + password. */
   async logout(): Promise<void> {
+    // The newest chats go into the backup first, so signing in again (here or elsewhere) brings them back.
+    await this.flushHistory().catch(() => {});
     await this.setPushToken(null).catch(() => {}); // stop pushes to this device (best effort)
     await this.wipeLocal();
+  }
+
+  // ------------------------------------------------------------------ chat history (device + backup)
+
+  /** The saved history was read (nothing is written before that, so a slow start can't overwrite it). */
+  private historyLoaded = false;
+  private historyTimer: ReturnType<typeof setTimeout> | null = null;
+  private backupTimer: ReturnType<typeof setTimeout> | null = null;
+  private backupKeys: BackupKeys | null = null;
+  /** A backup made with an older password (e.g. the admin reset it): waits for that password. */
+  private lockedBackup: HistoryBackup | null = null;
+  /** When my backup was last stored on the server (ms); null = not yet. */
+  lastBackupAt: number | null = null;
+
+  /** An older backup is waiting: restore it with the old password, or start fresh. */
+  get backupLocked(): boolean {
+    return !!this.lockedBackup;
+  }
+
+  private async loadHistory(): Promise<void> {
+    try {
+      const doc = await this.media.readDoc(HISTORY_DOC);
+      const snap = doc && parseSnapshot(fromUtf8(doc));
+      if (snap) this.applySnapshot(snap);
+    } catch (e) {
+      console.warn('could not read the chat history', e);
+    }
+    this.backupKeys = await this.store.getSetting<BackupKeys | null>('backupKeys', null);
+    this.lockedBackup = await this.store.getSetting<HistoryBackup | null>('lockedBackup', null);
+    this.lastBackupAt = await this.store.getSetting<number | null>('lastBackupAt', null);
+    this.historyLoaded = true;
+  }
+
+  private applySnapshot(snap: HistorySnapshot): number {
+    const added = mergeSnapshot(this.chats, snap);
+    for (const c of snap.contacts) if (!this.contacts.includes(c) && !isGroupKey(c)) this.contacts.push(c);
+    for (const [k, n] of Object.entries(snap.unread)) if (typeof n === 'number' && !this.unread.has(k)) this.unread.set(k, n);
+    void this.restoreFiles();
+    this.emit('change');
+    return added;
+  }
+
+  /** Files of restored messages: from this device's media store, or again from the server while it keeps them. */
+  private async restoreFiles(): Promise<void> {
+    for (const [chat, list] of this.chats) {
+      for (const m of list) {
+        const a = m.attachment;
+        if (!a || a.data || a.state === 'uploading') continue;
+        const saved = this.media.find(chat, m.id);
+        try {
+          if (saved) {
+            a.data = await this.media.read(saved);
+            a.state = 'ready';
+            this.emit('change');
+            continue;
+          }
+        } catch {
+          /* gone from the device: try the server */
+        }
+        if (a.ptr && validPointer(a.ptr) && this.account) await this.fetchAttachment(m, a.ptr);
+        else a.state = 'failed';
+      }
+    }
+    this.emit('change');
+  }
+
+  private scheduleHistorySave() {
+    if (!this.historyLoaded || !this.account) return;
+    if (this.historyTimer) clearTimeout(this.historyTimer);
+    this.historyTimer = setTimeout(() => {
+      this.historyTimer = null;
+      void this.saveHistory().catch((e) => console.warn('could not save the chat history', e));
+    }, 2000);
+  }
+
+  private snapshot(): HistorySnapshot {
+    return makeSnapshot(this.chats, this.contacts, this.unread);
+  }
+
+  /** The history as last written / backed up: typing and presence changes don't touch the files. */
+  private savedJson = '';
+  private backedUpJson = '';
+
+  private async saveHistory(force = false): Promise<void> {
+    if (!this.account) return;
+    const { savedAt: _t, ...rest } = this.snapshot();
+    const json = JSON.stringify(rest);
+    if (!force && json === this.savedJson) return;
+    await this.media.saveDoc(HISTORY_DOC, utf8(JSON.stringify(this.snapshot())));
+    this.savedJson = json;
+    // At most one upload a minute while chatting.
+    this.backupTimer ??= setTimeout(() => {
+      this.backupTimer = null;
+      void this.uploadBackup().catch((e) => console.warn('backup failed', e));
+    }, 60_000);
+  }
+
+  private async uploadBackup(): Promise<void> {
+    if (!this.account || !this.backupKeys || this.lockedBackup || this.status !== 'online') return;
+    const json = this.savedJson;
+    if (json && json === this.backedUpJson) return;
+    const r = await this.http<{ updatedAt: number }>('PUT', '/v1/backup', sealBackup(this.snapshot(), this.backupKeys));
+    this.backedUpJson = json;
+    this.lastBackupAt = r.updatedAt;
+    await this.store.setSetting('lastBackupAt', this.lastBackupAt);
+  }
+
+  /** Save and back up now (before logging out, or when the app goes to the background). */
+  async flushHistory(): Promise<void> {
+    if (!this.historyLoaded || !this.account) return;
+    if (this.historyTimer) clearTimeout(this.historyTimer);
+    this.historyTimer = null;
+    await this.saveHistory(true);
+    if (this.backupTimer) clearTimeout(this.backupTimer);
+    this.backupTimer = null;
+    await this.uploadBackup();
+  }
+
+  /**
+   * Just signed in with this password (new device, or again on this one): bring back the chats from my backup.
+   * Never throws: without a backup the chats simply start empty.
+   */
+  private async afterSignIn(password: string): Promise<void> {
+    this.historyLoaded = true;
+    try {
+      const fresh = await newBackupKeys(password);
+      let backup: HistoryBackup | null = null;
+      try {
+        backup = JSON.parse(await this.http<string>('GET', '/v1/backup', undefined, undefined, true)) as HistoryBackup;
+      } catch (e) {
+        if (!(e instanceof ApiError && e.status === 404)) console.warn('could not fetch the backup', e);
+      }
+      let keys = fresh;
+      if (backup) {
+        const key = await unlockBackupKey(backup, password);
+        const snap = key && openBackup(backup, key);
+        if (key && snap) {
+          keys = { key: toBase64(key), salt: backup.salt, wrap: backup.wrap };
+          const n = this.applySnapshot(snap);
+          if (n) this.emit('error', `Restored ${n} message${n === 1 ? '' : 's'} from your backup`);
+        } else {
+          // Locked with a password from before (an admin reset it, or a new QR code): keep it for later.
+          this.lockedBackup = backup;
+          await this.store.setSetting('lockedBackup', backup);
+        }
+      }
+      this.backupKeys = keys;
+      await this.store.setSetting('backupKeys', keys);
+      await this.saveHistory();
+    } catch (e) {
+      console.warn('history setup failed', e);
+    }
+  }
+
+  /** Open the older backup with the password it was made with; its chats are added to these. */
+  async restoreOldBackup(oldPassword: string): Promise<number> {
+    const b = this.lockedBackup;
+    if (!b) throw new Error('There is no older backup');
+    const key = await unlockBackupKey(b, oldPassword);
+    const snap = key && openBackup(b, key);
+    if (!snap) throw new Error('That password does not open the backup');
+    this.lockedBackup = null;
+    await this.store.setSetting('lockedBackup', null);
+    const n = this.applySnapshot(snap);
+    await this.flushHistory().catch(() => {});
+    return n;
+  }
+
+  /** Forget the older backup (its chats are gone for good) and back up these chats from now on. */
+  async discardOldBackup(): Promise<void> {
+    this.lockedBackup = null;
+    this.backedUpJson = '';
+    await this.store.setSetting('lockedBackup', null);
+    this.emit('change');
+    await this.flushHistory().catch(() => {});
   }
 
   private async wipeLocal(): Promise<void> {
@@ -2971,6 +3191,13 @@ export class MessengerClient extends Emitter<Events> {
     this.avatarLoading.clear();
     this.typing.clear();
     this.lastTypingSent.clear();
+    if (this.historyTimer) clearTimeout(this.historyTimer);
+    if (this.backupTimer) clearTimeout(this.backupTimer);
+    this.historyTimer = this.backupTimer = null;
+    this.backupKeys = null;
+    this.lockedBackup = null;
+    this.lastBackupAt = null;
+    this.savedJson = this.backedUpJson = '';
     this.emit('change');
   }
 

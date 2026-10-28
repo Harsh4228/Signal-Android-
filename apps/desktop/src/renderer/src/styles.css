@@ -2881,3 +2881,9 @@ a.button { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12p
 a.button:hover { background: #f8f9fb; }
 .form-grid { display: grid; gap: 10px; max-width: 520px; }
 .form-grid label { display: grid; gap: 4px; font-size: 13px; color: #344054; font-weight: 500; }
+
+.password-field { position: relative; display: block; }
+.password-field input { width: 100%; padding-right: 40px; box-sizing: border-box; }
+.password-field button.icon { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); }
+.remember { display: flex; align-items: center; gap: 8px; font-size: 14px; color: #344054; cursor: pointer; }
+

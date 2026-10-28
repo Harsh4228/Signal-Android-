@@ -1,16 +1,16 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { Camera, CircleCheck, LogOut, Settings as SettingsIcon, Trash2, X } from 'lucide-react';
+import { Camera, CircleCheck, CloudUpload, LogOut, Settings as SettingsIcon, Trash2, X } from 'lucide-react';
 import { MAX_EMAIL, MAX_PHONE, MIN_PASSWORD_LENGTH, shortId } from '@meetme/core';
 import { appLock, client, useClient } from '../messenger';
 import { AppLockSettings } from './AppLockSettings';
-import { Avatar, errorText } from './ui';
+import { Avatar, PasswordInput, errorText } from './ui';
 
 const SECURITY = [
   'End-to-end encryption with the Signal protocol (X3DH + Double Ratchet)',
-  'Messages are kept in memory only and vanish when the app closes; photos and documents are kept encrypted on this device',
+  'Chats, photos and documents are kept encrypted on this device; the chat backup on the server is locked with your password',
   'Encryption keys are protected by your operating system keychain',
-  'Screenshots and screen recording of this window are blocked',
-  'Downloads, copying messages and drag and drop are disabled',
+  'Screenshots and screen recording of this window are blocked unless your admin allows them',
+  'Saving files and copying messages work only if your admin allows them; drag and drop is disabled',
 ];
 
 /** Shrink a picked photo to a square-ish JPEG (max 400 px) so it loads fast everywhere. */
@@ -257,12 +257,15 @@ export function Settings({ onClose, onToast }: { onClose: () => void; onToast: (
           </>
         )}
 
+        <div className="section-title">Chat backup</div>
+        <BackupSettings />
+
         <div className="section-title">Change password</div>
         <form onSubmit={changePassword} className="stack">
-          <input type="password" placeholder="Current password" value={oldPw} onChange={(e) => setOldPw(e.target.value)} />
-          <input type="password" placeholder="New password" value={newPw} onChange={(e) => setNewPw(e.target.value)} />
-          <input
-            type="password"
+          <PasswordInput placeholder="Current password" value={oldPw} onChange={(e) => setOldPw(e.target.value)} />
+          <PasswordInput placeholder="New password" value={newPw} onChange={(e) => setNewPw(e.target.value)} />
+          <PasswordInput
+            
             placeholder="Confirm new password"
             value={newPw2}
             onChange={(e) => setNewPw2(e.target.value)}
@@ -294,6 +297,61 @@ export function Settings({ onClose, onToast }: { onClose: () => void; onToast: (
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+/** The end-to-end encrypted chat backup: when it last ran, "Back up now", and an older locked backup. */
+function BackupSettings() {
+  const c = useClient();
+  const [old, setOld] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const run = async (fn: () => Promise<string>) => {
+    setBusy(true);
+    setMsg(null);
+    try {
+      setMsg({ ok: true, text: await fn() });
+    } catch (e) {
+      setMsg({ ok: false, text: errorText(e) });
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="stack">
+      <p className="muted small" style={{ margin: 0 }}>
+        Your chats are backed up to the server, encrypted with your password: when you sign in on another phone or computer they
+        come back. Nobody else, not even the admin or the server, can read them. Last backup:{' '}
+        {c.lastBackupAt ? new Date(c.lastBackupAt).toLocaleString() : 'not yet'}.
+      </p>
+      {c.backupLocked ? (
+        <>
+          <div className="notice">
+            You have older chats in a backup made with your previous password. Enter that password to bring them back.
+          </div>
+          <PasswordInput value={old} onChange={(e) => setOld(e.target.value)} placeholder="Previous password" />
+          <div className="row" style={{ gap: 8 }}>
+            <button className="primary" disabled={busy || !old} onClick={() => void run(async () => `Restored ${await client.restoreOldBackup(old)} messages`)}>
+              Restore older chats
+            </button>
+            <button
+              disabled={busy}
+              onClick={() =>
+                confirm('Start a new backup? The older chats will be gone for good.') &&
+                void run(async () => (await client.discardOldBackup(), 'New backup started'))
+              }
+            >
+              Start a new backup
+            </button>
+          </div>
+        </>
+      ) : (
+        <button disabled={busy} onClick={() => void run(async () => (await client.flushHistory(), 'Backed up'))}>
+          <CloudUpload size={16} /> Back up now
+        </button>
+      )}
+      {msg && <div className={msg.ok ? 'notice' : 'error'}>{msg.text}</div>}
     </div>
   );
 }

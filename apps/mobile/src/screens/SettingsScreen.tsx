@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Alert, Linking, Pressable, ScrollView, Text, View } from 'react-native';
-import { Building2, Camera, ChevronRight, CircleAlert, CircleCheck, Lock, LogOut, Trash2 } from 'lucide-react-native';
+import { Building2, Camera, ChevronRight, CircleAlert, CircleCheck, CloudUpload, Lock, LogOut, Trash2 } from 'lucide-react-native';
 import { AVATAR_MIMES, MAX_EMAIL, MAX_PHONE, MIN_PASSWORD_LENGTH, shortId } from '@meetme/core';
 import { pickFile } from '../files';
 import { appLock, client, useClient, useLock } from '../messenger';
@@ -11,10 +11,10 @@ import type { Route } from '../App';
 
 const SECURITY = [
   'End-to-end encryption with the Signal protocol (X3DH + Double Ratchet)',
-  'Messages live in memory only and vanish when the app closes; photos and documents are kept encrypted inside the app',
+  'Chats, photos and documents are kept encrypted inside the app; the chat backup on the server is locked with your password',
   'Keys stored only in the iOS Keychain / Android Keystore, excluded from backups',
   'Screenshots, screen recording and app-switcher previews are blocked',
-  "No storage permission: files can't be saved to your phone's gallery or shared folders",
+  'Files can be saved to your phone, copied or screenshotted only if your admin allows it',
   'Calls use WebRTC with keys exchanged over the encrypted channel',
 ];
 
@@ -243,6 +243,9 @@ export function SettingsScreen({ navigate }: { navigate: (r: Route) => void }) {
           </>
         )}
 
+        <Text style={s.section}>Chat backup</Text>
+        <BackupSettings />
+
         <Text style={s.section}>Change password</Text>
         <View style={[s.card, { padding: 16, gap: 10 }]}>
           <Field value={oldPw} onChangeText={setOldPw} placeholder="Current password" secureTextEntry />
@@ -274,6 +277,68 @@ export function SettingsScreen({ navigate }: { navigate: (r: Route) => void }) {
           )}
         </View>
       </ScrollView>
+    </View>
+  );
+}
+
+/**
+ * The end-to-end encrypted chat backup: when it last ran, "Back up now", and an older backup locked with a
+ * previous password (after the admin reset it) waiting to be opened.
+ */
+function BackupSettings() {
+  const c = useClient();
+  const [old, setOld] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const run = async (fn: () => Promise<string>) => {
+    setBusy(true);
+    setMsg(null);
+    try {
+      setMsg({ ok: true, text: await fn() });
+    } catch (e) {
+      setMsg({ ok: false, text: errorText(e) });
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <View style={[s.card, { padding: 16, gap: 10 }]}>
+      <Text style={[s.muted, { lineHeight: 19 }]}>
+        Your chats are backed up to the server, encrypted with your password: when you log in on another phone or PC, they come
+        back. Nobody else, not even the admin or the server, can read them.
+      </Text>
+      <Text style={s.text}>Last backup: {c.lastBackupAt ? new Date(c.lastBackupAt).toLocaleString() : 'not yet'}</Text>
+      {c.backupLocked ? (
+        <>
+          <Banner kind="warn" icon={CircleAlert}>
+            You have older chats in a backup made with your previous password. Enter that password to bring them back.
+          </Banner>
+          <Field value={old} onChangeText={setOld} placeholder="Previous password" secureTextEntry />
+          <Button
+            variant="primary"
+            title="Restore older chats"
+            busy={busy}
+            disabled={!old}
+            onPress={() => void run(async () => `Restored ${await client.restoreOldBackup(old)} messages`)}
+          />
+          <Button
+            title="Don't restore, start a new backup"
+            onPress={() =>
+              Alert.alert('Start a new backup', 'The older chats will be gone for good. Continue?', [
+                { text: 'Cancel', style: 'cancel' },
+                { text: 'Start new', style: 'destructive', onPress: () => void run(async () => (await client.discardOldBackup(), 'New backup started')) },
+              ])
+            }
+          />
+        </>
+      ) : (
+        <Button title="Back up now" icon={CloudUpload} busy={busy} onPress={() => void run(async () => (await client.flushHistory(), 'Backed up'))} />
+      )}
+      {msg && (
+        <Banner kind={msg.ok ? 'ok' : 'error'} icon={msg.ok ? CircleCheck : CircleAlert}>
+          {msg.text}
+        </Banner>
+      )}
     </View>
   );
 }

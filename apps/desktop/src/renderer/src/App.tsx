@@ -43,8 +43,13 @@ function useAutoLock() {
     events.forEach((e) => window.addEventListener(e, activity, { passive: true }));
     const onBlur = () => appLock.onBackground();
     const onFocus = () => appLock.onForeground();
-    const onVisibility = () => (document.hidden ? onBlur() : onFocus());
+    const onVisibility = () => {
+      if (document.hidden) void client.flushHistory().catch(() => {}); // newest chats to disk and the backup
+      return document.hidden ? onBlur() : onFocus();
+    };
     window.addEventListener('blur', onBlur);
+    const onUnload = () => void client.flushHistory().catch(() => {});
+    window.addEventListener('beforeunload', onUnload);
     window.addEventListener('focus', onFocus);
     document.addEventListener('visibilitychange', onVisibility);
     const t = setInterval(() => {
@@ -55,6 +60,7 @@ function useAutoLock() {
     return () => {
       events.forEach((e) => window.removeEventListener(e, activity));
       window.removeEventListener('blur', onBlur);
+      window.removeEventListener('beforeunload', onUnload);
       window.removeEventListener('focus', onFocus);
       document.removeEventListener('visibilitychange', onVisibility);
       clearInterval(t);
