@@ -84,33 +84,54 @@ function RoundButton({
   );
 }
 
-/** My own camera in a small corner window: drag it anywhere, tap it to swap with the big picture. */
-function Pip({ streamURL, mirror, onPress }: { streamURL: string; mirror: boolean; onPress: () => void }) {
+const PIP_W = 108;
+const PIP_H = 160;
+const EDGE = 12;
+/** Space the top bar (and the name over the video) and the bottom buttons take while they are shown. */
+const TOP_SPACE = 132;
+const BOTTOM_SPACE = 132;
+
+/**
+ * The small picture: drag it anywhere on the screen, tap it to swap with the big one. It never sits under the top
+ * bar or the buttons: when they slide in, it moves out of their way (like WhatsApp).
+ */
+function Pip({ streamURL, mirror, onPress, controls }: { streamURL: string; mirror: boolean; onPress: () => void; controls: boolean }) {
   const { width, height } = useWindowDimensions();
-  const at = useRef({ x: width - 124, y: 72 });
+  const limits = useRef({ top: TOP_SPACE, bottom: height - BOTTOM_SPACE - PIP_H, right: width - PIP_W - EDGE });
+  limits.current = {
+    top: controls ? TOP_SPACE : EDGE,
+    bottom: height - (controls ? BOTTOM_SPACE : EDGE) - PIP_H,
+    right: width - PIP_W - EDGE,
+  };
+  const clamp = (p: { x: number; y: number }) => ({
+    x: Math.min(Math.max(p.x, EDGE), limits.current.right),
+    y: Math.min(Math.max(p.y, limits.current.top), Math.max(limits.current.top, limits.current.bottom)),
+  });
+  const at = useRef(clamp({ x: width - PIP_W - EDGE, y: TOP_SPACE }));
   const pos = useRef(new Animated.ValueXY(at.current)).current;
+  const moveTo = (p: { x: number; y: number }) => {
+    at.current = clamp(p);
+    Animated.spring(pos, { toValue: at.current, useNativeDriver: false, friction: 8 }).start();
+  };
+  // Controls in or out, or the phone turned: keep it inside the free area.
+  useEffect(() => moveTo(at.current), [controls, width, height]);
   const pan = useRef(
     PanResponder.create({
-      onMoveShouldSetPanResponder: (_, g) => Math.abs(g.dx) + Math.abs(g.dy) > 6,
+      // Capture: a drag that starts on the picture moves it (the tap-to-swap button would otherwise keep the touch).
+      onMoveShouldSetPanResponderCapture: (_, g) => Math.abs(g.dx) + Math.abs(g.dy) > 6,
       onPanResponderMove: (_, g) => pos.setValue({ x: at.current.x + g.dx, y: at.current.y + g.dy }),
-      onPanResponderRelease: (_, g) => {
-        // Snap to the nearest side, like WhatsApp.
-        const x = at.current.x + g.dx < width / 2 - 54 ? 16 : width - 124;
-        const y = Math.min(Math.max(at.current.y + g.dy, 56), height - 320);
-        at.current = { x, y };
-        Animated.spring(pos, { toValue: at.current, useNativeDriver: false }).start();
-      },
+      onPanResponderRelease: (_, g) => moveTo({ x: at.current.x + g.dx, y: at.current.y + g.dy }),
+      onPanResponderTerminate: () => moveTo(at.current),
     }),
   ).current;
   return (
     <Animated.View style={[styles.pip, { left: pos.x, top: pos.y }]} {...pan.panHandlers}>
-      <Pressable onPress={onPress} style={StyleSheet.absoluteFill}>
+      <Pressable onPress={onPress} style={StyleSheet.absoluteFill} accessibilityLabel="Swap pictures">
         <RTCView streamURL={streamURL} style={StyleSheet.absoluteFill} objectFit="cover" mirror={mirror} zOrder={1} />
       </Pressable>
     </Animated.View>
   );
 }
-
 export function CallScreen({ onMinimize }: { onMinimize: () => void }) {
   const call = useCall();
   const speaker = useSpeaker();
@@ -127,6 +148,15 @@ export function CallScreen({ onMinimize }: { onMinimize: () => void }) {
   const big = bigLocal ? call.localStream : remoteVideo ? call.remoteStream : null;
   const small = bigLocal ? call.remoteStream : localVideo ? call.localStream : null;
   const showControls = controls || !big;
+  // The bars slide in and out instead of jumping.
+  const shown = useRef(new Animated.Value(1)).current;
+  useEffect(() => {
+    Animated.timing(shown, { toValue: showControls ? 1 : 0, duration: 220, useNativeDriver: true }).start();
+  }, [showControls, shown]);
+  const slide = (distance: number) => ({
+    opacity: shown,
+    transform: [{ translateY: shown.interpolate({ inputRange: [0, 1], outputRange: [distance, 0] }) }],
+  });
 
   // A video picture with nothing on top: tap it to show / hide the buttons.
   useEffect(() => {
@@ -153,10 +183,10 @@ export function CallScreen({ onMinimize }: { onMinimize: () => void }) {
           <Avatar name={call.peer ?? '?'} size={128} />
         </View>
       )}
-      {small && <Pip streamURL={small.toURL()} mirror={!bigLocal} onPress={() => setSwapped((v) => !v)} />}
+      {small && <Pip streamURL={small.toURL()} mirror={!bigLocal} onPress={() => setSwapped((v) => !v)} controls={showControls} />}
 
-      {showControls && (
-        <View style={styles.top} pointerEvents="box-none">
+      {(
+        <Animated.View style={[styles.top, slide(-80)]} pointerEvents={showControls ? 'box-none' : 'none'}>
           <Pressable onPress={onMinimize} accessibilityLabel="Back to chats" hitSlop={12} style={styles.topBtn}>
             <ChevronDown size={26} color={FG} />
           </Pressable>
@@ -171,11 +201,11 @@ export function CallScreen({ onMinimize }: { onMinimize: () => void }) {
           ) : (
             <View style={styles.topBtn} />
           )}
-        </View>
+        </Animated.View>
       )}
 
-      {(showControls || !big) && (
-        <View style={[styles.info, big && styles.infoOnVideo]} pointerEvents="none">
+      {(
+        <Animated.View style={[styles.info, big && styles.infoOnVideo, big ? slide(-80) : null]} pointerEvents="none">
           <Text style={styles.name} numberOfLines={1}>
             {name}
           </Text>
@@ -186,7 +216,7 @@ export function CallScreen({ onMinimize }: { onMinimize: () => void }) {
               <Text style={{ color: FG, fontSize: 12 }}>{name.split(' ')[0]} muted</Text>
             </View>
           )}
-        </View>
+        </Animated.View>
       )}
 
       {call.status === 'incoming' ? (
@@ -201,18 +231,15 @@ export function CallScreen({ onMinimize }: { onMinimize: () => void }) {
           </View>
         </View>
       ) : (
-        showControls && (
-          <View style={styles.controls}>
+        (
+          <Animated.View style={[styles.controls, slide(140)]} pointerEvents={showControls ? 'auto' : 'none'}>
             <RoundButton icon={Volume2} label="Speaker" on={speaker} onPress={() => setSpeaker(!speaker)} />
-            <RoundButton
-              icon={localVideo ? Video : VideoOff}
-              label="Camera"
-              on={localVideo}
-              onPress={() => calls.toggleCamera()}
-            />
+            {(call.video || (call.peer && client.can('videoCall', call.peer))) && (
+              <RoundButton icon={localVideo ? Video : VideoOff} label="Camera" on={localVideo} onPress={() => calls.toggleCamera()} />
+            )}
             <RoundButton icon={call.muted ? MicOff : Mic} label={call.muted ? 'Unmute' : 'Mute'} on={call.muted} onPress={() => calls.toggleMute()} />
             <RoundButton icon={PhoneOff} label="End" color={RED} onPress={() => void calls.hangup()} />
-          </View>
+          </Animated.View>
         )
       )}
 
@@ -227,21 +254,47 @@ export function CallScreen({ onMinimize }: { onMinimize: () => void }) {
   );
 }
 
-/** Thin green bar over the app while a call runs in the background ("Tap to return to call"). */
+/**
+ * Thin bar over the app while a call runs in the background ("Tap to return to call"). For a ringing call it has
+ * Decline and Accept, so a call can be answered or cut from any chat without opening the call screen.
+ */
 export function CallBar({ onPress }: { onPress: () => void }) {
   const call = useCall();
   const label = useCallLabel();
   const name = call.peer ? client.displayName(call.peer) : '';
+  if (call.status === 'incoming') {
+    return (
+      <View style={[styles.bar, { backgroundColor: PANEL, paddingVertical: 8 }]}>
+        <Pressable onPress={onPress} style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 10 }} accessibilityLabel="Open the call">
+          <Avatar name={call.peer ?? '?'} size={36} />
+          <View style={{ flex: 1 }}>
+            <Text style={{ color: FG, fontWeight: '600' }} numberOfLines={1}>
+              {name}
+            </Text>
+            <Text style={{ color: FG_MUTED, fontSize: 12 }}>Incoming {call.video ? 'video' : 'voice'} call</Text>
+          </View>
+        </Pressable>
+        <Pressable onPress={() => void calls.reject()} accessibilityLabel="Decline" style={[styles.barBtn, { backgroundColor: RED }]}>
+          <PhoneOff size={18} color="#fff" />
+        </Pressable>
+        <Pressable onPress={() => (void calls.accept(), onPress())} accessibilityLabel="Accept" style={[styles.barBtn, { backgroundColor: GREEN }]}>
+          {call.video ? <Video size={18} color="#fff" /> : <Phone size={18} color="#fff" />}
+        </Pressable>
+      </View>
+    );
+  }
   return (
     <Pressable onPress={onPress} style={styles.bar} accessibilityLabel="Return to call">
       {call.video ? <Video size={16} color="#fff" /> : <Phone size={16} color="#fff" />}
       <Text style={{ color: '#fff', fontWeight: '600', flex: 1 }} numberOfLines={1}>
-        {call.status === 'incoming' ? `${name} is calling · tap to answer` : `${name} · ${label} · tap to return`}
+        {name} · {label} · tap to return
       </Text>
+      <Pressable onPress={() => void calls.hangup()} accessibilityLabel="End call" hitSlop={8} style={[styles.barBtn, { backgroundColor: RED, width: 34, height: 34 }]}>
+        <PhoneOff size={16} color="#fff" />
+      </Pressable>
     </Pressable>
   );
 }
-
 const styles = StyleSheet.create({
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingBottom: 140 },
   top: {
@@ -269,7 +322,7 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     backgroundColor: 'rgba(255,255,255,0.14)',
   },
-  pip: { position: 'absolute', width: 108, height: 160, borderRadius: 14, overflow: 'hidden', backgroundColor: PANEL, elevation: 6 },
+  pip: { position: 'absolute', width: PIP_W, height: PIP_H, borderRadius: 14, overflow: 'hidden', backgroundColor: PANEL, elevation: 6 },
   controls: {
     position: 'absolute',
     bottom: 0,
@@ -305,4 +358,5 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     backgroundColor: GREEN,
   },
+  barBtn: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
 });

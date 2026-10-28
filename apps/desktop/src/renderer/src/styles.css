@@ -2892,3 +2892,14 @@ a.button:hover { background: #f8f9fb; }
 .qr-box.temp-login code { font-size: 15px; background: #f2f4f7; padding: 2px 6px; border-radius: 6px; user-select: text; -webkit-user-select: text; }
 a.button.primary { background: #2455d8; border-color: #2455d8; color: #fff; }
 
+
+/* Video call: bars fade out when the mouse rests; the small picture can be dragged anywhere. */
+.call .call-top, .call .call-info, .call .call-controls { transition: opacity 0.25s ease, transform 0.25s ease; }
+.call.idle .call-top, .call.idle .call-info { opacity: 0; transform: translateY(-16px); pointer-events: none; }
+.call.idle .call-controls { opacity: 0; transform: translateY(24px); pointer-events: none; }
+.call.idle { cursor: none; }
+.call video.local { cursor: grab; touch-action: none; }
+.call video.local:active { cursor: grabbing; }
+.call video.local.placed { right: auto; bottom: auto; transition: none; }
+.call-mini .icon.accept { background: #00a884; color: #fff; }
+
