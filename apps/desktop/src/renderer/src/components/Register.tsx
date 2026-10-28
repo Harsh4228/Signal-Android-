@@ -31,7 +31,11 @@ async function saveRemembered(v: Remembered | null): Promise<void> {
  * The CellMate server. People never type it: they sign in with company code, ID and password. Installed apps
  * follow the server if its domain changes. Dev builds talk to the local server (`npm run server`).
  */
-const DEFAULT_SERVER = import.meta.env.DEV ? 'http://localhost:8080' : 'https://chat.gosite.lol';
+const DEFAULT_SERVER = import.meta.env.DEV
+  ? 'http://localhost:8080'
+  : window.meetme.platform === 'web'
+    ? location.origin // the web app is served by the CellMate server itself
+    : 'https://chat.gosite.lol';
 
 /**
  * New people join with the QR invite from their admin (on a computer: paste the invite code) and only choose a

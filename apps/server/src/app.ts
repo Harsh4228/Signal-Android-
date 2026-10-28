@@ -1,7 +1,7 @@
 import { createHash, createHmac, randomBytes, scrypt, timingSafeEqual, type ScryptOptions } from 'node:crypto';
 import { mkdirSync, promises as fs } from 'node:fs';
 import http from 'node:http';
-import { dirname, join } from 'node:path';
+import { dirname, extname, join, resolve as resolvePath, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import QRCode from 'qrcode';
@@ -103,6 +103,8 @@ export interface ServerConfig {
   pushDelayMs?: number;
   /** Official address (e.g. https://chat.example.com). After a domain change, clients still using an old address move here. */
   publicUrl?: string;
+  /** The built web app (apps/desktop/web/dist), served at /app/. */
+  appDir?: string;
 }
 
 const MAX_BODY = 64 * 1024;
@@ -815,6 +817,52 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
     return { iceServers, relayOnly: false };
   }
 
+  // ---- the web app at /app/ ----
+  const appDir = resolvePath(config.appDir ?? join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'desktop', 'web', 'dist'));
+  const APP_TYPES: Record<string, string> = {
+    '.html': 'text/html; charset=utf-8',
+    '.js': 'text/javascript; charset=utf-8',
+    '.mjs': 'text/javascript; charset=utf-8',
+    '.css': 'text/css; charset=utf-8',
+    '.png': 'image/png',
+    '.svg': 'image/svg+xml',
+    '.ico': 'image/x-icon',
+    '.woff2': 'font/woff2',
+    '.wasm': 'application/wasm',
+    '.json': 'application/json',
+    '.webmanifest': 'application/manifest+json',
+  };
+  async function serveApp(rel: string, res: http.ServerResponse) {
+    let name: string;
+    try {
+      name = decodeURIComponent(rel || 'index.html');
+    } catch {
+      throw new HttpError(400, 'bad path');
+    }
+    const file = resolvePath(appDir, name);
+    // Only files inside the app folder, nothing hidden.
+    if (!file.startsWith(appDir + sep) || /(^|[\\/])\./.test(name)) throw new HttpError(404, 'not found');
+    const type = APP_TYPES[extname(file).toLowerCase()];
+    let body: Buffer;
+    try {
+      body = await fs.readFile(type ? file : join(appDir, 'index.html'));
+    } catch {
+      // A path inside the app (no file of that name): the app itself.
+      body = await fs.readFile(join(appDir, 'index.html')).catch(() => {
+        throw new HttpError(404, 'The web app is not installed on this server');
+      });
+    }
+    // Hashed files never change; the page and the service worker are always fetched fresh.
+    const immutable = name.startsWith('assets/');
+    res.writeHead(200, {
+      'content-type': type ?? 'text/html; charset=utf-8',
+      'cache-control': immutable ? 'public, max-age=31536000, immutable' : 'no-cache',
+      'x-frame-options': 'DENY',
+      ...(name === 'sw.js' ? { 'service-worker-allowed': '/app/' } : {}),
+    });
+    res.end(body);
+  }
+
   async function route(req: http.IncomingMessage, res: http.ServerResponse) {
     const url = new URL(req.url ?? '/', 'http://x');
     const path = url.pathname;
@@ -827,6 +875,14 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
     if (!requestLimit.allow(clientIp(req))) throw new HttpError(429, 'slow down');
 
     if (method === 'GET' && path === '/health') return send(200, { ok: true });
+    // The web app (iPhone: Safari > Add to Home Screen, or any browser): static files built from apps/desktop/web.
+    if (method === 'GET' && (path === '/' || path === '/app' || path.startsWith('/app/'))) {
+      if (path === '/' || path === '/app') {
+        res.writeHead(301, { location: '/app/' });
+        return res.end();
+      }
+      return serveApp(path.slice('/app/'.length), res);
+    }
     const page = method === 'GET' ? WEB_FILES[path] : undefined;
     if (page) {
       res.writeHead(200, { 'content-type': page[1], 'content-security-policy': WEB_CSP, 'x-frame-options': 'DENY' });

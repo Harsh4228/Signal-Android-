@@ -8,6 +8,7 @@
   "scripts": {
     "dev": "electron-vite dev",
     "web": "vite --config web/vite.config.ts",
+    "build:web": "vite build --config web/vite.config.ts",
     "build": "electron-vite build",
     "typecheck": "tsc --noEmit",
     "dist:win": "electron-vite build && electron-builder --win",

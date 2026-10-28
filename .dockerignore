@@ -9,3 +9,5 @@ apps/desktop/dist
 *.db-shm
 .env
 infra/.env
+apps/desktop/web/dist
+apps/desktop/preview

@@ -1,10 +1,18 @@
 import { useEffect, useReducer } from 'react';
 import { AppLock, CallManager, MessengerClient, type CallState } from '@meetme/core';
 import { browserStore } from './browserStore';
+import { keepStorage, webBlobs, webStore } from './webStore';
 import { updateRinger } from './ringer';
 
-// The dev renderer opened in a plain browser (no Electron preload) gets a per-tab store instead.
-if (!window.meetme && import.meta.env.DEV) window.meetme = { platform: 'web', store: browserStore() };
+// In a browser there is no Electron preload: the web app (iPhone: Add to Home Screen) keeps its data encrypted in
+// IndexedDB; the dev page (`npm run web`) uses a per-tab store so each tab can be another user.
+if (!window.meetme) {
+  if (import.meta.env.DEV) window.meetme = { platform: 'web', store: browserStore() };
+  else {
+    window.meetme = { platform: 'web', store: webStore(), media: webBlobs() };
+    keepStorage();
+  }
+}
 
 /** One client + call manager for the whole app. */
 export const client = new MessengerClient(window.meetme.store, { blobs: window.meetme.media });

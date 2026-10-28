@@ -29,6 +29,7 @@ const server = createMeetMeServer(
     // With an admin configured, only admins create accounts (unless OPEN_REGISTRATION=1).
     openRegistration: process.env.OPEN_REGISTRATION === '1' || adminUsers.length === 0,
     publicUrl: process.env.PUBLIC_URL || undefined,
+    appDir: process.env.APP_DIR || undefined,
   },
   { ...pg, push },
 );

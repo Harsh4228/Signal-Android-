@@ -1,6 +1,21 @@
 # MeetMe relay server.
 # Build from the repo root (it needs packages/core too):
 #   docker build -f apps/server/Dockerfile -t meetme-server .
+
+# ---- the web app (iPhone: Safari > Add to Home Screen), built from the desktop UI ----
+FROM node:24-alpine AS web
+WORKDIR /src
+# Electron itself is never needed here: only Vite + React to build the browser version.
+ENV ELECTRON_SKIP_BINARY_DOWNLOAD=1
+COPY package.json package-lock.json ./
+COPY packages/core/package.json packages/core/
+COPY apps/server/package.json apps/server/
+COPY apps/desktop/package.json apps/desktop/
+RUN npm ci -w @meetme/desktop -w @meetme/core --ignore-scripts && npm cache clean --force
+COPY packages/core packages/core
+COPY apps/desktop apps/desktop
+RUN npm run build:web -w @meetme/desktop
+
 FROM node:24-alpine
 
 WORKDIR /app
@@ -16,6 +31,7 @@ RUN npm ci -w @meetme/server -w @meetme/core --omit=dev --ignore-scripts && npm 
 
 COPY packages/core/src packages/core/src
 COPY apps/server/src apps/server/src
+COPY --from=web /src/apps/desktop/web/dist apps/desktop/web/dist
 
 # The database lives on a volume, owned by the unprivileged "node" user.
 RUN mkdir /data && chown node:node /data
