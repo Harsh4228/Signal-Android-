@@ -2922,3 +2922,6 @@ a.button.primary { background: #2455d8; border-color: #2455d8; color: #fff; }
 
 .about-line { color: #344054; font-size: 14px; text-align: center; margin-top: 2px; }
 
+
+.load-earlier { align-self: center; margin: 8px auto 12px; font-size: 13px; border-radius: 999px; padding: 6px 14px; }
+

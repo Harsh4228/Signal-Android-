@@ -219,6 +219,8 @@ function UsersTab({
 }) {
   const me = client.account?.username;
   // Other admins can't demote or delete the company's main admin.
+  // Big companies: the first 100 matches, then more on request (keeps the panel fast).
+  const [limit, setLimit] = useState(100);
   const iAmOwner = !!users?.find((x) => x.username === me)?.owner;
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<Filter>('all');
@@ -352,7 +354,7 @@ function UsersTab({
       <ul className="emp-list">
         {users === null && <li className="muted">Loading…</li>}
         {users && !shown.length && <li className="muted">No users match.</li>}
-        {shown.map((u) => (
+        {shown.slice(0, limit).map((u) => (
           <li key={u.username} className={u.banned ? 'is-banned' : ''}>
             <div className="avatar-wrap">
               <Avatar name={u.username} size="sm" />
@@ -452,6 +454,11 @@ function UsersTab({
           </li>
         ))}
       </ul>
+      {shown.length > limit && (
+        <button onClick={() => setLimit((n) => n + 100)} style={{ marginTop: 8 }}>
+          Show more ({shown.length - limit})
+        </button>
+      )}
     </>
   );
 }

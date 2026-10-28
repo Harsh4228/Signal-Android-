@@ -102,6 +102,9 @@ export function ChatScreen({
   useBack(editing ? () => setEditing(null) : null);
   const listRef = useRef<FlatList<ChatMessage>>(null);
   const messages = c.getMessages(peer);
+  // Newest first for an inverted list: it opens at the newest message and only draws what is on screen,
+  // so a chat with thousands of messages opens as fast as a short one.
+  const newestFirst = [...messages].reverse();
   const timer = c.getDisappearingTimer(peer);
   const online = c.status === 'online';
   const gone = group && !groupInfo; // removed from the group, or the group was deleted
@@ -159,7 +162,7 @@ export function ChatScreen({
   }
 
   function jumpTo(id: string) {
-    const index = messages.findIndex((m) => m.id === id);
+    const index = newestFirst.findIndex((m) => m.id === id);
     if (index < 0) return onError('That message is no longer in this chat');
     setSearching(false);
     listRef.current?.scrollToIndex({ index, viewPosition: 0.5, animated: true });
@@ -314,10 +317,12 @@ export function ChatScreen({
 
       <FlatList
         ref={listRef}
-        data={messages}
+        data={newestFirst}
+        inverted
         keyExtractor={(m) => m.id}
+        initialNumToRender={20}
+        windowSize={11}
         contentContainerStyle={{ paddingHorizontal: 12, paddingVertical: 12, gap: 6 }}
-        onContentSizeChange={() => !searching && listRef.current?.scrollToEnd({ animated: false })}
         onScrollToIndexFailed={(e) => listRef.current?.scrollToOffset({ offset: e.averageItemLength * e.index, animated: true })}
         renderItem={({ item: m }) =>
           m.call ? (

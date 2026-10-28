@@ -52,6 +52,9 @@ import {
 import { copyText, saveToDevice } from '../deviceFiles';
 import { MessageText, ViewOnceBubble, ViewOnceViewer } from './MessageText';
 
+/** How many messages a chat draws at first, and how many more each "Show earlier" adds. */
+const PAGE = 150;
+
 /** A short read-only message box (message info). */
 const alertInfo = (text: string) => alert(text);
 import { calls, client, useClient } from '../messenger';
@@ -114,6 +117,9 @@ export function ChatView({ peer, onError }: { peer: string; onError: (m: string)
   const endRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const messages = c.getMessages(peer);
+  // Long chats: only the newest messages are drawn; "Show earlier messages" adds more (keeps the window fast).
+  const [shown, setShown] = useState(PAGE);
+  const visible = messages.length > shown ? messages.slice(-shown) : messages;
   const timer = c.getDisappearingTimer(peer);
   const online = c.status === 'online';
   const gone = group && !groupInfo; // removed from the group, or the group was deleted
@@ -173,6 +179,13 @@ export function ChatView({ peer, onError }: { peer: string; onError: (m: string)
 
   /** Scroll to a message and flash it (reply quotes, search results). */
   function jumpTo(id: string) {
+    const index = messages.findIndex((m) => m.id === id);
+    if (index >= 0 && index < messages.length - shown) {
+      // Not drawn yet: draw back to it first, then scroll there.
+      setShown(messages.length - index + 20);
+      setTimeout(() => jumpTo(id), 50);
+      return;
+    }
     const el = document.getElementById(`msg-${id}`);
     if (!el) return onError('That message is no longer in this chat');
     el.scrollIntoView({ block: 'center', behavior: 'smooth' });
@@ -369,7 +382,12 @@ export function ChatView({ peer, onError }: { peer: string; onError: (m: string)
             setReactingTo(null);
           }}
         >
-          {messages.map((m) =>
+          {messages.length > shown && (
+            <button className="load-earlier" onClick={() => setShown((n) => n + PAGE)}>
+              Show earlier messages ({messages.length - shown})
+            </button>
+          )}
+          {visible.map((m) =>
             m.call ? (
               <div key={m.id} className={`bubble call-entry ${m.outgoing ? 'out' : 'in'}`}>
                 <span className={`call-icon ${callMissed(m.call) ? 'missed' : ''}`}>
