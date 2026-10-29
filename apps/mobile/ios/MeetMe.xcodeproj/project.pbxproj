@@ -287,7 +287,9 @@
 					"-ObjC",
 					"-lc++",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = "app.meetme";
+				PRODUCT_BUNDLE_IDENTIFIER = "lol.gosite.cellmate";
+				DEVELOPMENT_TEAM = 93H5575G4H;
+				CODE_SIGN_STYLE = Automatic;
 				PRODUCT_NAME = MeetMe;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
@@ -317,7 +319,9 @@
 					"-ObjC",
 					"-lc++",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = "app.meetme";
+				PRODUCT_BUNDLE_IDENTIFIER = "lol.gosite.cellmate";
+				DEVELOPMENT_TEAM = 93H5575G4H;
+				CODE_SIGN_STYLE = Automatic;
 				PRODUCT_NAME = MeetMe;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SWIFT_VERSION = 5.0;

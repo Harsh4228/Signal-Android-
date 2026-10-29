@@ -68,5 +68,8 @@
 	<string>CellMate uses Face ID to unlock the app.</string>
 	<key>UIUserInterfaceStyle</key>
 	<string>Light</string>
+	<!-- End-to-end encryption (Signal protocol): standard algorithms, mass-market messaging (export classification 5D992). -->
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<true/>
 </dict>
 </plist>

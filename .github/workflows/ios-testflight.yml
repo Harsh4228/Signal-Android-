@@ -1,0 +1,86 @@
+# Signed iPhone build uploaded to App Store Connect -> TestFlight (testers install it from the TestFlight app).
+# Signing is automatic: Xcode creates the certificate and profile with the App Store Connect API key.
+#
+# Needs these repository secrets (Settings > Secrets and variables > Actions):
+#   ASC_KEY_ID      App Store Connect API key id
+#   ASC_ISSUER_ID   its issuer id
+#   ASC_KEY_P8      the contents of the AuthKey_<id>.p8 file
+# and the app created once in App Store Connect (Apps > + > New App, bundle id lol.gosite.cellmate).
+# Runs by hand (Actions tab > iOS TestFlight > Run workflow) and on version tags.
+name: iOS TestFlight
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+jobs:
+  testflight:
+    runs-on: macos-latest
+    timeout-minutes: 60
+    env:
+      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+      ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+      GOOGLE_SERVICE_INFO_PLIST: ${{ secrets.GOOGLE_SERVICE_INFO_PLIST }}
+    steps:
+      - name: Skip when the Apple key is not set up yet
+        if: env.ASC_KEY_P8 == ''
+        run: echo "ASC_KEY_P8 is not set - nothing to do" && exit 0
+      - uses: actions/checkout@v4
+        if: env.ASC_KEY_P8 != ''
+      - uses: actions/setup-node@v4
+        if: env.ASC_KEY_P8 != ''
+        with:
+          node-version: 24
+      - if: env.ASC_KEY_P8 != ''
+        run: npm ci
+      - if: env.ASC_KEY_P8 != ''
+        run: npm ci
+        working-directory: apps/mobile
+      - name: Firebase config (push notifications, optional)
+        if: env.ASC_KEY_P8 != '' && env.GOOGLE_SERVICE_INFO_PLIST != ''
+        run: echo "$GOOGLE_SERVICE_INFO_PLIST" > apps/mobile/ios/MeetMe/GoogleService-Info.plist
+      - if: env.ASC_KEY_P8 != ''
+        run: pod install
+        working-directory: apps/mobile/ios
+      - name: API key file
+        if: env.ASC_KEY_P8 != ''
+        run: |
+          mkdir -p "$RUNNER_TEMP/keys"
+          printf '%s' "$ASC_KEY_P8" > "$RUNNER_TEMP/keys/AuthKey_$ASC_KEY_ID.p8"
+      - name: Archive (signed)
+        if: env.ASC_KEY_P8 != ''
+        working-directory: apps/mobile/ios
+        run: |
+          VERSION=$(node -p "require('../../desktop/package.json').version")
+          xcodebuild -workspace MeetMe.xcworkspace -scheme MeetMe -configuration Release \
+            -destination 'generic/platform=iOS' -archivePath "$RUNNER_TEMP/CellMate.xcarchive" \
+            MARKETING_VERSION="$VERSION" CURRENT_PROJECT_VERSION="${{ github.run_number }}" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$RUNNER_TEMP/keys/AuthKey_$ASC_KEY_ID.p8" \
+            -authenticationKeyID "$ASC_KEY_ID" -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
+            archive
+      - name: Upload to App Store Connect (TestFlight)
+        if: env.ASC_KEY_P8 != ''
+        working-directory: apps/mobile/ios
+        run: |
+          cat > "$RUNNER_TEMP/export.plist" <<'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+            <key>method</key><string>app-store-connect</string>
+            <key>destination</key><string>upload</string>
+            <key>teamID</key><string>93H5575G4H</string>
+            <key>signingStyle</key><string>automatic</string>
+            <key>uploadSymbols</key><true/>
+          </dict></plist>
+          PLIST
+          xcodebuild -exportArchive -archivePath "$RUNNER_TEMP/CellMate.xcarchive" \
+            -exportOptionsPlist "$RUNNER_TEMP/export.plist" -exportPath "$RUNNER_TEMP/export" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$RUNNER_TEMP/keys/AuthKey_$ASC_KEY_ID.p8" \
+            -authenticationKeyID "$ASC_KEY_ID" -authenticationKeyIssuerID "$ASC_ISSUER_ID"
+      - name: Remove the key
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/keys"
