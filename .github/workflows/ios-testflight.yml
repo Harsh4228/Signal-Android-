@@ -5,7 +5,7 @@
 #   ASC_KEY_ID      App Store Connect API key id
 #   ASC_ISSUER_ID   its issuer id
 #   ASC_KEY_P8      the contents of the AuthKey_<id>.p8 file
-# and the app created once in App Store Connect (Apps > + > New App, bundle id lol.gosite.cellmate).
+# and the app created once in App Store Connect (Apps > + > New App, bundle id com.gosite.cellmate).
 # Runs by hand (Actions tab > iOS TestFlight > Run workflow) and on version tags.
 name: iOS TestFlight
 
