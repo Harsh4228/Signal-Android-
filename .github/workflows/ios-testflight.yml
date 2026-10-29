@@ -73,7 +73,7 @@ jobs:
             <key>destination</key><string>upload</string>
             <key>teamID</key><string>93H5575G4H</string>
             <key>signingStyle</key><string>automatic</string>
-            <key>uploadSymbols</key><true/>
+            <key>uploadSymbols</key><false/>
           </dict></plist>
           PLIST
           xcodebuild -exportArchive -archivePath "$RUNNER_TEMP/CellMate.xcarchive" \

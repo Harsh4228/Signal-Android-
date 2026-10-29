@@ -68,8 +68,9 @@
 	<string>CellMate uses Face ID to unlock the app.</string>
 	<key>UIUserInterfaceStyle</key>
 	<string>Light</string>
-	<!-- End-to-end encryption (Signal protocol): standard algorithms, mass-market messaging (export classification 5D992). -->
+	<!-- Encryption: only standard, published algorithms (Signal protocol, TLS) in a mass-market messaging app, which is exempt
+	     from export documentation (EAR 740.17(b)(1) / 5D992). Without this key App Store Connect asks on every build. -->
 	<key>ITSAppUsesNonExemptEncryption</key>
-	<true/>
+	<false/>
 </dict>
 </plist>
