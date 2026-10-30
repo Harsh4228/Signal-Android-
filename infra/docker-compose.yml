@@ -39,6 +39,7 @@ services:
       APNS_KEY_ID: ${APNS_KEY_ID:-}
       APNS_TEAM_ID: ${APNS_TEAM_ID:-93H5575G4H}
       APNS_TOPIC: ${APNS_TOPIC:-com.gosite.cellmate}
+      SUPPORT_EMAIL: ${SUPPORT_EMAIL:-hello.cellbtech@gmail.com}
       ADMIN_USERS: ${ADMIN_USERS}
       OPEN_REGISTRATION: ${OPEN_REGISTRATION:-0}
       TURN_URLS: turn:${DOMAIN}:3478?transport=udp,turn:${DOMAIN}:3478?transport=tcp

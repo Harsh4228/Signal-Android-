@@ -947,7 +947,7 @@ export function createMeetMeServer(
       res.writeHead(200, { 'content-type': page[1], 'content-security-policy': WEB_CSP, 'x-frame-options': 'DENY' });
       const body = await fs.readFile(join(WEB_DIR, page[0]));
       // The contact address on the public pages (SUPPORT_EMAIL).
-      const support = (config.supportEmail ?? 'support@gosite.lol').replace(/[<>"'&]/g, '');
+      const support = (config.supportEmail ?? 'hello.cellbtech@gmail.com').replace(/[<>"'&]/g, '');
       return res.end(page[0].endsWith('.html') ? body.toString('utf8').replaceAll('{{support}}', support) : body);
     }
     // Super admin web page: sign in with company code + ID + password (the login password, never the device secret).
