@@ -1,4 +1,4 @@
-import { PermissionsAndroid, Platform } from 'react-native';
+import { NativeModules, PermissionsAndroid, Platform } from 'react-native';
 import { getApp } from '@react-native-firebase/app';
 import {
   AuthorizationStatus,
@@ -21,8 +21,33 @@ import { nativeCallUi } from './callNotify';
 let registered = false;
 let offRefresh: (() => void) | null = null;
 
+/** iPhone: the server sends to Apple directly (ios/MeetMe/CallCenter.swift gets the two tokens). */
+const Apple = NativeModules.ApplePush as
+  | { getTokens(): Promise<{ granted: boolean; env: string; alert?: string; voip?: string }>; clearBadge(): void }
+  | undefined;
+
+/** Marks the token as Apple's: "New message" goes to `a`, incoming calls to the VoIP token `v`. */
+export const APNS_PREFIX = 'apns:';
+
+async function registerApple(client: MessengerClient): Promise<void> {
+  const t = await Apple!.getTokens();
+  if (!t.alert && !t.voip) return;
+  const token = APNS_PREFIX + JSON.stringify({ e: t.env === 'sandbox' ? 's' : 'p', a: t.alert ?? '', v: t.voip ?? '' });
+  await client.setPushToken(token);
+  registered = true;
+}
+
+/** The notifications are only "New message": clear them once the app is open. */
+export function clearNotifications(): void {
+  Apple?.clearBadge();
+}
+
 export async function registerPush(client: MessengerClient): Promise<void> {
   if (registered) return;
+  if (Platform.OS === 'ios') {
+    if (Apple) await registerApple(client).catch((e) => console.warn('push registration failed', e));
+    return;
+  }
   let messaging;
   try {
     messaging = getMessaging(getApp());

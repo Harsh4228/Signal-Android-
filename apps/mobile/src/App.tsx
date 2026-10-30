@@ -1,13 +1,13 @@
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, AppState, BackHandler, KeyboardAvoidingView, StatusBar, Text, View } from 'react-native';
+import { ActivityIndicator, AppState, BackHandler, KeyboardAvoidingView, Platform, StatusBar, Text, View } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { CaptureEventType, CaptureProtection } from 'react-native-capture-protection';
 import { Info } from 'lucide-react-native';
-import { appLock, client, startClient, useCall, useClient, useGroupCall, useLock } from './messenger';
+import { appLock, calls, client, groupCalls, startClient, useCall, useClient, useGroupCall, useLock } from './messenger';
 import { setupCallNotifications } from './callNotify';
 import { colors, isDark, s } from './theme';
 import { Logo } from './ui';
-import { registerPush } from './push';
+import { clearNotifications, registerPush } from './push';
 import { RegisterScreen } from './screens/RegisterScreen';
 import { ChatListScreen } from './screens/ChatListScreen';
 import { DirectoryScreen, openDirectChat } from './screens/DirectoryScreen';
@@ -79,10 +79,18 @@ export default function App() {
     void startClient().then(() => setReady(true));
     const offErr = client.on('error', setToast);
     const appState = AppState.addEventListener('change', (st) => {
-      if (st === 'active') appLock.onForeground();
-      else if (st === 'background') {
+      if (st === 'active') {
+        appLock.onForeground();
+        clearNotifications();
+      } else if (st === 'background') {
         appLock.onBackground();
-        void client.flushHistory().catch(() => {}); // the newest chats into the device file and the backup
+        const flushed = client.flushHistory().catch(() => {}); // the newest chats into the device file and the backup
+        // iOS freezes a background app within seconds, its connection looking alive to the server for a while:
+        // close it, so the server knows to wake this iPhone with a push. Not during a call (it keeps running).
+        if (Platform.OS === 'ios')
+          void flushed.then(() => {
+            if (AppState.currentState === 'background' && calls.state.status === 'idle' && groupCalls.state.status === 'idle') client.disconnect();
+          });
       }
       if (st === 'active' && client.account && client.status === 'offline') client.connect();
     });

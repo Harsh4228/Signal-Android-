@@ -58,6 +58,7 @@ const PAGE = 150;
 /** A short read-only message box (message info). */
 const alertInfo = (text: string) => alert(text);
 import { calls, client, groupCalls, useClient, useGroupCall } from '../messenger';
+import { toggleBlock } from './Safety';
 import { ChatInfo } from './ChatInfo';
 import { AttachmentView } from './AttachmentView';
 import { EventView, NewEvent, NewPoll, PollView } from './PollEvent';
@@ -529,6 +530,13 @@ export function ChatView({ peer, onError }: { peer: string; onError: (m: string)
 
       {gone ? (
         <div className="composer-note">You are no longer a member of this group.</div>
+      ) : !group && c.isBlocked(peer) ? (
+        <div className="composer-note">
+          You blocked {client.displayName(peer)}.{' '}
+          <button className="link" onClick={() => toggleBlock(peer, onError)}>
+            Unblock
+          </button>
+        </div>
       ) : !c.canSendTo(peer) ? (
         <div className="composer-note">
           <Lock size={14} /> Only {groupInfo?.senders?.length ? groupInfo.senders.join(', ') + ' and admins' : 'admins'} can send

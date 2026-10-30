@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
-import { BackHandler, PermissionsAndroid, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { BackHandler, Linking, PermissionsAndroid, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Camera, CameraType } from 'react-native-camera-kit';
 import { ArrowLeft, Building2, CircleAlert, KeyRound, LockKeyhole, QrCode, ScanLine, Square, SquareCheck, X } from 'lucide-react-native';
 import { MIN_PASSWORD_LENGTH, MustChangePasswordError, companyOf, makeUsername, normalizeServerUrl, parseInviteCode, shortId } from '@meetme/core';
-import { DEFAULT_SERVER } from '../config';
+import { DEFAULT_SERVER, LEGAL_BASE } from '../config';
 import { client } from '../messenger';
 import { colors, s } from '../theme';
 import { Banner, Button, Field, IconButton, Logo, errorText } from '../ui';
@@ -234,6 +234,19 @@ export function RegisterScreen({ onDone, moved }: { onDone: () => void; moved?: 
             />
           )}
           {mode === 'join' && invite && <Button title="Scan a different QR" onPress={() => setCode('')} />}
+          {(mode !== 'join' || invite) && (
+            <Text style={[s.muted, { fontSize: 12, textAlign: 'center', lineHeight: 18 }]}>
+              By continuing you agree to the{' '}
+              <Text style={{ color: colors.accent }} onPress={() => void Linking.openURL(`${LEGAL_BASE}/terms`)}>
+                Terms of use
+              </Text>{' '}
+              and{' '}
+              <Text style={{ color: colors.accent }} onPress={() => void Linking.openURL(`${LEGAL_BASE}/privacy`)}>
+                Privacy policy
+              </Text>
+              . No abusive or objectionable content is allowed.
+            </Text>
+          )}
 
           {!moved && (
             <View style={{ gap: 2, alignItems: 'center' }}>

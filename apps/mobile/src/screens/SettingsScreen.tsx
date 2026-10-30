@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Alert, Linking, Pressable, ScrollView, Switch, Text, View } from 'react-native';
-import { Building2, Camera, ChevronRight, CircleAlert, CircleCheck, CloudUpload, Lock, LogOut, Trash2 } from 'lucide-react-native';
+import { Ban, Building2, Camera, ChevronRight, CircleAlert, CircleCheck, CloudUpload, FileText, Lock, LogOut, ShieldCheck, Trash2 } from 'lucide-react-native';
 import { AVATAR_MIMES, MAX_ABOUT, MAX_EMAIL, MAX_PHONE, MIN_PASSWORD_LENGTH, shortId } from '@meetme/core';
 import { pickFile } from '../files';
 import { appLock, client, useClient, useLock } from '../messenger';
@@ -8,6 +8,8 @@ import { resetPush } from '../push';
 import { chooseTheme, colors, s, themeChoice, type ThemeChoice } from '../theme';
 import { Avatar, Banner, Button, Field, Header, Row, errorText } from '../ui';
 import type { Route } from '../App';
+import { BlockedScreen, requestDeletion } from './Safety';
+import { LEGAL_BASE } from '../config';
 
 const SECURITY = [
   'End-to-end encryption with the Signal protocol (X3DH + Double Ratchet)',
@@ -123,6 +125,13 @@ export function SettingsScreen({ navigate }: { navigate: (r: Route) => void }) {
   const [newPw, setNewPw] = useState('');
   const [newPw2, setNewPw2] = useState('');
   const [pwMsg, setPwMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [showBlocked, setShowBlocked] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 3000);
+    return () => clearTimeout(t);
+  }, [toast]);
 
   async function changePassword() {
     if (newPw.length < MIN_PASSWORD_LENGTH) return setPwMsg({ ok: false, text: `At least ${MIN_PASSWORD_LENGTH} characters` });
@@ -228,6 +237,13 @@ export function SettingsScreen({ navigate }: { navigate: (r: Route) => void }) {
             onPress={() => navigate({ name: 'applock' })}
             right={<ChevronRight size={18} color={colors.faint} />}
           />
+          <Row
+            icon={Ban}
+            title="Blocked"
+            subtitle={c.blocked.length ? `${c.blocked.length} blocked` : 'Nobody'}
+            onPress={() => setShowBlocked(true)}
+            right={<ChevronRight size={18} color={colors.faint} />}
+          />
         </View>
         <PrivacySettings />
 
@@ -278,11 +294,27 @@ export function SettingsScreen({ navigate }: { navigate: (r: Route) => void }) {
         <Text style={s.section}>Account</Text>
         <View style={[s.card, { padding: 4 }]}>
           <Row icon={LogOut} title="Sign out" onPress={logout} />
-          {c.canDeleteOwnAccount && (
+          {c.canDeleteOwnAccount ? (
             <Row icon={Trash2} title="Delete account" subtitle="Wipes all keys from this phone" danger onPress={wipe} />
+          ) : (
+            <Row icon={Trash2} title="Delete account" subtitle="Ask your admin to delete your account" danger onPress={() => requestDeletion(setToast)} />
           )}
         </View>
+
+        <Text style={s.section}>About</Text>
+        <View style={[s.card, { padding: 4 }]}>
+          <Row icon={ShieldCheck} title="Privacy policy" onPress={() => void Linking.openURL(`${LEGAL_BASE}/privacy`)} right={<ChevronRight size={18} color={colors.faint} />} />
+          <Row icon={FileText} title="Terms of use" onPress={() => void Linking.openURL(`${LEGAL_BASE}/terms`)} right={<ChevronRight size={18} color={colors.faint} />} />
+        </View>
       </ScrollView>
+      {toast && (
+        <View style={{ position: 'absolute', left: 16, right: 16, bottom: 24 }}>
+          <Banner kind="ok" icon={CircleCheck}>
+            {toast}
+          </Banner>
+        </View>
+      )}
+      {showBlocked && <BlockedScreen onClose={() => setShowBlocked(false)} onToast={setToast} />}
     </View>
   );
 }

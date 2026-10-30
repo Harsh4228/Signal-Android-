@@ -368,6 +368,35 @@ export interface PrivacyRequest {
   hideLastSeen?: boolean;
 }
 
+/** Reporting someone to the admins (POST /v1/report). The messages are what the reporter chose to show them. */
+export const REPORT_REASONS = ['Spam', 'Harassment or bullying', 'Inappropriate content', 'Fraud or scam', 'Something else'] as const;
+/** Sent about oneself: asks the admins to delete my account (where only admins may delete accounts). */
+export const DELETE_REQUEST = 'Delete my account';
+export const MAX_REPORT_MESSAGES = 20;
+export interface ReportedMessage {
+  from: string;
+  text: string;
+  ts: number;
+}
+export interface ReportRequest {
+  user: string;
+  reason: string;
+  details?: string;
+  /** The chat it happened in (a person or a group). */
+  chat?: string;
+  messages?: ReportedMessage[];
+}
+export interface Report extends ReportRequest {
+  id: string;
+  ts: number;
+  by: string;
+  messages: ReportedMessage[];
+  status: 'open' | 'closed';
+  closedBy?: string;
+  closedAt?: number;
+  note?: string;
+}
+
 export interface UploadKeysRequest {
   signedPreKey?: { id: number; pub: string; sig: string };
   oneTimePreKeys?: { id: number; pub: string }[];

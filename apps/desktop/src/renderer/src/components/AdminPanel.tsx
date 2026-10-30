@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import QRCode from 'qrcode';
 import {
   Ban,
+  Flag,
   Building2,
   Camera,
   Check,
@@ -28,6 +29,7 @@ import {
   UsersRound,
   X,
 } from 'lucide-react';
+import { ReportsTab } from './Safety';
 import {
   AUDIT_LABELS,
   MAX_DEPARTMENT,
@@ -57,7 +59,7 @@ import { Avatar, errorText, shortTime } from './ui';
 import { HelpDeskTab, RightsTab } from './AdminRights';
 import { CommunitiesTab } from './Channels';
 
-type Tab = 'overview' | 'users' | 'departments' | 'groups' | 'communities' | 'rights' | 'helpdesk' | 'activity' | 'settings';
+type Tab = 'overview' | 'users' | 'departments' | 'groups' | 'communities' | 'rights' | 'helpdesk' | 'reports' | 'activity' | 'settings';
 /** A QR invite to show: for a new user, or a new one for someone who already exists. */
 type Share = { invite: InviteResponse; name: string; email?: string; renewed: boolean };
 type Toast = (m: string) => void;
@@ -70,6 +72,7 @@ const TABS: [Tab, string, typeof Users][] = [
   ['communities', 'Communities', Building2],
   ['rights', 'Permissions', KeyRound],
   ['helpdesk', 'Help desk', LifeBuoy],
+  ['reports', 'Reports', Flag],
   ['activity', 'Activity log', ScrollText],
   ['settings', 'Settings', Settings2],
 ];
@@ -151,6 +154,7 @@ export function AdminPanel({ onClose, onToast }: { onClose: () => void; onToast:
           {tab === 'communities' && <CommunitiesTab groups={groups} onToast={onToast} />}
           {tab === 'rights' && <RightsTab users={users} groups={groups} departments={departments ?? []} onToast={onToast} />}
           {tab === 'helpdesk' && <HelpDeskTab users={users} departments={departments ?? []} onToast={onToast} />}
+          {tab === 'reports' && <ReportsTab onToast={onToast} />}
           {tab === 'activity' && <Activity />}
           {tab === 'settings' && <SettingsTab onToast={onToast} />}
         </div>

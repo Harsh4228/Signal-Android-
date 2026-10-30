@@ -3,6 +3,7 @@ import { dirname, join } from 'node:path';
 import { createMeetMeServer } from './app';
 import { openPostgres } from './postgres';
 import { FcmSender } from './push';
+import { ApnsSender } from './apns';
 
 const list = (v: string | undefined) => (v ?? '').split(',').map((s) => s.trim()).filter(Boolean);
 
@@ -16,6 +17,8 @@ const adminUsers = list(process.env.ADMIN_USERS).map((u) => u.toLowerCase());
 const pg = process.env.DATABASE_URL ? await openPostgres(process.env.DATABASE_URL) : undefined;
 // Wake-up pushes (Android + iOS through Firebase Cloud Messaging) when a service account is configured.
 const push = FcmSender.fromEnv();
+// The iPhone app: Apple's push service directly (notifications + CallKit calls), when an APNs key is configured.
+const apns = ApnsSender.fromEnv();
 
 const server = createMeetMeServer(
   {
@@ -30,14 +33,15 @@ const server = createMeetMeServer(
     openRegistration: process.env.OPEN_REGISTRATION === '1' || adminUsers.length === 0,
     publicUrl: process.env.PUBLIC_URL || undefined,
     appDir: process.env.APP_DIR || undefined,
+    supportEmail: process.env.SUPPORT_EMAIL || undefined,
   },
-  { ...pg, push },
+  { ...pg, push, apns },
 );
 
 const port = Number(process.env.PORT ?? 8080);
 const host = process.env.HOST ?? '0.0.0.0';
 server.listen(port, host, () => {
-  console.log(`CellMate server listening on http://${host}:${port} (database: ${pg ? 'PostgreSQL' : 'SQLite'}, push: ${push ? 'on' : 'off'})`);
+  console.log(`CellMate server listening on http://${host}:${port} (database: ${pg ? 'PostgreSQL' : 'SQLite'}, push: ${push ? 'on' : 'off'}, iPhone push: ${apns ? 'on' : 'off'})`);
   console.log(
     process.env.ADMIN_USERS
       ? `Admins: ${process.env.ADMIN_USERS}`

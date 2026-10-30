@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react';
-import { BadgeCheck, Check, ChevronRight, Eraser, KeyRound, Mail, Phone, RotateCcw, Search, ShieldPlus, ShieldX, UserMinus, UserPlus, X } from 'lucide-react';
+import { Ban, BadgeCheck, Check, Flag, ChevronRight, Eraser, KeyRound, Mail, Phone, RotateCcw, Search, ShieldPlus, ShieldX, UserMinus, UserPlus, X } from 'lucide-react';
 import { CatalogPanel } from './Catalog';
 import { formatLastSeen, groupIdOf, isGroupKey, type UserProfile } from '@meetme/core';
 import { client, useClient } from '../messenger';
 import { Avatar, ChatAvatar, errorText } from './ui';
 import { MediaSection } from './MediaGallery';
 import { GroupRightsModal } from './AdminRights';
+import { ReportDialog, toggleBlock } from './Safety';
 
 const TIMERS: [number, string][] = [
   [0, 'Off'],
@@ -206,6 +207,7 @@ function PersonInfo({ peer, onClose, onError }: { peer: string; onClose: () => v
   // Their catalog, like a WhatsApp Business profile (shown only if they have products).
   const [catalogCount, setCatalogCount] = useState<number | null>(null);
   const [showCatalog, setShowCatalog] = useState(false);
+  const [reporting, setReporting] = useState(false);
   useEffect(() => {
     client
       .listProducts(peer)
@@ -316,6 +318,12 @@ function PersonInfo({ peer, onClose, onError }: { peer: string; onClose: () => v
         <button onClick={run(() => client.resetSession(peer))}>
           <RotateCcw size={16} /> Reset secure session
         </button>
+        <button className={c.isBlocked(peer) ? undefined : 'danger'} onClick={() => toggleBlock(peer, onError)}>
+          <Ban size={16} /> {c.isBlocked(peer) ? 'Unblock' : 'Block'} {client.displayName(peer)}
+        </button>
+        <button className="danger" onClick={() => setReporting(true)}>
+          <Flag size={16} /> Report {client.displayName(peer)}
+        </button>
         <button
           className="danger"
           onClick={() => {
@@ -328,6 +336,7 @@ function PersonInfo({ peer, onClose, onError }: { peer: string; onClose: () => v
           <UserMinus size={16} /> Remove contact
         </button>
       </div>
+      {reporting && <ReportDialog user={peer} onClose={() => setReporting(false)} onToast={onError} />}
     </aside>
   );
 }

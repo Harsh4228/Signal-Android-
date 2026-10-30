@@ -4,3 +4,6 @@
  * address); only new installs need an app update with the new address here.
  */
 export const DEFAULT_SERVER = 'https://chat.gosite.lol';
+
+/** Privacy policy and terms of use (also linked from the App Store listing). */
+export const LEGAL_BASE = DEFAULT_SERVER;

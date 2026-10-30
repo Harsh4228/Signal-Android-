@@ -54,6 +54,10 @@ import {
   type ChannelInfo,
   type Community,
   MAX_ABOUT,
+  MAX_REPORT_MESSAGES,
+  REPORT_REASONS,
+  DELETE_REQUEST,
+  type Report,
   type PrivacyRequest,
   type CompanyInfo,
   type NewCompanyRequest,
@@ -91,6 +95,7 @@ import {
 import { LocalBus, type Bus, type BusEvent } from './bus';
 import { MOVED, isActive, isOnlineRow, openSqlite, type Db, type GroupRow, type ProductPhoto, type ProductRow, type UserRow } from './db';
 import { CALL_UI_PREFIX, type PushSender } from './push';
+import { APNS_PREFIX, parseAppleToken } from './apns';
 import { WEB_PUSH_PREFIX, WebPushSender, newVapidKeys, parseSubscription, type VapidKeys } from './webpush';
 
 export interface ServerConfig {
@@ -105,6 +110,8 @@ export interface ServerConfig {
   adminUsers: string[];
   /** Anyone may create an account. When false only admins self-register; employees get accounts from an admin. */
   openRegistration: boolean;
+  /** Contact address shown on /privacy, /terms and /support. */
+  supportEmail?: string;
   /** How long a message may wait unacknowledged before a wake-up push is sent (ms). */
   pushDelayMs?: number;
   /** Official address (e.g. https://chat.example.com). After a domain change, clients still using an old address move here. */
@@ -127,6 +134,11 @@ const WEB_FILES: Record<string, [file: string, type: string]> = {
   '/super': ['super.html', 'text/html; charset=utf-8'],
   '/super.js': ['super.js', 'text/javascript; charset=utf-8'],
   '/super.css': ['super.css', 'text/css; charset=utf-8'],
+  // Public pages for the app stores and the sign-in screen.
+  '/privacy': ['privacy.html', 'text/html; charset=utf-8'],
+  '/terms': ['terms.html', 'text/html; charset=utf-8'],
+  '/support': ['support.html', 'text/html; charset=utf-8'],
+  '/legal.css': ['legal.css', 'text/css; charset=utf-8'],
 };
 const WEB_CSP =
   "default-src 'none'; script-src 'self'; style-src 'self'; img-src data:; connect-src 'self'; form-action 'none'; frame-ancestors 'none'; base-uri 'none'";
@@ -309,10 +321,14 @@ class RateLimiter {
 
 // ---------------------------------------------------------------- server
 
-export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: Bus; push?: PushSender | null } = {}) {
+export function createMeetMeServer(
+  config: ServerConfig,
+  deps: { db?: Db; bus?: Bus; push?: PushSender | null; apns?: PushSender | null } = {},
+) {
   const db: Db = deps.db ?? openSqlite(config.dbPath);
   const bus: Bus = deps.bus ?? new LocalBus();
   const push = deps.push ?? null;
+  const apns = deps.apns ?? null;
 
   // Sealed sender: the key that signs sender certificates. Kept in the database so every instance
   // uses the same one (and clients keep trusting it across restarts).
@@ -843,6 +859,7 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
   mkdirSync(attachmentsDir, { recursive: true });
   const attachmentFile = (id: string) => join(attachmentsDir, `${id}.bin`);
   const uploadLimit = new RateLimiter(120, 3600_000);
+  const reportLimit = new RateLimiter(20, 3600_000);
   const backupLimit = new RateLimiter(60, 3600_000);
   const backupOpLimit = new RateLimiter(3000, 3600_000);
 
@@ -928,7 +945,10 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
     const page = method === 'GET' ? WEB_FILES[path] : undefined;
     if (page) {
       res.writeHead(200, { 'content-type': page[1], 'content-security-policy': WEB_CSP, 'x-frame-options': 'DENY' });
-      return res.end(await fs.readFile(join(WEB_DIR, page[0])));
+      const body = await fs.readFile(join(WEB_DIR, page[0]));
+      // The contact address on the public pages (SUPPORT_EMAIL).
+      const support = (config.supportEmail ?? 'support@gosite.lol').replace(/[<>"'&]/g, '');
+      return res.end(page[0].endsWith('.html') ? body.toString('utf8').replaceAll('{{support}}', support) : body);
     }
     // Super admin web page: sign in with company code + ID + password (the login password, never the device secret).
     if (method === 'POST' && path === '/v1/super/setup') {
@@ -1226,6 +1246,10 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
           // A browser's Web Push subscription (web app).
           if (!parseSubscription(body.token)) throw new HttpError(400, 'invalid web push subscription');
           token = body.token;
+        } else if (body.token.startsWith(APNS_PREFIX)) {
+          // The iPhone app: Apple tokens for notifications and for calls (apns.ts).
+          if (!parseAppleToken(body.token)) throw new HttpError(400, 'invalid Apple push token');
+          token = body.token;
         } else {
           // Kept with the token, so it is cleared with it (new device, logout): see push.ts.
           token = body.callUi === true ? `${CALL_UI_PREFIX}${body.token}` : body.token;
@@ -1432,6 +1456,46 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
       if (!group || !(await mayManageGroup(me, group))) throw new HttpError(404, 'group not found');
       const updated = await updateGroupFrom(me, group, await readJson(req));
       return send(200, updated);
+    }
+
+    // ---- block list (the app hides and refuses blocked people) and reports to the admins ----
+    if (path === '/v1/me/blocked' && (method === 'GET' || method === 'PUT')) {
+      const key = `blocked:${me}`;
+      if (method === 'PUT') {
+        const users = ((await readJson(req)) as { users?: unknown }).users;
+        if (!Array.isArray(users) || users.length > 1000 || users.some((u) => typeof u !== 'string' || !USERNAME_RE.test(u))) {
+          throw new HttpError(400, 'invalid block list');
+        }
+        await db.setMeta(key, JSON.stringify([...new Set(users as string[])].filter((u) => u !== me)));
+        return send(204);
+      }
+      return send(200, { users: parseList(await db.getMeta(key)) });
+    }
+    if (method === 'POST' && path === '/v1/report') {
+      if (!reportLimit.allow(me)) throw new HttpError(429, 'Too many reports, try again later');
+      const body = (await readJson(req)) as Record<string, unknown>;
+      const user = body.user;
+      if (typeof user !== 'string' || !USERNAME_RE.test(user) || !(await db.getUser(user))) throw new HttpError(400, 'unknown user');
+      // About someone else, or about myself only to ask for my account to be deleted.
+      const reasonOk = user === me ? body.reason === DELETE_REQUEST : (REPORT_REASONS as readonly string[]).includes(body.reason as string);
+      if (typeof body.reason !== 'string' || !reasonOk) throw new HttpError(400, 'invalid reason');
+      const details = typeof body.details === 'string' ? body.details.trim().slice(0, 1000) : '';
+      const chat = typeof body.chat === 'string' && body.chat.length <= 80 ? body.chat : undefined;
+      const messages = (Array.isArray(body.messages) ? body.messages : [])
+        .slice(-MAX_REPORT_MESSAGES)
+        .filter((m): m is { from: string; text: string; ts: number } => {
+          const x = m as Record<string, unknown>;
+          return typeof x.from === 'string' && USERNAME_RE.test(x.from) && typeof x.text === 'string' && typeof x.ts === 'number';
+        })
+        .map((m) => ({ from: m.from, text: m.text.slice(0, 2000), ts: m.ts }));
+      // To the admins of the reported person's company (the owner's for people without one).
+      const co = companyOf(user);
+      const report: Report = { id: randomBytes(8).toString('hex'), ts: Date.now(), by: me, user, reason: body.reason, details, chat, messages, status: 'open' };
+      const list = JSON.parse((await db.getMeta(metaKey('reports', co))) ?? '[]') as Report[];
+      list.unshift(report);
+      await db.setMeta(metaKey('reports', co), JSON.stringify(list.slice(0, 300)));
+      await audit(me, user === me ? 'report.delete_request' : 'report.create', user, body.reason);
+      return send(201, { id: report.id });
     }
 
     // ---- help desk: whom to call for what; everyone may read it, company admins edit it ----
@@ -1935,6 +1999,20 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
         };
         return send(200, page);
       }
+      // Reports from people about others in this company: the admins look at them and close them.
+      if (method === 'GET' && path === '/v1/admin/reports') {
+        return send(200, { reports: JSON.parse((await db.getMeta(metaKey('reports', co))) ?? '[]') as Report[] });
+      }
+      if (method === 'POST' && (m = path.match(/^\/v1\/admin\/reports\/([0-9a-f]{16})\/close$/))) {
+        const note = ((await readJson(req)) as { note?: unknown }).note;
+        const list = JSON.parse((await db.getMeta(metaKey('reports', co))) ?? '[]') as Report[];
+        const r = list.find((x) => x.id === m![1]);
+        if (!r) throw new HttpError(404, 'report not found');
+        Object.assign(r, { status: 'closed', closedBy: me, closedAt: Date.now(), ...(typeof note === 'string' && note.trim() ? { note: note.trim().slice(0, 500) } : {}) });
+        await db.setMeta(metaKey('reports', co), JSON.stringify(list));
+        await audit(me, 'report.close', r.user, r.reason);
+        return send(200, r);
+      }
       if (method === 'PUT' && path === '/v1/admin/communities') {
         const raw = ((await readJson(req)) as { communities?: unknown }).communities;
         if (!Array.isArray(raw) || raw.length > MAX_COMMUNITIES) throw new HttpError(400, `Up to ${MAX_COMMUNITIES} communities`);
@@ -2122,8 +2200,12 @@ export function createMeetMeServer(config: ServerConfig, deps: { db?: Db; bus?: 
         }
         const user = await db.getUser(to);
         if (!user?.push_token) return;
-        // Browsers (web app) get Web Push; the phone apps get Firebase.
-        const sender = user.push_token.startsWith(WEB_PUSH_PREFIX) ? (await webPush).sender : push;
+        // Browsers (web app) get Web Push, the iPhone app Apple's push, Android Firebase.
+        const sender = user.push_token.startsWith(WEB_PUSH_PREFIX)
+          ? (await webPush).sender
+          : user.push_token.startsWith(APNS_PREFIX)
+            ? apns
+            : push;
         if (!sender) return;
         if ((await sender.send(user.push_token, kind)) === 'invalid') await db.setPushToken(to, null);
       })().catch((e) => console.error('push failed', e));

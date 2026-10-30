@@ -6,6 +6,7 @@ import { AppLockSettings } from './AppLockSettings';
 import { getTheme, setTheme, type ThemeChoice } from '../theme';
 import { enableWebPush, needsHomeScreen, webPushState, webPushSupported } from '../webPush';
 import { Avatar, PasswordInput, errorText } from './ui';
+import { requestDeletion, toggleBlock } from './Safety';
 
 const SECURITY = [
   'End-to-end encryption with the Signal protocol (X3DH + Double Ratchet)',
@@ -303,13 +304,32 @@ export function Settings({ onClose, onToast }: { onClose: () => void; onToast: (
           ))}
         </ul>
 
+        <div className="section-title">Blocked</div>
+        {c.blocked.length ? (
+          <ul className="member-list">
+            {c.blocked.map((u) => (
+              <li key={u}>
+                <Avatar name={u} size="sm" />
+                <div className="grow name">{c.displayName(u)}</div>
+                <button onClick={() => toggleBlock(u, () => {})}>Unblock</button>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="muted small">Nobody is blocked. To block someone, open their chat details and choose Block.</p>
+        )}
+
         <div className="row-end" style={{ marginTop: 28 }}>
           <button onClick={() => void logout()}>
             <LogOut size={16} /> Sign out
           </button>
-          {c.canDeleteOwnAccount && (
+          {c.canDeleteOwnAccount ? (
             <button className="danger" disabled={busy} onClick={deleteAccount}>
               <Trash2 size={16} /> Delete account
+            </button>
+          ) : (
+            <button className="danger" onClick={() => requestDeletion((m) => alert(m))}>
+              <Trash2 size={16} /> Ask admin to delete my account
             </button>
           )}
         </div>

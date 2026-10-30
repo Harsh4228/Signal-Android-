@@ -38,6 +38,7 @@ import {
   Trash2,
   Video,
   X,
+  Flag,
 } from 'lucide-react-native';
 import { MessengerClient, callDetail, callMissed, callTitle, formatLastSeen, isGroupKey, type CallLog, type ChatMessage } from '@meetme/core';
 import {
@@ -63,6 +64,7 @@ import { calls, client, groupCalls, useClient, useGroupCall } from '../messenger
 import { colors, s } from '../theme';
 import { ChatAvatar, Header, IconButton, Sheet, clock, errorText, typingText, useBack, type SheetAction } from '../ui';
 import type { Route } from '../App';
+import { ReportSheet, confirmBlock } from './Safety';
 
 function Tick({ status }: { status: NonNullable<ChatMessage['status']> }) {
   const Icon =
@@ -91,6 +93,7 @@ export function ChatScreen({
   const [creating, setCreating] = useState<'poll' | 'event' | 'location' | 'contact' | 'catalog' | null>(null);
   const [replyTo, setReplyTo] = useState<ChatMessage | null>(null);
   const [forwarding, setForwarding] = useState<ChatMessage | null>(null);
+  const [reporting, setReporting] = useState<string | null>(null);
   const [viewOnce, setViewOnce] = useState<ChatMessage | null>(null);
   const [recording, setRecording] = useState(false);
   const [searching, setSearching] = useState(false);
@@ -220,6 +223,8 @@ export function ChatScreen({
           ),
       });
     }
+    const author = m.outgoing || m.system ? null : (m.from ?? (group ? null : peer));
+    if (author && author !== c.account?.username) list.push({ icon: Flag, label: 'Report', onPress: () => setReporting(author) });
     if (c.canClearHistory) list.push({ icon: Trash2, label: 'Delete for me', onPress: () => void remove(m, false) });
     if (c.canEditDelete && (m.outgoing || c.isAdmin)) {
       list.push({ icon: Ban, label: 'Delete for everyone', onPress: () => void remove(m, true) });
@@ -435,6 +440,13 @@ export function ChatScreen({
         <View style={[styles.composer, { justifyContent: 'center', paddingVertical: 16 }]}>
           <Text style={s.muted}>You are no longer a member of this group.</Text>
         </View>
+      ) : !group && c.isBlocked(peer) ? (
+        <Pressable onPress={() => confirmBlock(peer, onError)} style={[styles.composer, { justifyContent: 'center', paddingVertical: 16, gap: 6 }]}>
+          <Ban size={14} color={colors.muted} />
+          <Text style={[s.muted, { flexShrink: 1, textAlign: 'center' }]}>
+            You blocked {client.displayName(peer)}. <Text style={{ color: colors.accent, fontWeight: '600' }}>Tap to unblock.</Text>
+          </Text>
+        </Pressable>
       ) : !c.canSendTo(peer) ? (
         <View style={[styles.composer, { justifyContent: 'center', paddingVertical: 16, gap: 6 }]}>
           <Lock size={14} color={colors.muted} />
@@ -560,6 +572,7 @@ export function ChatScreen({
       {creating === 'catalog' && <CatalogScreen chat={peer} onClose={() => setCreating(null)} onToast={onError} />}
       {viewingCatalog && <CatalogScreen owner={viewingCatalog} onClose={() => setViewingCatalog(null)} onToast={onError} />}
       {forwarding && <ForwardPicker m={forwarding} onClose={() => setForwarding(null)} onToast={onError} />}
+      {reporting && <ReportSheet user={reporting} chat={peer} onClose={() => setReporting(null)} onToast={onError} />}
       {viewOnce && <ViewOnceViewer m={viewOnce} onClose={() => setViewOnce(null)} />}
       {selected && <Sheet title="Message" onClose={() => setSelected(null)} actions={actionsFor(selected)} />}
       {selected && (

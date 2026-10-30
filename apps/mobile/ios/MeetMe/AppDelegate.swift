@@ -28,6 +28,9 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     reactNativeFactory = factory
 
     window = UIWindow(frame: UIScreen.main.bounds)
+    DeviceFiles.applyTheme(to: window)
+    // Incoming call pushes (PushKit) must be handled from the very start: a call can be what launched the app.
+    CallCenter.shared.start()
 
     factory.startReactNative(
       withModuleName: "MeetMe",
@@ -36,6 +39,14 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     )
 
     return true
+  }
+
+  func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
+    CallCenter.shared.gotAlertToken(deviceToken)
+  }
+
+  func application(_ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: Error) {
+    CallCenter.shared.failedAlertToken()
   }
 }
 

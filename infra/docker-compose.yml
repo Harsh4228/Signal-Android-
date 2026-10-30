@@ -34,6 +34,11 @@ services:
       ATTACHMENTS_DIR: /data/attachments
       # Wake-up pushes: put the Firebase service account at infra/secrets/fcm-service-account.json
       FCM_SERVICE_ACCOUNT_FILE: /run/meetme-secrets/fcm-service-account.json
+      # iPhone pushes and calls: the APNs key from developer.apple.com > Keys, saved as infra/secrets/apns.p8
+      APNS_KEY_FILE: /run/meetme-secrets/apns.p8
+      APNS_KEY_ID: ${APNS_KEY_ID:-}
+      APNS_TEAM_ID: ${APNS_TEAM_ID:-93H5575G4H}
+      APNS_TOPIC: ${APNS_TOPIC:-com.gosite.cellmate}
       ADMIN_USERS: ${ADMIN_USERS}
       OPEN_REGISTRATION: ${OPEN_REGISTRATION:-0}
       TURN_URLS: turn:${DOMAIN}:3478?transport=udp,turn:${DOMAIN}:3478?transport=tcp

@@ -58,9 +58,10 @@ import { Avatar, Banner, Button, Field, Header, IconButton, Sheet, errorText, sh
 import type { Route } from '../App';
 import { HelpDeskTab } from './HelpDesk';
 import { CommunitiesTab } from './AdminCommunities';
+import { ReportsTab } from './Safety';
 import { GroupRightsScreen, RightsTab } from './RightsScreen';
 
-type Tab = 'overview' | 'users' | 'departments' | 'groups' | 'communities' | 'rights' | 'helpdesk' | 'activity' | 'settings';
+type Tab = 'overview' | 'users' | 'departments' | 'groups' | 'communities' | 'rights' | 'helpdesk' | 'reports' | 'activity' | 'settings';
 type Toast = (m: string) => void;
 const TABS: [Tab, string][] = [
   ['overview', 'Overview'],
@@ -70,6 +71,7 @@ const TABS: [Tab, string][] = [
   ['communities', 'Communities'],
   ['rights', 'Permissions'],
   ['helpdesk', 'Help desk'],
+  ['reports', 'Reports'],
   ['activity', 'Activity'],
   ['settings', 'Settings'],
 ];
@@ -293,6 +295,11 @@ export function AdminScreen({ navigate, onToast }: { navigate: (r: Route) => voi
       {tab === 'communities' && <CommunitiesTab groups={groups} onToast={onToast} />}
       {tab === 'rights' && <RightsTab users={users} groups={groups} departments={departments ?? []} onToast={onToast} />}
       {tab === 'helpdesk' && <HelpDeskTab users={users} departments={departments ?? []} onToast={onToast} />}
+      {tab === 'reports' && (
+        <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40 }}>
+          <ReportsTab onToast={onToast} />
+        </ScrollView>
+      )}
       {tab === 'activity' && <Activity />}
       {tab === 'settings' && <SettingsTab onToast={onToast} />}
     </View>

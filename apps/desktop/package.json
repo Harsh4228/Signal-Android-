@@ -1,6 +1,6 @@
 {
   "name": "@meetme/desktop",
-  "version": "1.4.2",
+  "version": "1.5.0",
   "private": true,
   "description": "CellMate secure messenger for Windows / macOS / Linux",
   "main": "out/main/index.js",

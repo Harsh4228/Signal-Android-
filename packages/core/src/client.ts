@@ -71,6 +71,9 @@ import {
   type JoinRequest,
   type HistoryBackup,
   type PrivacyRequest,
+  type Report,
+  MAX_REPORT_MESSAGES,
+  DELETE_REQUEST,
 } from './api';
 import { attachmentKind, decryptAttachment, encryptAttachment, safeFileName, type AttachmentKind } from './attachments';
 import { randomBytes } from './crypto/primitives';
@@ -766,6 +769,7 @@ export class MessengerClient extends Emitter<Events> {
     this.starred = await this.store.getSetting<StarredMessage[]>('starred', []);
     this.chatPrefs = await this.store.getSetting<Record<string, ChatPrefs>>('chatPrefs', {});
     this.privacy = { readReceipts: true, ...(await this.store.getSetting<Partial<{ readReceipts: boolean }>>('privacy', {})) };
+    this.blocked = await this.store.getSetting<string[]>('blocked', []);
     await this.media.load();
     if (this.account) await this.loadHistory();
     this.sweepTimer ??= setInterval(() => this.sweepExpired(), 1000);
@@ -1371,6 +1375,7 @@ export class MessengerClient extends Emitter<Events> {
         this.pending = false;
         this.emit('change');
         void this.loadMe();
+        void this.loadBlocked();
         // Connected: write the history and back it up now (catches anything from before, e.g. an app update).
         void this.saveHistory(true).catch(() => {});
         this.maintainKeys(f.preKeyCount).catch((e) => this.emit('error', `Key upload failed: ${e.message}`));
@@ -1583,6 +1588,8 @@ export class MessengerClient extends Emitter<Events> {
   }
 
   private async handlePayload(from: string, p: Payload, ts: number) {
+    // Blocked: nothing of theirs reaches me in our own chat (messages, calls, typing...). Groups stay as they are.
+    if (this.blocked.includes(from) && !(p as { g?: unknown }).g && p.k !== 'gcall') return;
     switch (p.k) {
       case 'text':
       case 'poll':
@@ -3210,6 +3217,59 @@ export class MessengerClient extends Emitter<Events> {
     return !!me && n > 0 && this.getMessages(key).slice(-n).some((m) => m.mentions?.includes(me));
   }
 
+  /** People I blocked: they can't message or call me (the app drops it), and I can't message them until I unblock. */
+  blocked: string[] = [];
+
+  isBlocked = (user: string) => this.blocked.includes(user);
+
+  private async loadBlocked(): Promise<void> {
+    const r = await this.http<{ users: string[] }>('GET', '/v1/me/blocked').catch(() => null);
+    if (!r) return;
+    this.blocked = r.users;
+    await this.store.setSetting('blocked', this.blocked);
+    this.emit('change');
+  }
+
+  async setBlocked(user: string, block: boolean): Promise<void> {
+    const next = block ? [...new Set([...this.blocked, user])] : this.blocked.filter((u) => u !== user);
+    await this.http('PUT', '/v1/me/blocked', { users: next });
+    this.blocked = next;
+    await this.store.setSetting('blocked', next);
+    this.emit('change');
+  }
+
+  /**
+   * Report someone to the admins. With `includeMessages`, the last messages of the chat go along so the admins
+   * can see what happened (they are otherwise end-to-end encrypted and the admins can't read them).
+   */
+  async report(user: string, reason: string, opts: { details?: string; chat?: string; includeMessages?: boolean } = {}): Promise<void> {
+    const me = this.account?.username ?? '';
+    const chat = opts.chat ?? user;
+    const messages = opts.includeMessages
+      ? this.getMessages(chat)
+          .filter((m) => !m.system && !m.deleted && m.text)
+          .slice(-MAX_REPORT_MESSAGES)
+          .map((m) => ({ from: m.outgoing ? me : (m.from ?? chat), text: m.text, ts: m.ts }))
+      : [];
+    await this.http('POST', '/v1/report', { user, reason, details: opts.details, chat, messages });
+  }
+
+  /** Ask the admins to delete my account (when I may not delete it myself); they see it with the reports. */
+  async requestAccountDeletion(details?: string): Promise<void> {
+    const me = this.account?.username;
+    if (!me) throw new Error('Not signed in');
+    await this.http('POST', '/v1/report', { user: me, reason: DELETE_REQUEST, details });
+  }
+
+  /** Admin: reports about people of my company, newest first. */
+  async getReports(): Promise<Report[]> {
+    return (await this.http<{ reports: Report[] }>('GET', '/v1/admin/reports')).reports;
+  }
+
+  async closeReport(id: string, note?: string): Promise<Report> {
+    return this.http<Report>('POST', `/v1/admin/reports/${id}/close`, { note });
+  }
+
   /** Read receipts off: nobody sees when I read their message, and I don't see when they read mine. */
   async setReadReceipts(on: boolean): Promise<void> {
     this.privacy = { ...this.privacy, readReceipts: on };
@@ -3611,6 +3671,7 @@ export class MessengerClient extends Emitter<Events> {
     this.opsSinceFull = 0;
     this.chatPrefs = {};
     this.privacy = { readReceipts: true };
+    this.blocked = [];
     this.about = '';
     this.hideLastSeen = false;
     this.emit('change');
@@ -3717,6 +3778,9 @@ export const AUDIT_LABELS: Record<string, string> = {
   'rights.update': 'Changed permission',
   'helpdesk.update': 'Changed help desk',
   'community.update': 'Changed communities',
+  'report.create': 'Reported someone',
+  'report.close': 'Closed a report',
+  'report.delete_request': 'Asked for account deletion',
   'user.admin_on': 'Made admin',
   'user.admin_off': 'Removed as admin',
 };

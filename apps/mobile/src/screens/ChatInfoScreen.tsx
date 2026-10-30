@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Alert, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
-import { BadgeCheck, Check, ChevronRight, Eraser, Mail, MessageSquare, Phone, ShieldCheck, ShieldPlus, ShoppingBag, RotateCcw, ShieldX, UserMinus, UserPlus } from 'lucide-react-native';
+import { Ban, BadgeCheck, Check, ChevronRight, Eraser, Flag, Mail, MessageSquare, Phone, ShieldCheck, ShieldPlus, ShoppingBag, RotateCcw, ShieldX, UserMinus, UserPlus } from 'lucide-react-native';
 import { formatLastSeen, groupIdOf, isGroupKey, type UserProfile } from '@meetme/core';
 import { client, useClient } from '../messenger';
 import { colors, mono, s } from '../theme';
@@ -9,6 +9,7 @@ import type { Route } from '../App';
 import { MediaSection } from './MediaScreen';
 import { CatalogScreen } from './ChatExtras';
 import { GroupRightsScreen } from './RightsScreen';
+import { ReportSheet, confirmBlock } from './Safety';
 
 /** Confirm, then clear the chat and its saved files. */
 function confirmClear(chatKey: string) {
@@ -284,6 +285,7 @@ function PersonInfoScreen({
   // Their catalog, like a WhatsApp Business profile (shown only if they have products).
   const [catalogCount, setCatalogCount] = useState<number | null>(null);
   const [showCatalog, setShowCatalog] = useState(false);
+  const [reporting, setReporting] = useState(false);
   useEffect(() => {
     client
       .listProducts(peer)
@@ -409,6 +411,14 @@ function PersonInfoScreen({
             onPress={run(() => client.resetSession(peer))}
           />
           <Row
+            icon={Ban}
+            title={c.isBlocked(peer) ? `Unblock ${client.displayName(peer)}` : `Block ${client.displayName(peer)}`}
+            subtitle={c.isBlocked(peer) ? 'They can message and call you again' : "They can't message or call you"}
+            danger={!c.isBlocked(peer)}
+            onPress={() => confirmBlock(peer, onError)}
+          />
+          <Row icon={Flag} title={`Report ${client.displayName(peer)}`} subtitle="Tell your admin about messages or behaviour" danger onPress={() => setReporting(true)} />
+          <Row
             icon={UserMinus}
             title="Remove contact"
             danger
@@ -429,6 +439,7 @@ function PersonInfoScreen({
         </View>
       </ScrollView>
       {showCatalog && <CatalogScreen owner={peer} onClose={() => setShowCatalog(false)} onToast={onError} />}
+      {reporting && <ReportSheet user={peer} onClose={() => setReporting(false)} onToast={onError} />}
     </View>
   );
 }
