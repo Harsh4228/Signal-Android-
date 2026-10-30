@@ -24,7 +24,7 @@ const companyAllows = (rules: RightRule[], f: Feature) => rules.find((r) => r.fe
 
 function StatePill({ allow, onClick }: { allow: boolean; onClick?: () => void }) {
   return (
-    <button type="button" className={`state-pill ${allow ? 'allow' : 'block'}`} onClick={onClick} disabled={!onClick} title={onClick ? 'Switch' : undefined}>
+    <button type="button" className={`state-pill ${allow ? 'allow' : 'deny'}`} onClick={onClick} disabled={!onClick} title={onClick ? 'Switch' : undefined}>
       {allow ? 'Allowed' : 'Blocked'}
     </button>
   );
@@ -35,7 +35,7 @@ function Choice({ value, onChange, inherit }: { value: boolean | null; onChange:
   const items: [boolean | null, string, string][] = [
     [null, inherit, ''],
     [true, 'Allow', 'allow'],
-    [false, 'Block', 'block'],
+    [false, 'Block', 'deny'],
   ];
   return (
     <div className="seg">

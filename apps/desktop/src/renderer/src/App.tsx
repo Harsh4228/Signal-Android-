@@ -146,7 +146,7 @@ export function App() {
   }
 
   return (
-    <div className="app">
+    <div className={`app${c.activeChat ? ' has-chat' : ''}`}>
       <Sidebar onSettings={() => setShowSettings(true)} onError={setToast} />
       {c.activeChat ? (
         <ChatView key={c.activeChat} peer={c.activeChat} onError={setToast} />

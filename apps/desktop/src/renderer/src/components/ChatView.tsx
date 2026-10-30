@@ -38,6 +38,7 @@ import {
   Trash2,
   Video,
   X,
+  ArrowLeft,
 } from 'lucide-react';
 import {
   MessengerClient,
@@ -284,6 +285,10 @@ export function ChatView({ peer, onError }: { peer: string; onError: (m: string)
   return (
     <section className="chat">
       <header>
+        {/* Phones: back to the chat list (on wider screens the list stays visible next to the chat). */}
+        <button className="icon back-btn" title="Back to chats" onClick={() => client.setActiveChat(null)}>
+          <ArrowLeft size={20} />
+        </button>
         {/* Click the picture or name for the member list (groups) or contact info, like WhatsApp. */}
         <button
           className="chat-title"

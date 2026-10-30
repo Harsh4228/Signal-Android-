@@ -424,7 +424,10 @@ img.avatar.photo {
 }
 .sidebar .actions {
   display: flex;
-  gap: 2px;
+  gap: 0;
+}
+.sidebar .actions button.icon {
+  padding: 7px;
 }
 .add {
   margin: 4px 12px 8px;
@@ -1702,6 +1705,13 @@ button.icon.on {
   gap: 4px;
   border-bottom: 1px solid var(--line);
   margin-bottom: 14px;
+  /* More tabs than fit: scroll sideways. */
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+.tabs button {
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 .tabs button {
   border: none;
@@ -2863,12 +2873,12 @@ label.photo-pick img + span {
 .state-pill { border: 0; border-radius: 999px; padding: 3px 10px; font-size: 12px; font-weight: 700; cursor: default; }
 .state-pill:not(:disabled) { cursor: pointer; }
 .state-pill.allow { background: var(--ok-soft); color: #067647; }
-.state-pill.block { background: var(--danger-soft); color: #b42318; }
+.state-pill.deny { background: var(--danger-soft); color: #b42318; }
 .seg { display: inline-flex; background: var(--surface-2); border-radius: 10px; padding: 3px; gap: 3px; }
 .seg button { border: 1px solid transparent; background: transparent; padding: 6px 12px; border-radius: 8px; font-weight: 600; color: var(--muted); box-shadow: none; }
 .seg button.active { background: var(--surface); border-color: #2455d8; color: #2455d8; }
 .seg button.allow.active { border-color: #079455; color: #079455; }
-.seg button.block.active { border-color: #d92d20; color: #d92d20; }
+.seg button.deny.active { border-color: #d92d20; color: #d92d20; }
 .choose-list { display: flex; flex-wrap: wrap; gap: 6px; max-height: 220px; overflow: auto; }
 .choose-list button { border-radius: 999px; padding: 5px 12px; font-size: 13px; }
 .choose-list button.active { background: var(--accent-soft); border-color: #b9cbf7; color: var(--accent-text); font-weight: 600; }
@@ -2886,6 +2896,8 @@ a.button:hover { background: var(--surface-2); }
 .password-field input { width: 100%; padding-right: 40px; box-sizing: border-box; }
 .password-field button.icon { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); }
 .remember { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--text-2); cursor: pointer; }
+.remember input { width: auto; margin: 0; flex: none; }
+.card label.remember { flex-direction: row; align-items: center; font-weight: 400; }
 
 
 .qr-box.temp-login { display: grid; gap: 8px; padding: 16px; min-width: 220px; align-content: center; font-size: 14px; }
@@ -2973,3 +2985,145 @@ a.button.primary { background: #2455d8; border-color: #2455d8; color: #fff; }
 
 button.link { border: 0; background: none; padding: 0; color: var(--accent); box-shadow: none; text-decoration: underline; cursor: pointer; font: inherit; }
 
+
+/* ---------- phones (the web app on an iPhone / Android, or a narrow window) ----------
+   One screen at a time like WhatsApp: the chat list, or the open chat (with a back button), and
+   details, settings and admin as full-screen pages. */
+.back-btn {
+  display: none;
+}
+@media (max-width: 760px) {
+  html,
+  body,
+  #root {
+    height: 100dvh;
+  }
+  /* 16px stops iOS Safari from zooming in when a field gets focus. */
+  input,
+  textarea,
+  select {
+    font-size: 16px;
+  }
+  .sidebar {
+    width: 100%;
+    border-right: none;
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  .app.has-chat .sidebar,
+  .app:not(.has-chat) > .empty {
+    display: none;
+  }
+  .chat {
+    padding-top: env(safe-area-inset-top);
+  }
+  .chat > header {
+    gap: 6px;
+    padding: 8px 8px 8px 4px;
+    min-height: 56px;
+  }
+  .back-btn {
+    display: inline-flex;
+  }
+  .chat > header .chat-title {
+    gap: 10px;
+  }
+  .chat > header .tag.dept,
+  .chat > header .contact-line {
+    display: none;
+  }
+  .messages {
+    padding: 12px 10px 8px;
+  }
+  .bubble {
+    max-width: 85%;
+  }
+  .composer {
+    padding: 8px 8px calc(8px + env(safe-area-inset-bottom));
+    gap: 6px;
+  }
+  .composer-note {
+    padding-bottom: calc(12px + env(safe-area-inset-bottom));
+  }
+  /* Contact / group details cover the chat. */
+  .info {
+    position: fixed;
+    inset: 0;
+    z-index: 15;
+    width: 100%;
+    border-left: none;
+    padding: env(safe-area-inset-top) 16px calc(16px + env(safe-area-inset-bottom));
+  }
+  /* Dialogs (settings, admin, new group, forward...) become full-screen pages. */
+  .modal-bg {
+    padding: 0;
+    align-items: stretch;
+  }
+  .modal,
+  .modal.wide,
+  .modal.admin {
+    width: 100% !important;
+    max-width: 100%;
+    height: 100%;
+    max-height: 100%;
+    border-radius: 0;
+    padding: env(safe-area-inset-top) 16px calc(16px + env(safe-area-inset-bottom));
+  }
+  /* Message actions (react, reply, copy, more): under the tapped bubble, not beside it (off screen). */
+  .msg-actions,
+  .msg-actions.left,
+  .msg-actions.right {
+    top: calc(100% + 2px);
+    left: auto;
+    right: auto;
+    z-index: 5;
+  }
+  .msg-actions.left {
+    right: 0;
+  }
+  .msg-actions.right {
+    left: 0;
+  }
+  .msg-actions button.icon {
+    padding: 9px;
+  }
+  /* Admin: the tab bar scrolls sideways; rows wrap their buttons under the name. */
+  .tabs {
+    scrollbar-width: none;
+  }
+  .tabs::-webkit-scrollbar {
+    display: none;
+  }
+  .stat-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .row:has(> .search) {
+    flex-wrap: wrap;
+  }
+  .row > .search {
+    flex: 1 1 100%;
+  }
+  .emp-list li {
+    flex-wrap: wrap;
+    padding: 12px;
+  }
+  .emp-list li > .grow {
+    flex: 1 1 0;
+    min-width: 60%;
+  }
+  .emp-list li > .row.actions {
+    margin-left: auto;
+  }
+  .state-pill {
+    flex: none;
+    width: auto;
+    white-space: nowrap;
+  }
+  .toast {
+    left: 12px;
+    right: 12px;
+    bottom: calc(16px + env(safe-area-inset-bottom));
+    transform: none;
+    max-width: none;
+  }
+}

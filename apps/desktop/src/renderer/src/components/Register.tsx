@@ -236,7 +236,7 @@ export function Register({ onDone, moved }: { onDone: () => void; moved?: boolea
 
         <label className="remember">
           <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} />
-          Remember me on this computer
+          Remember me on this device
         </label>
         {error && (
           <div className="error">

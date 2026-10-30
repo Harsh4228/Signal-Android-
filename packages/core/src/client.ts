@@ -2900,7 +2900,10 @@ export class MessengerClient extends Emitter<Events> {
 
   setActiveChat(peer: string | null): void {
     this.activeChat = peer;
-    if (!peer) return;
+    if (!peer) {
+      this.emit('change'); // e.g. back to the chat list on a phone
+      return;
+    }
     this.unread.delete(peer);
     const ids = this.getMessages(peer)
       .filter((m) => !m.outgoing && !m.system && m.receiptSent !== 'read')
