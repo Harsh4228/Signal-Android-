@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react';
-import { Image, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
-import { ArrowDown, ArrowUp, ImagePlus, LifeBuoy, Plus, Trash2 } from 'lucide-react-native';
-import { MAX_COMPANY_ITEMS, MAX_COMPANY_ITEM_TEXT, MAX_COMPANY_ITEM_TITLE, MAX_COMPANY_NAME, type CompanyItem } from '@meetme/core';
+import { ActivityIndicator, Image, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
+import { ArrowDown, ArrowUp, FileText, Headset, ImagePlus, Paperclip, Plus, Trash2, X } from 'lucide-react-native';
+import { MAX_COMPANY_ITEMS, MAX_COMPANY_ITEM_TEXT, MAX_COMPANY_ITEM_TITLE, MAX_COMPANY_NAME, attachmentKind, type CompanyFile, type CompanyItem } from '@meetme/core';
 import { client, useClient } from '../messenger';
 import { colors, s } from '../theme';
-import { Button, Field, Header, IconButton, Logo, errorText } from '../ui';
+import { Button, Field, Header, IconButton, Logo, RichText, errorText, fileSize } from '../ui';
 import { pickProfilePhoto } from '../photos';
-import { MessageText } from './MessageText';
+import { pickFile } from '../files';
+import { openAttachment } from './AttachmentView';
 import type { Route } from '../App';
 
 type Toast = (m: string) => void;
@@ -36,7 +37,7 @@ export function CompanyBadge({ navigate, subtitle }: { navigate: (r: Route) => v
 }
 
 /** Everyone: the company's name, logo, the admins' information sections and the help desk. */
-export function CompanyInfoScreen({ navigate }: { navigate: (r: Route) => void }) {
+export function CompanyInfoScreen({ navigate, onToast }: { navigate: (r: Route) => void; onToast: Toast }) {
   const c = useClient();
   const p = c.companyProfile;
   return (
@@ -54,15 +55,45 @@ export function CompanyInfoScreen({ navigate }: { navigate: (r: Route) => void }
           p.items.map((it) => (
             <View key={it.id} style={[s.card, { padding: 14, gap: 4 }]}>
               <Text style={s.section}>{it.title}</Text>
-              <MessageText m={{ text: it.text } as never} />
+              {!!it.text && <RichText text={it.text} />}
+              {it.file && <FileButton file={it.file} onToast={onToast} />}
             </View>
           ))
         ) : (
           <Text style={s.muted}>{c.isAdmin ? 'Add your office address, hours, rules or links under Admin > Company.' : 'Your admin has not added company information yet.'}</Text>
         )}
-        <Button title="Help desk: whom to contact" icon={LifeBuoy} onPress={() => navigate({ name: 'help' })} />
+        <Button title="Help desk: whom to contact" icon={Headset} onPress={() => navigate({ name: 'help' })} />
       </ScrollView>
     </View>
+  );
+}
+
+/** A file in the company information: tap to open it (PDFs and pictures open full screen). */
+export function FileButton({ file, onToast }: { file: CompanyFile; onToast: Toast }) {
+  const [busy, setBusy] = useState(false);
+  async function open() {
+    setBusy(true);
+    try {
+      const f = await client.companyFile(file.id);
+      openAttachment({ name: f.name, mime: f.mime, size: f.data.length, kind: attachmentKind(f.mime, f.name), state: 'ready', data: f.data });
+    } catch (e) {
+      onToast(errorText(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <Pressable
+      onPress={() => void open()}
+      disabled={busy}
+      style={({ pressed }) => [s.row, { gap: 10, padding: 12, marginTop: 6, borderRadius: 12, borderWidth: 1, borderColor: colors.line, backgroundColor: colors.surface2 }, pressed && { opacity: 0.7 }]}
+    >
+      {busy ? <ActivityIndicator size="small" color={colors.accent} /> : <FileText size={20} color={colors.danger} />}
+      <Text style={[s.textStrong, { flex: 1 }]} numberOfLines={1}>
+        {file.name}
+      </Text>
+      <Text style={s.muted}>{fileSize(file.size)}</Text>
+    </Pressable>
   );
 }
 
@@ -87,12 +118,28 @@ export function CompanyTab({ onToast }: { onToast: Toast }) {
   async function save() {
     setBusy(true);
     try {
-      await client.setCompanyProfile({ ...(c.company ? { name } : {}), items: items.map((x) => ({ id: x.id ?? '', title: x.title, text: x.text })) });
+      await client.setCompanyProfile({
+        ...(c.company ? { name } : {}),
+        items: items.map((x) => ({ id: x.id ?? '', title: x.title, text: x.text, ...(x.file ? { file: x.file } : {}) })),
+      });
       onToast('Company profile saved: everyone sees it now');
     } catch (e) {
       onToast(errorText(e));
     } finally {
       setBusy(false);
+    }
+  }
+  const [uploading, setUploading] = useState<number | null>(null);
+  async function attach(i: number) {
+    try {
+      const f = await pickFile('file');
+      if (!f) return;
+      setUploading(i);
+      set(i, { file: await client.uploadCompanyFile(f) });
+    } catch (e) {
+      onToast(errorText(e));
+    } finally {
+      setUploading(null);
     }
   }
   async function logo() {
@@ -150,10 +197,23 @@ export function CompanyTab({ onToast }: { onToast: Toast }) {
             value={it.text}
             multiline
             maxLength={MAX_COMPANY_ITEM_TEXT}
-            placeholder="Text, phone numbers or links"
+            placeholder="Text. Phone numbers, emails and links become tappable."
             placeholderTextColor={colors.faint}
             onChangeText={(t) => set(i, { text: t })}
           />
+          {it.file ? (
+            <View style={[s.row, { gap: 4 }]}>
+              <View style={{ flex: 1 }}>
+                <FileButton file={it.file} onToast={onToast} />
+              </View>
+              <IconButton icon={X} label="Remove the file" color={colors.danger} onPress={() => set(i, { file: undefined })} />
+            </View>
+          ) : (
+            <Pressable onPress={() => void attach(i)} style={[s.row, { gap: 6, paddingVertical: 4 }]} disabled={uploading !== null}>
+              {uploading === i ? <ActivityIndicator size="small" color={colors.accent} /> : <Paperclip size={16} color={colors.accent} />}
+              <Text style={{ color: colors.accent, fontWeight: '600' }}>Attach a file (PDF, picture, document)</Text>
+            </Pressable>
+          )}
         </View>
       ))}
       <Button variant="primary" title="Save" busy={busy} onPress={() => void save()} />

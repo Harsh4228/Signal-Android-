@@ -325,10 +325,10 @@ function PersonInfoScreen({
         )}
 
         <View style={[s.card, { marginTop: 12, paddingHorizontal: 12, paddingVertical: 2 }]}>
-          {!!profile?.departments.length && <DetailRow icon={Building2} value={profile.departments.join(', ')} label="Department" />}
-          {!!profile?.phone && <DetailRow icon={Phone} value={profile.phone} label="Mobile · tap to call" link={telLink(profile.phone)} />}
-          {!!profile?.email && <DetailRow icon={Mail} value={profile.email} label="Email · tap to write" link={`mailto:${profile.email}`} />}
-          {!!birthdayText(profile?.birthday) && <DetailRow icon={Cake} value={birthdayText(profile?.birthday)} label="Birth date" />}
+          {!!profile?.departments.length && <DetailRow icon={Building2} value={profile.departments.join(', ')} label="Department" tint="dept" />}
+          {!!profile?.phone && <DetailRow icon={Phone} value={profile.phone} label="Mobile · tap to call" link={telLink(profile.phone)} tint="phone" />}
+          {!!profile?.email && <DetailRow icon={Mail} value={profile.email} label="Email · tap to write" link={`mailto:${profile.email}`} tint="email" />}
+          {!!birthdayText(profile?.birthday) && <DetailRow icon={Cake} value={birthdayText(profile?.birthday)} label="Birth date" tint="hours" />}
           {!profile?.departments.length && !profile?.phone && !profile?.email && !birthdayText(profile?.birthday) && (
             <DetailRow icon={Building2} value="No details yet" label="Your admin adds department, mobile, email and birth date" />
           )}

@@ -35,6 +35,8 @@ import {
   MAX_COMPANY_ITEM_TITLE,
   type CompanyItem,
   type CompanyProfile,
+  type CompanyFile,
+  MAX_COMPANY_FILE_BYTES,
   BIRTHDAY_RE,
   COMPANY_CODE_RE,
   MAX_COMPANY_NAME,
@@ -827,6 +829,9 @@ export function createMeetMeServer(
   }
   const saveCompanyProfile = (company: string, p: CompanyProfile) =>
     db.setMeta(metaKey('company_profile', company), JSON.stringify({ logo: p.logo, items: p.items }));
+  /** Files admins may attach to company information: PDFs, pictures, office documents, plain text. */
+  const COMPANY_FILE_MIMES = /^(application\/pdf|image\/(jpeg|png|webp|gif)|text\/(plain|csv)|application\/(msword|vnd\.openxmlformats-officedocument\.[a-z.]+|vnd\.ms-excel|vnd\.ms-powerpoint))$/;
+  const companyFileKey = (company: string, id: string) => metaKey(`company_file:${id}`, company);
   function checkCompanyItems(v: unknown): CompanyItem[] {
     if (!Array.isArray(v) || v.length > MAX_COMPANY_ITEMS) throw new HttpError(400, `Up to ${MAX_COMPANY_ITEMS} sections`);
     return v.map((raw) => {
@@ -838,7 +843,12 @@ export function createMeetMeServer(
       if (text.length > MAX_COMPANY_ITEM_TEXT) throw new HttpError(400, `Text: at most ${MAX_COMPANY_ITEM_TEXT} characters`);
       if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(title + text)) throw new HttpError(400, 'invalid characters');
       const id = typeof c.id === 'string' && /^[0-9a-f]{16}$/.test(c.id) ? c.id : randomBytes(8).toString('hex');
-      return { id, title, text };
+      const f = c.file as Record<string, unknown> | undefined | null;
+      if (f === undefined || f === null) return { id, title, text };
+      if (typeof f.id !== 'string' || !/^[0-9a-f]{16}$/.test(f.id) || typeof f.name !== 'string' || typeof f.mime !== 'string' || typeof f.size !== 'number') {
+        throw new HttpError(400, 'invalid file');
+      }
+      return { id, title, text, file: { id: f.id, name: f.name.slice(0, 120), mime: f.mime, size: f.size } };
     });
   }
 
@@ -1568,6 +1578,11 @@ export function createMeetMeServer(
     if (method === 'GET' && path === '/v1/company') {
       return send(200, await companyProfile(companyOf(me)));
     }
+    if (method === 'GET' && (m = path.match(/^\/v1\/company\/files\/([0-9a-f]{16})$/))) {
+      const raw = await db.getMeta(companyFileKey(companyOf(me), m[1]!));
+      if (!raw) throw new HttpError(404, 'file not found');
+      return send(200, JSON.parse(raw) as { name: string; mime: string; data: string });
+    }
     if (method === 'GET' && path === '/v1/company/logo') {
       const raw = await db.getMeta(metaKey('company_logo', companyOf(me)));
       if (!raw) throw new HttpError(404, 'no logo');
@@ -1841,12 +1856,33 @@ export function createMeetMeServer(
           }
         }
         if (body.items !== undefined) {
-          profile.items = checkCompanyItems(body.items);
+          const items = checkCompanyItems(body.items);
+          for (const it of items) {
+            if (it.file && !(await db.getMeta(companyFileKey(co, it.file.id)))) throw new HttpError(400, `The file "${it.file.name}" is missing: attach it again`);
+          }
+          // Files no section uses any more are deleted.
+          const keep = new Set(items.map((it) => it.file?.id).filter(Boolean));
+          for (const old of profile.items) if (old.file && !keep.has(old.file.id)) await db.setMeta(companyFileKey(co, old.file.id), '');
+          profile.items = items;
           await saveCompanyProfile(co, profile);
           await audit(me, 'company.profile', co, `${profile.items.length} information section(s)`);
         }
         await notify((await companyUsers(co)).map((u) => u.username), 'policy');
         return send(200, await companyProfile(co));
+      }
+      if (method === 'POST' && path === '/v1/admin/company/files') {
+        if (!uploadLimit.allow(me)) throw new HttpError(429, 'too many uploads');
+        const body = (await readJson(req, Math.ceil((MAX_COMPANY_FILE_BYTES * 4) / 3) + 4096)) as { name?: unknown; mime?: unknown; data?: unknown };
+        if (typeof body.name !== 'string' || !body.name.trim() || /[\u0000-\u001f\u007f/\\]/.test(body.name)) throw new HttpError(400, 'invalid file name');
+        if (typeof body.mime !== 'string' || !COMPANY_FILE_MIMES.test(body.mime)) {
+          throw new HttpError(400, 'Attach a PDF, picture, Word / Excel / PowerPoint document or text file');
+        }
+        if (typeof body.data !== 'string' || !/^[A-Za-z0-9+/]+={0,2}$/.test(body.data)) throw new HttpError(400, 'invalid file');
+        const size = Buffer.from(body.data, 'base64').length;
+        if (size > MAX_COMPANY_FILE_BYTES) throw new HttpError(413, `File too large (max ${MAX_COMPANY_FILE_BYTES / 1024 / 1024} MB)`);
+        const file: CompanyFile = { id: randomBytes(8).toString('hex'), name: body.name.trim().slice(0, 120), mime: body.mime, size };
+        await db.setMeta(companyFileKey(co, file.id), JSON.stringify({ name: file.name, mime: file.mime, data: body.data }));
+        return send(200, file);
       }
       if (path === '/v1/admin/company/logo' && (method === 'PUT' || method === 'DELETE')) {
         const profile = await companyProfile(co);

@@ -194,6 +194,17 @@ test('company profile: admins write information sections and a logo; everyone re
     await online(worker);
     await waitFor(() => worker.companyProfile?.items[0]?.title === 'Office address' && !!worker.companyLogo, 'company profile on the worker');
     await assert.rejects(worker.setCompanyProfile({ items: [] }), /admin only/);
+
+    // A PDF attached to a section: everyone can open it; files no section uses are deleted.
+    const pdf = new TextEncoder().encode('%PDF-1.4 test');
+    const file = await chief.uploadCompanyFile({ name: 'Rules.pdf', mime: 'application/pdf', data: pdf });
+    await assert.rejects(chief.uploadCompanyFile({ name: 'x.exe', mime: 'application/x-msdownload', data: pdf }), /Attach a PDF/);
+    await chief.setCompanyProfile({ items: [{ id: '', title: 'Rules', text: 'Call +91 98765 43210', file }] });
+    const got = await worker.companyFile(file.id);
+    assert.equal(got.name, 'Rules.pdf');
+    assert.deepEqual([...got.data], [...pdf]);
+    await chief.setCompanyProfile({ items: [] });
+    await assert.rejects(worker.companyFile(file.id), /not found/);
   } finally {
     mine.forEach((c) => c.dispose());
     await s3.close();

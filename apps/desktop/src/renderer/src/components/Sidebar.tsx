@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { Archive, ArchiveRestore, BellOff, ChevronLeft, Phone, Pin, PinOff, Ban, Bell, CircleDashed, EllipsisVertical, LifeBuoy, Lock, Megaphone, MessageSquareText, ArrowUpDown, Check, ShoppingBag, Star, StarOff, Eraser, Trash2, UsersRound, X, MessageSquarePlus, Search, Settings as SettingsIcon, ShieldCheck, type LucideIcon } from 'lucide-react';
-import { CHAT_SORTS, MessengerClient, isGroupKey, type ChatSort } from '@meetme/core';
+import { Archive, ArchiveRestore, BellOff, ChevronLeft, Phone, Pin, PinOff, Ban, Bell, CircleDashed, EllipsisVertical, Headset, Lock, Megaphone, MessageSquareText, RadioTower, ListPlus, ListX, Pencil, Plus, ArrowUpDown, Check, ShoppingBag, Star, StarOff, Eraser, Trash2, UsersRound, X, MessageSquarePlus, Search, Settings as SettingsIcon, ShieldCheck, type LucideIcon } from 'lucide-react';
+import { CHAT_SORTS, MessengerClient, isGroupKey, type ChatList, type ChatSort } from '@meetme/core';
 import { appLock, client, useClient, useLock } from '../messenger';
 import { Broadcast } from './Broadcast';
 import { AdminPanel } from './AdminPanel';
@@ -10,6 +10,7 @@ import { StarredPanel } from './ChatExtras';
 import { CatalogPanel } from './Catalog';
 import { Avatar, ChatAvatar, PasswordInput, errorText, shortTime, typingText } from './ui';
 import { AvatarTap } from './Profile';
+import { ChatListEditor } from './Lists';
 import { CompanyBadge } from './Company';
 import type { Tab as AdminTab } from './AdminPanel';
 import { Directory } from './Directory';
@@ -31,6 +32,8 @@ export function Sidebar({ onSettings, onError }: { onSettings: () => void; onErr
   const [archived, setArchived] = useState(false);
   const [view, setView] = useState<string>('all');
   const [chatSort, setChatSort] = useState<ChatSort>('recent');
+  /** My lists (WhatsApp-style chips): the one being made or changed. */
+  const [editingList, setEditingList] = useState<ChatList | 'new' | null>(null);
   const [sortOpen, setSortOpen] = useState(false);
   const [adminStart, setAdminStart] = useState<{ tab?: AdminTab; newGroup?: boolean }>({});
   /** Right-click menu of a chat: pin, archive, mute. */
@@ -77,6 +80,7 @@ export function Sidebar({ onSettings, onError }: { onSettings: () => void; onErr
     }
   }
 
+  const activeList = view.startsWith('list:') ? c.chatLists.find((l) => l.id === view.slice(5)) : undefined;
   const q = filter.trim().toLowerCase();
   const deptsOf = (k: string) => (isGroupKey(k) ? [] : (c.profileOf(k)?.departments ?? []));
   // The filter chips, like WhatsApp: All, Unread, Favourites, Groups, Channels, a department.
@@ -86,7 +90,8 @@ export function Sidebar({ onSettings, onError }: { onSettings: () => void; onErr
     (view === 'favourites' && c.isFavourite(k)) ||
     (view === 'groups' && isGroupKey(k) && !c.isChannel(k)) ||
     (view === 'channels' && c.isChannel(k)) ||
-    (view.startsWith('dept:') && deptsOf(k).includes(view.slice(5)));
+    (view.startsWith('dept:') && deptsOf(k).includes(view.slice(5))) ||
+    (view.startsWith('list:') && !!activeList && c.inChatList(activeList, k));
   // Pinned first, then the newest; archived chats have their own list (like WhatsApp).
   const sorted = c
     .orderedChats({ archived, sort: chatSort })
@@ -100,10 +105,10 @@ export function Sidebar({ onSettings, onError }: { onSettings: () => void; onErr
   const nav: { page: Page | null; icon: LucideIcon; label: string; badge?: number; dot?: boolean; phone?: boolean; off?: boolean }[] = [
     { page: null, icon: MessageSquareText, label: 'Chats', badge: unreadChats, phone: true },
     { page: 'status', icon: CircleDashed, label: 'Status', dot: c.unseenStatusCount > 0, phone: true },
-    { page: 'channels', icon: Megaphone, label: 'Channels', phone: true, off: offline },
+    { page: 'channels', icon: RadioTower, label: 'Channels', phone: true, off: offline },
     { page: 'calls', icon: Phone, label: 'Calls', phone: true },
     { page: 'notices', icon: Bell, label: 'Notices', phone: true },
-    { page: 'help', icon: LifeBuoy, label: 'Help desk', off: offline },
+    { page: 'help', icon: Headset, label: 'Help desk', off: offline },
     { page: 'starred', icon: Star, label: 'Starred' },
     { page: 'catalog', icon: ShoppingBag, label: 'My catalog' },
   ];
@@ -200,7 +205,7 @@ export function Sidebar({ onSettings, onError }: { onSettings: () => void; onErr
                 {c.isAdmin && <hr />}
                 {/* On phones these are not in the bottom bar. */}
                 <button role="menuitem" className="phone-only" disabled={offline} onClick={() => go('help')}>
-                  <LifeBuoy size={17} /> Help desk
+                  <Headset size={17} /> Help desk
                 </button>
                 <button role="menuitem" className="phone-only" onClick={() => go('starred')}>
                   <Star size={17} /> Starred messages
@@ -270,7 +275,13 @@ export function Sidebar({ onSettings, onError }: { onSettings: () => void; onErr
           </button>
         )}
       </div>
-      <div className="chips chat-chips">
+      {/* A mouse wheel scrolls the chips sideways (they are one row). */}
+      <div
+        className="chips chat-chips"
+        onWheel={(e) => {
+          if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) e.currentTarget.scrollLeft += e.deltaY;
+        }}
+      >
         {(
           [
             ['all', 'All'],
@@ -279,12 +290,27 @@ export function Sidebar({ onSettings, onError }: { onSettings: () => void; onErr
             ['groups', 'Groups'],
             ['channels', 'Channels'],
             ...c.favouriteDepartments.map((d) => [`dept:${d}`, d]),
+            ...c.chatLists.map((l) => [`list:${l.id}`, l.name]),
           ] as [string, string][]
         ).map(([id, label]) => (
-          <button key={id} className={view === id ? 'active' : ''} onClick={() => setView(view === id && id !== 'all' ? 'all' : id)}>
+          <button
+            key={id}
+            className={view === id ? 'active' : ''}
+            onClick={() => setView(view === id && id !== 'all' ? 'all' : id)}
+            onDoubleClick={() => id.startsWith('list:') && setEditingList(c.chatLists.find((l) => `list:${l.id}` === id) ?? null)}
+            title={id.startsWith('list:') ? 'Your list (double-click to change it)' : undefined}
+          >
             {label}
           </button>
         ))}
+        {activeList && (
+          <button className="icon" title="Change this list" onClick={() => setEditingList(activeList)}>
+            <Pencil size={14} />
+          </button>
+        )}
+        <button className="chip-add" title="New list: pick people, groups and departments" onClick={() => setEditingList('new')}>
+          <Plus size={15} />
+        </button>
         {allDepartments.length > 0 && (
           <select
             className={`chip-select ${view.startsWith('dept:') && !c.favouriteDepartments.includes(view.slice(5)) ? 'active' : ''}`}
@@ -310,6 +336,17 @@ export function Sidebar({ onSettings, onError }: { onSettings: () => void; onErr
           </button>
         )}
       </div>
+      {editingList && (
+        <ChatListEditor
+          list={editingList === 'new' ? undefined : editingList}
+          onToast={onError}
+          onClose={(saved) => {
+            setEditingList(null);
+            if (saved) setView(`list:${saved.id}`);
+            else if (view.startsWith('list:') && !client.chatLists.some((l) => `list:${l.id}` === view)) setView('all');
+          }}
+        />
+      )}
       {view === 'groups' && c.isAdmin && (
         <button className="archived-row" disabled={offline} onClick={() => (setAdminStart({ tab: 'groups', newGroup: true }), go('admin'))}>
           <UsersRound size={17} /> <span className="grow">New group</span>
@@ -408,29 +445,27 @@ export function Sidebar({ onSettings, onError }: { onSettings: () => void; onErr
                   { icon: BellOff, label: 'Mute for 1 week', go: () => client.muteChat(chatMenu.key, 7 * 86400_000) },
                   { icon: BellOff, label: 'Mute always', go: () => client.muteChat(chatMenu.key, Infinity) },
                 ]),
-            ...(c.canClearHistory
-              ? [
-                  {
-                    icon: Eraser,
-                    label: 'Clear chat',
-                    go: () => confirm(`Clear all messages in ${c.chatTitle(chatMenu.key)}? The chat stays in your list.`) && void client.clearChat(chatMenu.key),
-                  },
-                ]
-              : []),
-            ...(isGroupKey(chatMenu.key)
-              ? []
-              : [
-                  {
-                    icon: Trash2,
-                    label: 'Delete chat',
-                    go: () => {
-                      const name = c.chatTitle(chatMenu.key);
-                      if (!confirm(c.canClearHistory ? `Delete the chat with ${name}? Its messages are removed from this device.` : `Remove ${name} from your chat list? The messages are kept.`)) return;
-                      if (c.activeChat === chatMenu.key) client.setActiveChat(null);
-                      void client.removeContact(chatMenu.key);
-                    },
-                  },
-                ]),
+            ...c.chatLists.map((l) =>
+              l.chats.includes(chatMenu.key)
+                ? { icon: ListX, label: `Remove from "${l.name}"`, go: () => void client.saveChatList({ ...l, chats: l.chats.filter((k) => k !== chatMenu.key) }) }
+                : { icon: ListPlus, label: `Add to "${l.name}"`, go: () => void client.saveChatList({ ...l, chats: [...l.chats, chatMenu.key] }) },
+            ),
+            // Like WhatsApp's "Delete chat": the messages go and the chat leaves the list until someone writes again.
+            c.canClearHistory
+              ? {
+                  icon: Eraser,
+                  label: 'Clear chat',
+                  go: () =>
+                    confirm(`Clear ${c.chatTitle(chatMenu.key)}? All its messages are deleted from this device and it leaves your chat list until a new message arrives.`) &&
+                    void client.clearAndHideChat(chatMenu.key),
+                }
+              : {
+                  icon: Trash2,
+                  label: 'Remove from chat list',
+                  go: () =>
+                    confirm(`Remove ${c.chatTitle(chatMenu.key)} from your chat list? The messages are kept and it comes back when a new message arrives.`) &&
+                    client.hideChat(chatMenu.key),
+                },
           ].map(({ icon: Icon, label, go }) => (
             <button key={label} role="menuitem" onClick={() => (setChatMenu(null), run(go))}>
               <Icon size={16} /> {label}

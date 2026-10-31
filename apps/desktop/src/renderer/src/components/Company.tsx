@@ -1,9 +1,8 @@
 import { useEffect, useState } from 'react';
-import { ArrowDown, ArrowUp, Building2, ImagePlus, LifeBuoy, Plus, Trash2, X } from 'lucide-react';
-import { MAX_COMPANY_ITEMS, MAX_COMPANY_ITEM_TEXT, MAX_COMPANY_ITEM_TITLE, MAX_COMPANY_NAME, type ChatMessage, type CompanyItem } from '@meetme/core';
+import { ArrowDown, ArrowUp, Building2, FileText, Headset, ImagePlus, Loader2, Paperclip, Plus, Trash2, X } from 'lucide-react';
+import { MAX_COMPANY_ITEMS, MAX_COMPANY_ITEM_TEXT, MAX_COMPANY_ITEM_TITLE, MAX_COMPANY_NAME, type CompanyFile, type CompanyItem } from '@meetme/core';
 import { client, useClient } from '../messenger';
-import { Logo, errorText } from './ui';
-import { MessageText } from './MessageText';
+import { Logo, RichText, errorText, fileSize } from './ui';
 import { HelpDeskModal } from './AdminRights';
 import { shrinkPhoto } from './AdminPanel';
 
@@ -57,20 +56,53 @@ export function CompanyInfo({ onClose, onToast }: { onClose: () => void; onToast
           p.items.map((it) => (
             <section key={it.id} className="company-item">
               <div className="section-title">{it.title}</div>
-              <div className="company-text">
-                <MessageText m={{ text: it.text } as ChatMessage} />
-              </div>
+              {!!it.text && (
+                <div className="company-text">
+                  <RichText text={it.text} />
+                </div>
+              )}
+              {it.file && <FileButton file={it.file} onToast={onToast} />}
             </section>
           ))
         ) : (
           <p className="muted small">{c.isAdmin ? 'Add your office address, hours, rules or links under Admin > Company.' : 'Your admin has not added company information yet.'}</p>
         )}
         <button className="block" onClick={() => setHelp(true)} disabled={c.status !== 'online'}>
-          <LifeBuoy size={16} /> Help desk: whom to contact
+          <Headset size={16} /> Help desk: whom to contact
         </button>
         {help && <HelpDeskModal onClose={() => setHelp(false)} onToast={onToast} />}
       </div>
     </div>
+  );
+}
+
+/** A file in the company information: click to open it (PDFs and pictures open in the browser). */
+export function FileButton({ file, onToast }: { file: CompanyFile; onToast: Toast }) {
+  const [busy, setBusy] = useState(false);
+  async function open() {
+    setBusy(true);
+    try {
+      const f = await client.companyFile(file.id);
+      const url = URL.createObjectURL(new Blob([f.data as BlobPart], { type: f.mime }));
+      const a = document.createElement('a');
+      a.href = url;
+      // PDFs and pictures open to read; other documents are saved.
+      if (/^(application\/pdf|image\/)/.test(f.mime) && !window.meetme.openLink) a.target = '_blank';
+      else a.download = f.name;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch (e) {
+      onToast(errorText(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <button className="file-chip" onClick={() => void open()} disabled={busy} title={`Open ${file.name}`}>
+      {busy ? <Loader2 size={16} className="spin" /> : <FileText size={16} />}
+      <span className="grow">{file.name}</span>
+      <span className="muted small">{fileSize(file.size)}</span>
+    </button>
   );
 }
 
@@ -97,12 +129,28 @@ export function CompanyTab({ onToast }: { onToast: Toast }) {
   async function save() {
     setBusy(true);
     try {
-      await client.setCompanyProfile({ ...(c.company ? { name } : {}), items: items.map((x) => ({ id: x.id ?? '', title: x.title, text: x.text })) });
+      await client.setCompanyProfile({
+        ...(c.company ? { name } : {}),
+        items: items.map((x) => ({ id: x.id ?? '', title: x.title, text: x.text, ...(x.file ? { file: x.file } : {}) })),
+      });
       onToast('Company profile saved: everyone sees it now');
     } catch (e) {
       onToast(errorText(e));
     } finally {
       setBusy(false);
+    }
+  }
+  const [uploading, setUploading] = useState<number | null>(null);
+  async function attach(i: number, f: File | undefined) {
+    if (!f) return;
+    setUploading(i);
+    try {
+      const file = await client.uploadCompanyFile({ name: f.name, mime: f.type, data: new Uint8Array(await f.arrayBuffer()) });
+      set(i, { file });
+    } catch (e) {
+      onToast(errorText(e));
+    } finally {
+      setUploading(null);
     }
   }
   async function logo(f: File | undefined) {
@@ -170,9 +218,27 @@ export function CompanyTab({ onToast }: { onToast: Toast }) {
             rows={3}
             value={it.text}
             maxLength={MAX_COMPANY_ITEM_TEXT}
-            placeholder="Text, phone numbers or links (they become tappable)"
+            placeholder="Text. Phone numbers, emails and website links become clickable."
             onChange={(e) => set(i, { text: e.target.value })}
           />
+          {it.file ? (
+            <div className="row" style={{ gap: 6 }}>
+              <FileButton file={it.file} onToast={onToast} />
+              <button className="icon danger-text" title="Remove the file" onClick={() => set(i, { file: undefined })}>
+                <X size={15} />
+              </button>
+            </div>
+          ) : (
+            <label className="link-btn attach-link">
+              {uploading === i ? <Loader2 size={14} className="spin" /> : <Paperclip size={14} />} Attach a file (PDF, picture, document, up to 8 MB)
+              <input
+                type="file"
+                hidden
+                accept=".pdf,image/*,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv"
+                onChange={(e) => void attach(i, e.target.files?.[0])}
+              />
+            </label>
+          )}
         </div>
       ))}
       <div className="row-end">

@@ -1,6 +1,6 @@
 import { useState, type InputHTMLAttributes } from 'react';
 import { ArrowUpDown, Eye, EyeOff, ShieldCheck, UsersRound } from 'lucide-react';
-import { isGroupKey } from '@meetme/core';
+import { isGroupKey, richPieces } from '@meetme/core';
 import { client } from '../messenger';
 
 /** Soft background / strong text pairs, picked per name so each contact keeps the same colour. */
@@ -105,3 +105,36 @@ export function SortSelect<T extends string>({ value, options, onChange }: { val
     </label>
   );
 }
+
+/** Text where links, email addresses and phone numbers can be clicked (help desk, company information). */
+export function RichText({ text }: { text: string }) {
+  return (
+    <span className="rich-text">
+      {richPieces(text).map((p, i) =>
+        !p.kind ? (
+          p.text
+        ) : p.kind === 'url' ? (
+          <a
+            key={i}
+            className="rich url"
+            href={p.href}
+            onClick={(e) => {
+              e.preventDefault();
+              if (window.meetme.openLink) void window.meetme.openLink(p.href!);
+              else window.open(p.href, '_blank', 'noopener,noreferrer');
+            }}
+          >
+            {p.text}
+          </a>
+        ) : (
+          <a key={i} className={`rich ${p.kind}`} href={p.href}>
+            {p.text}
+          </a>
+        ),
+      )}
+    </span>
+  );
+}
+
+/** "2.4 MB" */
+export const fileSize = (n: number) => (n < 1024 ? `${n} B` : n < 1024 * 1024 ? `${Math.round(n / 1024)} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`);

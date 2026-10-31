@@ -262,7 +262,7 @@ function PersonInfo({ peer, onClose, onError }: { peer: string; onClose: () => v
 
       <div className="detail-list">
         {profile && profile.departments.length > 0 && (
-          <div className="detail-row">
+          <div className="detail-row dept">
             <Building2 size={17} />
             <div className="grow">
               <div>{profile.departments.join(', ')}</div>
@@ -271,7 +271,7 @@ function PersonInfo({ peer, onClose, onError }: { peer: string; onClose: () => v
           </div>
         )}
         {profile?.phone && (
-          <a className="detail-row" href={telLink(profile.phone)} title="Call with your phone app">
+          <a className="detail-row phone" href={telLink(profile.phone)} title="Call with your phone app">
             <Phone size={17} />
             <div className="grow">
               <div>{profile.phone}</div>
@@ -280,7 +280,7 @@ function PersonInfo({ peer, onClose, onError }: { peer: string; onClose: () => v
           </a>
         )}
         {profile?.email && (
-          <a className="detail-row" href={`mailto:${profile.email}`} title="Write an email">
+          <a className="detail-row email" href={`mailto:${profile.email}`} title="Write an email">
             <Mail size={17} />
             <div className="grow">
               <div>{profile.email}</div>
@@ -289,7 +289,7 @@ function PersonInfo({ peer, onClose, onError }: { peer: string; onClose: () => v
           </a>
         )}
         {birthdayText(profile?.birthday) && (
-          <div className="detail-row">
+          <div className="detail-row birthday">
             <Cake size={17} />
             <div className="grow">
               <div>{birthdayText(profile?.birthday)}</div>

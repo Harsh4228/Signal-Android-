@@ -196,13 +196,19 @@ export default function App() {
   } else if (route.name === 'applock') {
     screen = <AppLockScreen navigate={setRoute} onToast={setToast} />;
   } else if (route.name === 'company') {
-    screen = <CompanyInfoScreen navigate={setRoute} />;
+    screen = <CompanyInfoScreen navigate={setRoute} onToast={setToast} />;
   } else if (route.name === 'channels') {
     screen = <ChannelsScreen navigate={setRoute} onToast={setToast} />;
   } else if (route.name === 'calls') {
     screen = <CallsScreen navigate={setRoute} onError={setToast} />;
   } else if (route.name === 'help') {
-    screen = <HelpDeskScreen onClose={() => setRoute({ name: 'list' })} onChat={(u) => void openDirectChat(u, setRoute, setToast)} />;
+    screen = (
+      <HelpDeskScreen
+        onClose={() => setRoute({ name: 'list' })}
+        onChat={(u) => void openDirectChat(u, setRoute, setToast)}
+        onCompany={() => setRoute({ name: 'company' })}
+      />
+    );
   } else if (route.name === 'settings') {
     screen = <SettingsScreen navigate={setRoute} />;
   } else {

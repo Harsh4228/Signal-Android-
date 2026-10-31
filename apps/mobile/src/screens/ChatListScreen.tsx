@@ -1,13 +1,14 @@
 import { useState } from 'react';
 import { Alert, FlatList, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
-import { ArrowUpDown, Check, Archive, ArchiveRestore, BellOff, Ban, Bell, Building2, ChevronDown, ChevronLeft, Eraser, StarOff, Trash2, UsersRound, X, EllipsisVertical, LifeBuoy, Megaphone, Pin, PinOff, ShoppingBag, Star, MessageSquarePlus, Search, Settings, ShieldCheck } from 'lucide-react-native';
-import { CHAT_SORTS, MessengerClient, isGroupKey, type ChatSort } from '@meetme/core';
+import { ArrowUpDown, Check, Archive, ArchiveRestore, BellOff, Ban, Bell, Building2, ChevronDown, ChevronLeft, Eraser, StarOff, Trash2, UsersRound, X, EllipsisVertical, Headset, ListPlus, ListX, Pencil, Plus, Megaphone, Pin, PinOff, ShoppingBag, Star, MessageSquarePlus, Search, Settings, ShieldCheck } from 'lucide-react-native';
+import { CHAT_SORTS, MessengerClient, isGroupKey, type ChatList, type ChatSort } from '@meetme/core';
 import { client, useClient } from '../messenger';
 import { colors, s } from '../theme';
 import { Banner, Button, ChatAvatar, Field, Header, IconButton, Sheet, shortTime, typingText } from '../ui';
 import { DirectoryList, openDirectChat } from './DirectoryScreen';
 import { AvatarTap } from './Profile';
 import { CompanyBadge } from './Company';
+import { ChatListEditor } from './Lists';
 import type { Route } from '../App';
 
 export function ChatListScreen({ navigate, onError }: { navigate: (r: Route) => void; onError: (m: string) => void }) {
@@ -18,6 +19,7 @@ export function ChatListScreen({ navigate, onError }: { navigate: (r: Route) => 
   const [acting, setActing] = useState<string | null>(null);
   const [view, setView] = useState('all');
   const [chatSort, setChatSort] = useState<ChatSort>('recent');
+  const [editingList, setEditingList] = useState<ChatList | 'new' | null>(null);
   const [sortOpen, setSortOpen] = useState(false);
   const [pickDept, setPickDept] = useState(false);
 
@@ -25,13 +27,15 @@ export function ChatListScreen({ navigate, onError }: { navigate: (r: Route) => 
   const all = c.chatKeys();
   const deptsOf = (k: string) => (isGroupKey(k) ? [] : (c.profileOf(k)?.departments ?? []));
   // The filter chips, like WhatsApp: All, Unread, Favourites, Groups, Channels, a department.
+  const activeList = view.startsWith('list:') ? c.chatLists.find((l) => l.id === view.slice(5)) : undefined;
   const show = (k: string) =>
     view === 'all' ||
     (view === 'unread' && c.getUnread(k) > 0) ||
     (view === 'favourites' && c.isFavourite(k)) ||
     (view === 'groups' && isGroupKey(k) && !c.isChannel(k)) ||
     (view === 'channels' && c.isChannel(k)) ||
-    (view.startsWith('dept:') && deptsOf(k).includes(view.slice(5)));
+    (view.startsWith('dept:') && deptsOf(k).includes(view.slice(5))) ||
+    (view.startsWith('list:') && !!activeList && c.inChatList(activeList, k));
   // Pinned first, then the newest; archived chats have their own list (like WhatsApp).
   const sorted = c
     .orderedChats({ archived, sort: chatSort })
@@ -46,6 +50,7 @@ export function ChatListScreen({ navigate, onError }: { navigate: (r: Route) => 
     ['groups', 'Groups'],
     ['channels', 'Channels'],
     ...c.favouriteDepartments.map((d): [string, string] => [`dept:${d}`, d]),
+    ...c.chatLists.map((l): [string, string] => [`list:${l.id}`, l.name]),
   ];
   const run = (fn: () => void) => {
     try {
@@ -80,7 +85,7 @@ export function ChatListScreen({ navigate, onError }: { navigate: (r: Route) => 
         right={
           <>
             <IconButton icon={ArrowUpDown} label="Sort chats" color={chatSort !== 'recent' ? colors.accent : undefined} onPress={() => setSortOpen(true)} />
-            <IconButton icon={LifeBuoy} label="Help desk" onPress={() => navigate({ name: 'help' })} />
+            <IconButton icon={Headset} label="Help desk" onPress={() => navigate({ name: 'help' })} />
             {/* Everything else lives in the ⋮ menu, like WhatsApp; the main pages are in the bottom bar. */}
             <IconButton icon={EllipsisVertical} label="Menu" onPress={() => setMore(true)} />
           </>
@@ -112,7 +117,12 @@ export function ChatListScreen({ navigate, onError }: { navigate: (r: Route) => 
       </View>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flexGrow: 0 }} contentContainerStyle={styles.chips}>
         {chips.map(([id, label]) => (
-          <Pressable key={id} onPress={() => setView(view === id && id !== 'all' ? 'all' : id)} style={[styles.chip, view === id && styles.chipOn]}>
+          <Pressable
+            key={id}
+            onPress={() => setView(view === id && id !== 'all' ? 'all' : id)}
+            onLongPress={() => id.startsWith('list:') && setEditingList(c.chatLists.find((l) => `list:${l.id}` === id) ?? null)}
+            style={[styles.chip, view === id && styles.chipOn]}
+          >
             <Text style={[styles.chipText, view === id && { color: colors.accentText }]}>{label}</Text>
           </Pressable>
         ))}
@@ -124,7 +134,26 @@ export function ChatListScreen({ navigate, onError }: { navigate: (r: Route) => 
             <ChevronDown size={14} color={colors.muted} />
           </Pressable>
         )}
+        {activeList && (
+          <Pressable onPress={() => setEditingList(activeList)} style={[styles.chip, s.row, { gap: 4 }]} accessibilityLabel="Change this list">
+            <Pencil size={14} color={colors.muted} />
+          </Pressable>
+        )}
+        <Pressable onPress={() => setEditingList('new')} style={[styles.chip, { borderWidth: 1, borderStyle: 'dashed', borderColor: colors.lineStrong, backgroundColor: 'transparent' }]} accessibilityLabel="New list">
+          <Plus size={16} color={colors.text2} />
+        </Pressable>
       </ScrollView>
+      {editingList && (
+        <ChatListEditor
+          list={editingList === 'new' ? undefined : editingList}
+          onToast={onError}
+          onClose={(saved) => {
+            setEditingList(null);
+            if (saved) setView(`list:${saved.id}`);
+            else if (view.startsWith('list:') && !client.chatLists.some((l) => `list:${l.id}` === view)) setView('all');
+          }}
+        />
+      )}
       {sortOpen && (
         <Sheet
           title="Sort chats"
@@ -278,32 +307,31 @@ export function ChatListScreen({ navigate, onError }: { navigate: (r: Route) => 
                   { icon: BellOff, label: 'Mute for 1 week', onPress: () => run(() => client.muteChat(acting, 7 * 86400_000)) },
                   { icon: BellOff, label: 'Mute always', onPress: () => run(() => client.muteChat(acting, Infinity)) },
                 ]),
-            ...(c.canClearHistory
-              ? [
-                  {
-                    icon: Eraser,
-                    label: 'Clear chat',
-                    onPress: () =>
-                      Alert.alert('Clear chat', `Clear all messages in ${c.chatTitle(acting)}? The chat stays in your list.`, [
-                        { text: 'Cancel', style: 'cancel' },
-                        { text: 'Clear', style: 'destructive', onPress: () => void client.clearChat(acting) },
-                      ]),
-                  },
-                ]
-              : []),
-            ...(isGroupKey(acting)
-              ? []
-              : [
-                  {
-                    icon: Trash2,
-                    label: 'Delete chat',
-                    onPress: () =>
-                      Alert.alert('Delete chat', c.canClearHistory ? `Delete the chat with ${c.chatTitle(acting)}? Its messages are removed from this phone.` : `Remove ${c.chatTitle(acting)} from your chat list? The messages are kept.`, [
-                        { text: 'Cancel', style: 'cancel' },
-                        { text: 'Delete', style: 'destructive', onPress: () => void client.removeContact(acting) },
-                      ]),
-                  },
-                ]),
+            ...c.chatLists.map((l) =>
+              l.chats.includes(acting)
+                ? { icon: ListX, label: `Remove from "${l.name}"`, onPress: () => void client.saveChatList({ ...l, chats: l.chats.filter((k) => k !== acting) }) }
+                : { icon: ListPlus, label: `Add to "${l.name}"`, onPress: () => void client.saveChatList({ ...l, chats: [...l.chats, acting] }) },
+            ),
+            // Like WhatsApp's "Delete chat": the messages go and the chat leaves the list until someone writes again.
+            c.canClearHistory
+              ? {
+                  icon: Eraser,
+                  label: 'Clear chat',
+                  onPress: () =>
+                    Alert.alert('Clear chat', `Clear ${c.chatTitle(acting)}? All its messages are deleted from this phone and it leaves your chat list until a new message arrives.`, [
+                      { text: 'Cancel', style: 'cancel' },
+                      { text: 'Clear', style: 'destructive', onPress: () => void client.clearAndHideChat(acting) },
+                    ]),
+                }
+              : {
+                  icon: Trash2,
+                  label: 'Remove from chat list',
+                  onPress: () =>
+                    Alert.alert('Remove from chat list', `Remove ${c.chatTitle(acting)} from your chat list? The messages are kept and it comes back when a new message arrives.`, [
+                      { text: 'Cancel', style: 'cancel' },
+                      { text: 'Remove', style: 'destructive', onPress: () => client.hideChat(acting) },
+                    ]),
+                },
           ]}
         />
       )}

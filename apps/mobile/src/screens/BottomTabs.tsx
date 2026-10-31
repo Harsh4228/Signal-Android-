@@ -1,5 +1,5 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { Bell, CircleDashed, Megaphone, MessageSquareText, Phone, type LucideIcon } from 'lucide-react-native';
+import { Bell, CircleDashed, MessageSquareText, Phone, RadioTower, type LucideIcon } from 'lucide-react-native';
 import { useClient } from '../messenger';
 import { colors } from '../theme';
 import { Avatar } from '../ui';
@@ -15,7 +15,7 @@ export function BottomTabs({ current, navigate }: { current: Tab; navigate: (r: 
   const tabs: { name: Tab; icon?: LucideIcon; label: string; badge?: number; dot?: boolean }[] = [
     { name: 'list', icon: MessageSquareText, label: 'Chats', badge: unreadChats },
     { name: 'status', icon: CircleDashed, label: 'Status', dot: c.unseenStatusCount > 0 },
-    { name: 'channels', icon: Megaphone, label: 'Channels' },
+    { name: 'channels', icon: RadioTower, label: 'Channels' },
     { name: 'calls', icon: Phone, label: 'Calls' },
     { name: 'notices', icon: Bell, label: 'Notices' },
     { name: 'settings', label: 'You' },

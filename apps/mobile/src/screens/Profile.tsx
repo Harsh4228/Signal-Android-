@@ -5,7 +5,7 @@ import { Camera, CameraType, type CameraApi } from 'react-native-camera-kit';
 import { BIRTHDAY_RE, type OutgoingFile } from '@meetme/core';
 import { calls, client, useClient } from '../messenger';
 import { colors, s } from '../theme';
-import { Avatar, ChatAvatar, IconButton, Sheet, errorText } from '../ui';
+import { Avatar, ChatAvatar, IconButton, Sheet, errorText, tints } from '../ui';
 import { profilePhotoFrom } from '../photos';
 import type { Route } from '../App';
 
@@ -108,12 +108,15 @@ export function ProfileHero({ user }: { user: string }) {
 }
 
 /** A tappable detail line: the mobile number opens the phone app, the email the mail app. */
-export function DetailRow({ icon: Icon, value, label, link }: { icon: typeof Phone; value: string; label: string; link?: string }) {
+export function DetailRow({ icon: Icon, value, label, link, tint }: { icon: typeof Phone; value: string; label: string; link?: string; tint?: keyof typeof tints }) {
+  const fg = tint ? tints[tint][0] : colors.muted;
   const body = (
     <>
-      <Icon size={20} color={colors.muted} />
+      <View style={{ width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center', backgroundColor: tint ? tints[tint][1] : colors.surface2 }}>
+        <Icon size={18} color={fg} />
+      </View>
       <View style={{ flex: 1 }}>
-        <Text style={[s.text, { fontSize: 16 }, !!link && { color: colors.accent }]} selectable={!link}>
+        <Text style={[s.text, { fontSize: 16 }, !!link && { color: tint ? fg : colors.accent, fontWeight: '600' }]} selectable={!link}>
           {value}
         </Text>
         <Text style={[s.muted, { fontSize: 13 }]}>{label}</Text>

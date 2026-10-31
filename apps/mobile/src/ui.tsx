@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   BackHandler,
   Image,
+  Linking,
   Pressable,
   StyleSheet,
   Text,
@@ -13,9 +14,9 @@ import {
   type ViewStyle,
 } from 'react-native';
 import { ArrowUpDown, Check, ChevronLeft, Eye, EyeOff, ShieldCheck, UsersRound, type LucideIcon } from 'lucide-react-native';
-import { isGroupKey } from '@meetme/core';
+import { isGroupKey, richPieces } from '@meetme/core';
 import { client } from './messenger';
-import { colors, s } from './theme';
+import { colors, isDark, s } from './theme';
 
 /** Soft background / strong text pairs, picked per name so each contact keeps the same colour. */
 const PALETTE: [string, string][] = [
@@ -484,3 +485,47 @@ export function SortChip<T extends string>({ value, options, onChange }: { value
     </>
   );
 }
+
+/** Colours for contact details, the same on every screen: department violet, mobile green, email blue, hours amber. */
+export const tints = isDark
+  ? { dept: ['#bdb4fe', '#2a2350'], phone: ['#75e0a7', '#0f2d20'], email: ['#84caff', '#102a46'], hours: ['#fec84b', '#33270f'] }
+  : { dept: ['#6941c6', '#f4f3ff'], phone: ['#067647', '#ecfdf3'], email: ['#175cd3', '#eff8ff'], hours: ['#b54708', '#fffaeb'] };
+
+/** A coloured pill: department, hours, or a tappable mobile number / email. */
+export function InfoChip({ kind, icon: Icon, text, onPress }: { kind: keyof typeof tints; icon: LucideIcon; text: string; onPress?: () => void }) {
+  const [fg, bg] = tints[kind];
+  return (
+    <Pressable
+      onPress={onPress}
+      disabled={!onPress}
+      style={({ pressed }) => ({ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 7, borderRadius: 18, backgroundColor: bg, opacity: pressed ? 0.7 : 1 })}
+    >
+      <Icon size={14} color={fg} />
+      <Text style={{ color: fg, fontWeight: '600', fontSize: 13.5 }}>{text}</Text>
+    </Pressable>
+  );
+}
+
+/** Text where links, email addresses and phone numbers can be tapped (help desk, company information). */
+export function RichText({ text, style }: { text: string; style?: object }) {
+  return (
+    <Text style={[{ color: colors.text2, fontSize: 15, lineHeight: 22 }, style]} selectable>
+      {richPieces(text).map((p, i) =>
+        p.kind ? (
+          <Text
+            key={i}
+            style={{ fontWeight: '600', color: p.kind === 'phone' ? tints.phone[0] : p.kind === 'email' ? tints.email[0] : colors.accent }}
+            onPress={() => void Linking.openURL(p.href!).catch(() => {})}
+          >
+            {p.text}
+          </Text>
+        ) : (
+          p.text
+        ),
+      )}
+    </Text>
+  );
+}
+
+/** "2.4 MB" */
+export const fileSize = (n: number) => (n < 1024 ? `${n} B` : n < 1024 * 1024 ? `${Math.round(n / 1024)} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`);

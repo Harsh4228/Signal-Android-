@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { ChevronRight, Megaphone, UsersRound } from 'lucide-react-native';
+import { ChevronRight, RadioTower, UsersRound } from 'lucide-react-native';
 import { groupKey, type ChannelInfo, type Community } from '@meetme/core';
 import { client, useClient } from '../messenger';
 import { colors, s } from '../theme';
@@ -56,7 +56,7 @@ export function ChannelsScreen({ navigate, onToast }: { navigate: (r: Route) => 
             {channels.map((ch, i) => (
               <View key={ch.id} style={[styles.row, i > 0 && styles.line]}>
                 <View style={styles.icon}>
-                  <Megaphone size={20} color={colors.accent} />
+                  <RadioTower size={20} color={colors.accent} />
                 </View>
                 <Pressable style={{ flex: 1 }} disabled={!ch.following} onPress={() => navigate({ name: 'chat', peer: groupKey(ch.id) })}>
                   <Text style={s.textStrong}>{ch.name}</Text>
@@ -91,7 +91,7 @@ export function ChannelsScreen({ navigate, onToast }: { navigate: (r: Route) => 
                     onPress={() => navigate({ name: 'chat', peer: groupKey(id) })}
                     style={({ pressed }) => [styles.row, styles.line, pressed && { backgroundColor: colors.hover }]}
                   >
-                    {channel ? <Megaphone size={18} color={colors.muted} /> : <UsersRound size={18} color={colors.muted} />}
+                    {channel ? <RadioTower size={18} color={colors.muted} /> : <UsersRound size={18} color={colors.muted} />}
                     <Text style={[s.text, { flex: 1 }, !inIt && { color: colors.faint }]}>{nameOf(id) ?? 'A group you are not in'}</Text>
                     {inIt && <ChevronRight size={18} color={colors.faint} />}
                   </Pressable>

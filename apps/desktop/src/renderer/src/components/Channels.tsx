@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Check, Megaphone, Pencil, Plus, Trash2, UsersRound, X } from 'lucide-react';
+import { Check, Megaphone, Network, Pencil, Plus, RadioTower, Trash2, UsersRound, X } from 'lucide-react';
 import { MAX_GROUP_NAME, groupKey, type ChannelInfo, type Community, type GroupInfo } from '@meetme/core';
 import { client, useClient } from '../messenger';
 import { errorText } from './ui';
@@ -28,7 +28,7 @@ export function ChannelsPanel({ onClose, onToast }: { onClose: () => void; onToa
         <header>
           <div className="title">
             <span className="title-icon">
-              <Megaphone size={18} />
+              <RadioTower size={18} />
             </span>
             Channels & communities
           </div>
@@ -46,7 +46,7 @@ export function ChannelsPanel({ onClose, onToast }: { onClose: () => void; onToa
             {channels?.map((ch) => (
               <li key={ch.id} className={ch.following ? 'clickable' : ''} onClick={() => ch.following && open(ch.id)}>
                 <span className="title-icon">
-                  <Megaphone size={16} />
+                  <RadioTower size={16} />
                 </span>
                 <div className="grow">
                   <div className="name">{ch.name}</div>
@@ -64,7 +64,9 @@ export function ChannelsPanel({ onClose, onToast }: { onClose: () => void; onToa
           {communities?.length === 0 && <p className="muted small">No communities yet. Your admin can put groups together into one.</p>}
           {communities?.map((co) => (
             <div key={co.id} className="help-card" style={{ marginBottom: 10 }}>
-              <div className="name">{co.name}</div>
+              <div className="name row" style={{ gap: 8 }}>
+                <Network size={16} className="muted" /> {co.name}
+              </div>
               {co.description && <div className="muted small">{co.description}</div>}
               <ul className="member-list">
                 {co.groups.map((id) => {
@@ -72,7 +74,7 @@ export function ChannelsPanel({ onClose, onToast }: { onClose: () => void; onToa
                   const channel = channels?.find((x) => x.id === id);
                   return (
                     <li key={id} className={g ? 'clickable' : ''} onClick={() => g && open(id)}>
-                      {channel ? <Megaphone size={15} /> : <UsersRound size={15} />}
+                      {channel ? <RadioTower size={15} /> : <UsersRound size={15} />}
                       <span className={g ? '' : 'muted'}>{g?.name ?? channel?.name ?? 'A group you are not in'}</span>
                     </li>
                   );

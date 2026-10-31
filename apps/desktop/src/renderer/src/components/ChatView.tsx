@@ -29,6 +29,7 @@ import {
   Star,
   UserRound,
   Phone,
+  Mail,
   PhoneIncoming,
   PhoneMissed,
   PhoneOutgoing,
@@ -115,6 +116,14 @@ export function ChatView({ peer, onError }: { peer: string; onError: (m: string)
   const [flash, setFlash] = useState<string | null>(null);
   const [viewingCatalog, setViewingCatalog] = useState<string | null>(null);
   const [menuFor, setMenuFor] = useState<string | null>(null);
+  /** The message whose actions were opened with a click (they stay until a click elsewhere). */
+  const [actionsFor, setActionsFor] = useState<string | null>(null);
+  useEffect(() => {
+    if (!actionsFor) return;
+    const close = () => (setActionsFor(null), setMenuFor(null));
+    window.addEventListener('click', close);
+    return () => window.removeEventListener('click', close);
+  }, [actionsFor]);
   const [showInfo, setShowInfo] = useState(() => takeInfoRequest(peer));
   // "Details" in a profile photo popup while this chat is already open.
   useEffect(() => {
@@ -287,7 +296,6 @@ export function ChatView({ peer, onError }: { peer: string; onError: (m: string)
   };
   const presence = group ? '' : formatLastSeen(c.getPresence(peer));
   const profile = group ? undefined : c.profileOf(peer);
-  const contactLine = [profile?.phone, profile?.email].filter(Boolean).join(' · ');
 
   return (
     <section className="chat">
@@ -324,11 +332,22 @@ export function ChatView({ peer, onError }: { peer: string; onError: (m: string)
                 <span className="typing">{typing}</span>
               ) : group ? (
                 <span className="member-line">{c.groupMemberLine(peer) || 'No members'}</span>
-              ) : contactLine ? (
-                <span className="member-line">{contactLine}</span>
-              ) : presence ? (
-                <span className={presence === 'online' ? 'online-text' : ''}>{presence}</span>
-              ) : null}
+              ) : (
+                // Last seen, then the mobile and email in their own colours (like the details panel).
+                <span className="hdr-line">
+                  {presence && <span className={presence === 'online' ? 'online-text' : ''}>{presence}</span>}
+                  {profile?.phone && (
+                    <span className="hdr-chip phone">
+                      <Phone size={11} /> {profile.phone}
+                    </span>
+                  )}
+                  {profile?.email && (
+                    <span className="hdr-chip email">
+                      <Mail size={11} /> {profile.email}
+                    </span>
+                  )}
+                </span>
+              )}
               {timer ? (
                 <>
                   {' · '}
@@ -439,7 +458,15 @@ export function ChatView({ peer, onError }: { peer: string; onError: (m: string)
               <div
                 key={m.id}
                 id={`msg-${m.id}`}
-                className={`bubble ${m.outgoing ? 'out' : 'in'}${m.broadcast ? ' announce' : ''}${m.deleted ? ' deleted' : ''}${flash === m.id ? ' flash' : ''}${m.reactions && Object.keys(m.reactions).length ? ' has-reactions' : ''}`}
+                className={`bubble ${m.outgoing ? 'out' : 'in'}${m.broadcast ? ' announce' : ''}${m.deleted ? ' deleted' : ''}${flash === m.id ? ' flash' : ''}${m.reactions && Object.keys(m.reactions).length ? ' has-reactions' : ''}${actionsFor === m.id ? ' show-actions' : ''}`}
+                onClick={(e) => {
+                  // A click on the message keeps its actions (react, reply, forward, star, delete) open, like WhatsApp's
+                  // menu; links, pictures, buttons and selected text keep their own click.
+                  if ((e.target as HTMLElement).closest('button, a, input, video, audio, img, .msg-link, .msg-actions')) return;
+                  if (window.getSelection()?.toString()) return;
+                  e.stopPropagation();
+                  setActionsFor(actionsFor === m.id ? null : m.id);
+                }}
               >
                 {!m.deleted && (
                   <MessageActions

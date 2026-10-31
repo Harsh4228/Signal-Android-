@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { ArrowDown, ArrowUp, Check, ChevronLeft, ChevronRight, Clock, LifeBuoy, Mail, MessageSquare, Pencil, Phone, Plus, Search, ShieldCheck, Trash2, X } from 'lucide-react';
+import { ArrowDown, ArrowUp, Building2, Check, ChevronLeft, ChevronRight, Clock, Headset, LifeBuoy, Mail, MessageSquare, Pencil, Phone, Plus, Search, ShieldCheck, Trash2, X } from 'lucide-react';
 import {
   FEATURES,
   FEATURE_KEYS,
@@ -17,6 +17,7 @@ import {
 } from '@meetme/core';
 import { client } from '../messenger';
 import { Avatar, errorText } from './ui';
+import { CompanyInfo } from './Company';
 
 type Toast = (m: string) => void;
 const SCOPE_LABEL: Record<RightScope, string> = { company: 'Everyone', department: 'Department', group: 'Group', user: 'Person' };
@@ -364,38 +365,47 @@ const EMPTY: Draft = { title: '', name: '', department: '', phone: '', email: ''
 function ContactCard({ c, onChat }: { c: HelpContact; onChat?: (u: string) => void }) {
   return (
     <div className="help-card">
-      <div className="row" style={{ gap: 10 }}>
+      <div className="row" style={{ gap: 12 }}>
         {c.username ? (
           <Avatar name={c.username} />
         ) : (
           <span className="title-icon">
-            <LifeBuoy size={18} />
+            <Headset size={18} />
           </span>
         )}
         <div className="grow">
           <div className="name">{c.title}</div>
-          {(c.name || c.department) && <div className="muted small">{[c.name, c.department && `for ${c.department}`].filter(Boolean).join(' · ')}</div>}
+          {c.name && <div className="help-person">{c.name}</div>}
         </div>
       </div>
-      {c.hours && (
-        <div className="muted small">
-          <Clock size={12} /> {c.hours}
+      {(c.department || c.hours) && (
+        <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+          {c.department && (
+            <span className="info-chip dept">
+              <Building2 size={13} /> {c.department}
+            </span>
+          )}
+          {c.hours && (
+            <span className="info-chip hours">
+              <Clock size={13} /> {c.hours}
+            </span>
+          )}
         </div>
       )}
       <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
         {c.phone && (
-          <a className="button" href={`tel:${c.phone.replace(/[^+\d]/g, '')}`}>
+          <a className="info-chip phone action" href={`tel:${c.phone.replace(/[^+\d]/g, '')}`} title="Call">
             <Phone size={14} /> {c.phone}
           </a>
         )}
         {c.email && (
-          <a className="button" href={`mailto:${c.email}`}>
+          <a className="info-chip email action" href={`mailto:${c.email}`} title="Write an email">
             <Mail size={14} /> {c.email}
           </a>
         )}
         {c.username && onChat && c.username !== client.account?.username && (
-          <button onClick={() => onChat(c.username)}>
-            <MessageSquare size={14} /> Chat
+          <button className="info-chip chat action" onClick={() => onChat(c.username)}>
+            <MessageSquare size={14} /> Chat in CellMate
           </button>
         )}
       </div>
@@ -407,6 +417,7 @@ function ContactCard({ c, onChat }: { c: HelpContact; onChat?: (u: string) => vo
 export function HelpDeskModal({ onClose, onToast }: { onClose: () => void; onToast: Toast }) {
   const [contacts, setContacts] = useState<HelpContact[] | null>(null);
   const [query, setQuery] = useState('');
+  const [company, setCompany] = useState(false);
   useEffect(() => {
     client.getHelpDesk().then(setContacts, (e) => (onToast(errorText(e)), setContacts([])));
   }, [onToast]);
@@ -423,7 +434,7 @@ export function HelpDeskModal({ onClose, onToast }: { onClose: () => void; onToa
         <header>
           <div className="title">
             <span className="title-icon">
-              <LifeBuoy size={18} />
+              <Headset size={18} />
             </span>
             Help desk
           </div>
@@ -438,6 +449,18 @@ export function HelpDeskModal({ onClose, onToast }: { onClose: () => void; onToa
               <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search: IT, HR, a name…" autoFocus />
             </div>
           )}
+          {/* The company's own information (address, hours, rules, files) is one click away from here too. */}
+          {!!client.companyProfile?.items.length && (
+            <button className="media-head company-link" onClick={() => setCompany(true)}>
+              <Building2 size={17} />
+              <span className="grow">
+                Company information
+                <span className="muted small"> · {client.companyProfile.items.map((i) => i.title).slice(0, 3).join(', ')}</span>
+              </span>
+              <ChevronRight size={16} />
+            </button>
+          )}
+          {company && <CompanyInfo onClose={() => setCompany(false)} onToast={onToast} />}
           {contacts === null && <p className="muted">Loading…</p>}
           {contacts?.length === 0 && <p className="muted">Your admin hasn't added any help contacts yet.</p>}
           <div className="help-list">
@@ -556,7 +579,7 @@ export function HelpDeskTab({ users, departments, onToast }: { users: AdminUser[
   return (
     <>
       <p className="muted small" style={{ marginTop: 4 }}>
-        <LifeBuoy size={14} /> Contacts everyone can open from the help icon: IT, HR, accounts, a manager per department… with mobile,
+        <Headset size={14} /> Contacts everyone can open from the help icon: IT, HR, accounts, a manager per department… with mobile,
         email and hours.
       </p>
       {contacts === null && <p className="muted">Loading…</p>}

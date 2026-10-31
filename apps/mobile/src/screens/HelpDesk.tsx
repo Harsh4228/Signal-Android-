@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Linking, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { ArrowDown, ArrowUp, Clock, LifeBuoy, Mail, MessageSquare, Pencil, Phone, Plus, Search, Trash2 } from 'lucide-react-native';
+import { ArrowDown, ArrowUp, Building2, ChevronRight, Clock, Headset, LifeBuoy, Mail, MessageSquare, Pencil, Phone, Plus, Search, Trash2 } from 'lucide-react-native';
 import { MAX_EMAIL, MAX_HELP_FIELD, MAX_PHONE, shortId, type AdminUser, type HelpContact, type HelpContactInput } from '@meetme/core';
 import { client } from '../messenger';
 import { colors, s } from '../theme';
-import { Avatar, Banner, Button, Field, Header, IconButton, errorText, useBack } from '../ui';
+import { Avatar, Banner, Button, Field, Header, IconButton, InfoChip, Row, errorText, useBack } from '../ui';
 
 type Toast = (m: string) => void;
 type Draft = HelpContactInput & { id?: string };
@@ -19,27 +19,25 @@ function ContactCard({ c, onChat }: { c: HelpContact; onChat?: (u: string) => vo
           <Avatar name={c.username} size={44} />
         ) : (
           <View style={styles.icon}>
-            <LifeBuoy size={22} color={colors.accent} />
+            <Headset size={22} color={colors.accent} />
           </View>
         )}
         <View style={{ flex: 1 }}>
-          <Text style={s.textStrong}>{c.title}</Text>
-          {!!(c.name || c.department) && (
-            <Text style={s.muted}>{[c.name, c.department && `for ${c.department}`].filter(Boolean).join(' · ')}</Text>
-          )}
+          <Text style={[s.textStrong, { fontSize: 16 }]}>{c.title}</Text>
+          {!!c.name && <Text style={[s.text, { color: colors.text2 }]}>{c.name}</Text>}
         </View>
       </View>
-      {!!c.hours && (
-        <View style={[s.row, { gap: 6 }]}>
-          <Clock size={14} color={colors.muted} />
-          <Text style={s.muted}>{c.hours}</Text>
+      {(!!c.department || !!c.hours) && (
+        <View style={[s.row, { gap: 8, flexWrap: 'wrap' }]}>
+          {!!c.department && <InfoChip kind="dept" icon={Building2} text={c.department} />}
+          {!!c.hours && <InfoChip kind="hours" icon={Clock} text={c.hours} />}
         </View>
       )}
       <View style={[s.row, { gap: 8, flexWrap: 'wrap' }]}>
-        {!!c.phone && <Button title={c.phone} icon={Phone} onPress={() => void Linking.openURL(`tel:${c.phone.replace(/[^+\d]/g, '')}`)} />}
-        {!!c.email && <Button title="Email" icon={Mail} onPress={() => void Linking.openURL(`mailto:${c.email}`)} />}
+        {!!c.phone && <InfoChip kind="phone" icon={Phone} text={c.phone} onPress={() => void Linking.openURL(`tel:${c.phone.replace(/[^+\d]/g, '')}`)} />}
+        {!!c.email && <InfoChip kind="email" icon={Mail} text={c.email} onPress={() => void Linking.openURL(`mailto:${c.email}`)} />}
         {!!c.username && onChat && c.username !== client.account?.username && (
-          <Button title="Chat" icon={MessageSquare} onPress={() => onChat(c.username)} />
+          <Button title="Chat in CellMate" icon={MessageSquare} onPress={() => onChat(c.username)} />
         )}
       </View>
     </View>
@@ -47,7 +45,7 @@ function ContactCard({ c, onChat }: { c: HelpContact; onChat?: (u: string) => vo
 }
 
 /** Everyone: whom to contact for help (IT, HR, accounts, …), as the company admin set it up. */
-export function HelpDeskScreen({ onClose, onChat }: { onClose: () => void; onChat: (username: string) => void }) {
+export function HelpDeskScreen({ onClose, onChat, onCompany }: { onClose: () => void; onChat: (username: string) => void; onCompany?: () => void }) {
   useBack(onClose);
   const [contacts, setContacts] = useState<HelpContact[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -62,6 +60,18 @@ export function HelpDeskScreen({ onClose, onChat }: { onClose: () => void; onCha
       <Header title="Help desk" onBack={onClose} />
       <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40, gap: 10 }} keyboardShouldPersistTaps="handled">
         {error && <Banner kind="error">{error}</Banner>}
+        {/* The company's own information (address, hours, rules, files) is one tap away from here too. */}
+        {!!onCompany && !!client.companyProfile?.items.length && (
+          <View style={[s.card, { padding: 4 }]}>
+            <Row
+              icon={Building2}
+              title="Company information"
+              subtitle={client.companyProfile.items.map((i) => i.title).slice(0, 3).join(', ')}
+              onPress={onCompany}
+              right={<ChevronRight size={18} color={colors.faint} />}
+            />
+          </View>
+        )}
         {(contacts?.length ?? 0) > 5 && (
           <View style={styles.search}>
             <Search size={17} color={colors.faint} />
@@ -71,7 +81,7 @@ export function HelpDeskScreen({ onClose, onChat }: { onClose: () => void; onCha
         {contacts === null && !error && <Text style={s.muted}>Loading…</Text>}
         {contacts?.length === 0 && (
           <View style={{ alignItems: 'center', gap: 10, paddingVertical: 40 }}>
-            <LifeBuoy size={40} color={colors.faint} />
+            <Headset size={40} color={colors.faint} />
             <Text style={[s.muted, { textAlign: 'center' }]}>Your admin hasn't added any help contacts yet.</Text>
           </View>
         )}

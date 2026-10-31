@@ -462,7 +462,41 @@ export interface CompanyProfile {
 export interface CompanyItem {
   id: string;
   title: string;
+  /** Phone numbers, emails and links in it are shown tappable. */
   text: string;
+  /** An attached file (GET /v1/company/files/:id). */
+  file?: CompanyFile;
+}
+/** A file in the company information: a PDF, picture or document. */
+export interface CompanyFile {
+  id: string;
+  name: string;
+  mime: string;
+  size: number;
+}
+export const MAX_COMPANY_FILE_BYTES = 8 * 1024 * 1024;
+
+/**
+ * Text cut into plain pieces and tappable ones: links, email addresses and phone numbers (help desk and company
+ * information; messages keep their own link handling).
+ */
+export type RichPiece = { text: string; kind?: 'url' | 'email' | 'phone'; href?: string };
+const RICH_RE = /(https?:\/\/[^\s<>"']+[^\s<>"'.,;:!?)\]]|www\.[^\s<>"']+[^\s<>"'.,;:!?)\]]|[^\s@<>()"',;:]+@[^\s@<>()"',;:]+\.[a-z]{2,}|\+?\d[\d ()\-]{5,}\d)/gi;
+export function richPieces(text: string): RichPiece[] {
+  const out: RichPiece[] = [];
+  let last = 0;
+  for (const m of text.matchAll(RICH_RE)) {
+    const t = m[0];
+    const kind: RichPiece['kind'] = /^(https?:|www\.)/i.test(t) ? 'url' : t.includes('@') ? 'email' : 'phone';
+    // A phone number needs at least 7 digits (not a date like 2024-10-31 or a time).
+    if (kind === 'phone' && (t.replace(/\D/g, '').length < 7 || /^\d{4}-\d{2}-\d{2}$/.test(t))) continue;
+    if (m.index! > last) out.push({ text: text.slice(last, m.index) });
+    const href = kind === 'url' ? (/^www\./i.test(t) ? `https://${t}` : t) : kind === 'email' ? `mailto:${t}` : `tel:${t.replace(/[^+\d]/g, '')}`;
+    out.push({ text: t, kind, href });
+    last = m.index! + t.length;
+  }
+  if (last < text.length) out.push({ text: text.slice(last) });
+  return out;
 }
 export const MAX_COMPANY_ITEMS = 30;
 export const MAX_COMPANY_ITEM_TITLE = 80;

@@ -54,6 +54,8 @@ import {
   type ChatSort,
   type CompanyItem,
   type CompanyProfile,
+  type CompanyFile,
+  MAX_COMPANY_FILE_BYTES,
   type Policy,
   type Presence,
   type PublicConfig,
@@ -182,6 +184,17 @@ export interface ChatPrefs {
   muteUntil?: number;
   /** In my Favourites (the chat list filter), like WhatsApp. */
   favourite?: boolean;
+  /** Taken off my chat list at this time (ms); it comes back with the next message. */
+  hidden?: number;
+}
+
+/** My own chat list filter, like WhatsApp's lists: chosen chats plus everyone in chosen departments. */
+export interface ChatList {
+  id: string;
+  name: string;
+  /** People, groups and channels (chat keys). */
+  chats: string[];
+  departments: string[];
 }
 export const MAX_PINNED = 3;
 
@@ -787,6 +800,7 @@ export class MessengerClient extends Emitter<Events> {
     this.starred = await this.store.getSetting<StarredMessage[]>('starred', []);
     this.chatPrefs = await this.store.getSetting<Record<string, ChatPrefs>>('chatPrefs', {});
     this.favouriteDepartments = await this.store.getSetting<string[]>('favouriteDepartments', []);
+    this.chatLists = await this.store.getSetting<ChatList[]>('chatLists', []);
     this.privacy = { readReceipts: true, ...(await this.store.getSetting<Partial<{ readReceipts: boolean }>>('privacy', {})) };
     this.blocked = await this.store.getSetting<string[]>('blocked', []);
     await this.media.load();
@@ -2944,6 +2958,7 @@ export class MessengerClient extends Emitter<Events> {
 
   setActiveChat(peer: string | null): void {
     this.activeChat = peer;
+    if (peer && this.chatPrefs[peer]?.hidden) this.setChatPref(peer, { hidden: undefined });
     if (!peer) {
       this.emit('change'); // e.g. back to the chat list on a phone
       return;
@@ -3232,6 +3247,18 @@ export class MessengerClient extends Emitter<Events> {
     this.emit('change');
   }
 
+  /** A file attached to a company information section (decrypted is not needed: company files are not secret). */
+  async companyFile(id: string): Promise<{ name: string; mime: string; data: Uint8Array }> {
+    const f = await this.http<{ name: string; mime: string; data: string }>('GET', `/v1/company/files/${encodeURIComponent(id)}`);
+    return { name: f.name, mime: f.mime, data: fromBase64(f.data) };
+  }
+
+  /** Admin: upload a file (PDF, picture, document) for a company information section. */
+  async uploadCompanyFile(f: { name: string; mime: string; data: Uint8Array }): Promise<CompanyFile> {
+    if (f.data.length > MAX_COMPANY_FILE_BYTES) throw new Error(`File too large (max ${MAX_COMPANY_FILE_BYTES / 1024 / 1024} MB)`);
+    return this.http<CompanyFile>('POST', '/v1/admin/company/files', { name: f.name, mime: f.mime || 'application/octet-stream', data: toBase64(f.data) });
+  }
+
   /** Admin: the company name and information sections everyone sees. */
   async setCompanyProfile(p: { name?: string; items?: CompanyItem[] }): Promise<void> {
     this.companyProfile = await this.http<CompanyProfile>('PUT', '/v1/admin/company', p);
@@ -3260,6 +3287,47 @@ export class MessengerClient extends Emitter<Events> {
 
   isPinned = (key: string) => !!this.chatPrefs[key]?.pinned;
   isFavourite = (key: string) => !!this.chatPrefs[key]?.favourite;
+
+  /** Off my chat list until a newer message arrives (or I open it again). */
+  isHidden(key: string): boolean {
+    const h = this.chatPrefs[key]?.hidden;
+    return !!h && (this.lastMessage(key)?.ts ?? 0) <= h && this.activeChat !== key;
+  }
+
+  /** Take a chat off my list, like WhatsApp's "Delete chat": it comes back when someone writes. */
+  hideChat(key: string): void {
+    if (this.activeChat === key) this.activeChat = null;
+    this.setChatPref(key, { hidden: Date.now(), pinned: undefined });
+  }
+
+  /** Clear a chat and take it off my list (it comes back with the next message). */
+  async clearAndHideChat(key: string): Promise<void> {
+    await this.clearChat(key);
+    this.hideChat(key);
+  }
+
+  /** My own lists (chips in the chat list). */
+  chatLists: ChatList[] = [];
+  async saveChatList(list: Omit<ChatList, 'id'> & { id?: string }): Promise<ChatList> {
+    const name = list.name.trim().slice(0, 40);
+    if (!name) throw new Error('Give the list a name');
+    const saved: ChatList = { id: list.id || newId(), name, chats: [...new Set(list.chats)], departments: [...new Set(list.departments)] };
+    this.chatLists = this.chatLists.some((l) => l.id === saved.id) ? this.chatLists.map((l) => (l.id === saved.id ? saved : l)) : [...this.chatLists, saved];
+    await this.store.setSetting('chatLists', this.chatLists);
+    this.emit('change');
+    return saved;
+  }
+  async deleteChatList(id: string): Promise<void> {
+    this.chatLists = this.chatLists.filter((l) => l.id !== id);
+    await this.store.setSetting('chatLists', this.chatLists);
+    this.emit('change');
+  }
+  /** Is this chat in my list: chosen, or a person in one of its departments. */
+  inChatList(list: ChatList, key: string): boolean {
+    if (list.chats.includes(key)) return true;
+    if (isGroupKey(key) || !list.departments.length) return false;
+    return (this.profileOf(key)?.departments ?? []).some((d) => list.departments.includes(d));
+  }
 
   /** Add a person, group or channel to my Favourites (or take it out). */
   favouriteChat(key: string, on: boolean): void {
@@ -3306,7 +3374,7 @@ export class MessengerClient extends Emitter<Events> {
           ? Number(this.getUnread(b) > 0) - Number(this.getUnread(a) > 0) || last(b) - last(a)
           : last(b) - last(a);
     return this.chatKeys()
-      .filter((k) => this.isArchived(k) === !!opts.archived)
+      .filter((k) => this.isArchived(k) === !!opts.archived && !this.isHidden(k))
       .sort((a, b) => (this.chatPrefs[b]?.pinned ?? 0) - (this.chatPrefs[a]?.pinned ?? 0) || then(a, b));
   }
 
@@ -3776,6 +3844,7 @@ export class MessengerClient extends Emitter<Events> {
     this.opsSinceFull = 0;
     this.chatPrefs = {};
     this.favouriteDepartments = [];
+    this.chatLists = [];
     this.companyProfile = null;
     this.companyLogo = '';
     this.privacy = { readReceipts: true };
