@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Camera, CircleDashed, Info, MessageSquare, Phone, RefreshCw, UserRound, Video, X } from 'lucide-react';
 import { shortId } from '@meetme/core';
 import { calls, client, useClient } from '../messenger';
-import { Avatar, ChatAvatar, errorText } from './ui';
+import { Avatar, ChatAvatar, colorFor, errorText } from './ui';
 import { StatusViewer } from './Status';
 
 type Toast = (m: string) => void;
@@ -139,7 +139,15 @@ export function ProfileHero({ user }: { user: string }) {
   const c = useClient();
   const photo = c.avatarOf(user);
   const [full, setFull] = useState(false);
-  if (!photo) return <PersonAvatar user={user} size="xl" />;
+  if (!photo) {
+    // No photo yet: a square tile with their initial, the same size as a photo (not a small circle).
+    const [bg, fg] = colorFor(user);
+    return (
+      <div className="profile-hero no-photo" style={{ background: bg, color: fg }}>
+        <span>{c.displayName(user).slice(0, 1).toUpperCase()}</span>
+      </div>
+    );
+  }
   return (
     <>
       <button className="profile-hero" onClick={() => setFull(true)} title="Full size">

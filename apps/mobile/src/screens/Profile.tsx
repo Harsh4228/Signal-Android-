@@ -5,7 +5,7 @@ import { Camera, CameraType, type CameraApi } from 'react-native-camera-kit';
 import { BIRTHDAY_RE, type OutgoingFile } from '@meetme/core';
 import { calls, client, useClient } from '../messenger';
 import { colors, s } from '../theme';
-import { Avatar, ChatAvatar, IconButton, Sheet, errorText, tints } from '../ui';
+import { Avatar, ChatAvatar, IconButton, Sheet, colorFor, errorText, tints } from '../ui';
 import { profilePhotoFrom } from '../photos';
 import type { Route } from '../App';
 
@@ -96,7 +96,15 @@ export function ProfileHero({ user }: { user: string }) {
   const c = useClient();
   const photo = c.avatarOf(user);
   const [full, setFull] = useState(false);
-  if (!photo) return <ChatAvatar chatKey={user} size={96} />;
+  if (!photo) {
+    // No photo yet: a square tile with their initial, the same size as a photo (not a small circle).
+    const [bg, fg] = colorFor(user);
+    return (
+      <View style={[styles.hero, { backgroundColor: bg, alignItems: 'center', justifyContent: 'center' }]}>
+        <Text style={{ color: fg, fontSize: 120, fontWeight: '700' }}>{c.displayName(user).slice(0, 1).toUpperCase()}</Text>
+      </View>
+    );
+  }
   return (
     <>
       <Pressable onPress={() => setFull(true)} style={styles.hero} accessibilityLabel="Show the photo full size">

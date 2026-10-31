@@ -30,7 +30,7 @@ const PALETTE: [string, string][] = [
   ['#f2f4f7', '#344054'],
 ];
 
-function colorFor(name: string): [string, string] {
+export function colorFor(name: string): [string, string] {
   let h = 0;
   for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
   return PALETTE[h % PALETTE.length]!;

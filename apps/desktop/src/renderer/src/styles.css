@@ -4240,3 +4240,18 @@ a.rich.phone {
     color: #1d4ed8;
   }
 }
+
+/* A profile without a photo: a square tile with the initial, as big as a photo would be. */
+.profile-hero.no-photo {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: 1;
+  max-height: 340px;
+  cursor: default;
+}
+.profile-hero.no-photo span {
+  font-size: 120px;
+  font-weight: 700;
+  line-height: 1;
+}
