@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Camera, Info, MessageSquare, Phone, RefreshCw, Video, X } from 'lucide-react';
+import { Camera, CircleDashed, Info, MessageSquare, Phone, RefreshCw, UserRound, Video, X } from 'lucide-react';
 import { shortId } from '@meetme/core';
 import { calls, client, useClient } from '../messenger';
 import { Avatar, ChatAvatar, errorText } from './ui';
@@ -32,18 +32,37 @@ export { telLink };
  */
 export function AvatarTap({ user, size, onToast }: { user: string; size?: 'sm'; onToast: Toast }) {
   const [open, setOpen] = useState<'status' | 'photo' | null>(null);
+  /** With a status: ask which one, like WhatsApp ("View status" / "View profile photo"). */
+  const [choose, setChoose] = useState<{ x: number; y: number } | null>(null);
+  useEffect(() => {
+    if (!choose) return;
+    const close = () => setChoose(null);
+    window.addEventListener('click', close);
+    return () => window.removeEventListener('click', close);
+  }, [choose]);
   return (
     <>
       <span
         className="avatar-tap"
         onClick={(e) => {
           e.stopPropagation();
-          setOpen(client.statusRingOf(user) === 'new' ? 'status' : 'photo');
+          if (client.statusRingOf(user)) setChoose({ x: e.clientX, y: e.clientY });
+          else setOpen('photo');
         }}
-        title={client.statusRingOf(user) ? 'View status' : 'View photo'}
+        title={client.statusRingOf(user) ? 'View status or photo' : 'View photo'}
       >
         <PersonAvatar user={user} size={size} />
       </span>
+      {choose && (
+        <div className="dropdown context" role="menu" style={{ left: choose.x, top: choose.y }} onClick={(e) => e.stopPropagation()}>
+          <button role="menuitem" onClick={() => (setChoose(null), setOpen('status'))}>
+            <CircleDashed size={16} /> View status
+          </button>
+          <button role="menuitem" onClick={() => (setChoose(null), setOpen('photo'))}>
+            <UserRound size={16} /> View profile photo
+          </button>
+        </div>
+      )}
       {open === 'status' && <StatusOf user={user} onClose={() => setOpen(null)} onToast={onToast} />}
       {open === 'photo' && <PhotoPopup user={user} onClose={() => setOpen(null)} onToast={onToast} />}
     </>

@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import QRCode from 'qrcode';
 import {
+  ArrowLeft,
   Ban,
   Flag,
   Building2,
   Cake,
   Camera,
   Check,
+  ChevronRight,
   CircleCheck,
   Copy,
   KeyRound,
@@ -27,6 +29,7 @@ import {
   ShieldCheck,
   Trash2,
   UserPlus,
+  UserRound,
   Users,
   UsersRound,
   X,
@@ -34,6 +37,7 @@ import {
 import { ReportsTab } from './Safety';
 import {
   AUDIT_LABELS,
+  birthdayText,
   MAX_DEPARTMENT,
   MAX_EMAIL,
   MAX_GROUP_NAME,
@@ -62,15 +66,17 @@ import { client, useClient } from '../messenger';
 import { Avatar, errorText, shortTime } from './ui';
 import { HelpDeskTab, RightsTab } from './AdminRights';
 import { CameraCapture } from './Profile';
+import { CompanyTab } from './Company';
 import { CommunitiesTab } from './Channels';
 
-type Tab = 'overview' | 'users' | 'departments' | 'groups' | 'communities' | 'rights' | 'helpdesk' | 'reports' | 'activity' | 'settings';
+export type Tab = 'overview' | 'company' | 'users' | 'departments' | 'groups' | 'communities' | 'rights' | 'helpdesk' | 'reports' | 'activity' | 'settings';
 /** A QR invite to show: for a new user, or a new one for someone who already exists. */
 type Share = { invite: InviteResponse; name: string; email?: string; renewed: boolean };
 type Toast = (m: string) => void;
 
 const TABS: [Tab, string, typeof Users][] = [
   ['overview', 'Overview', LayoutDashboard],
+  ['company', 'Company', Building2],
   ['users', 'Users', Users],
   ['departments', 'Departments', Building2],
   ['groups', 'Groups', UsersRound],
@@ -92,8 +98,8 @@ const userState = (u: AdminUser) =>
       : formatLastSeen({ online: u.online, lastSeen: u.lastSeen }) || 'Active';
 
 /** Everything an admin manages: accounts, bans, groups, org settings and the log of admin actions. */
-export function AdminPanel({ onClose, onToast }: { onClose: () => void; onToast: Toast }) {
-  const [tab, setTab] = useState<Tab>('overview');
+export function AdminPanel({ onClose, onToast, initialTab = 'overview', newGroup }: { onClose: () => void; onToast: Toast; initialTab?: Tab; newGroup?: boolean }) {
+  const [tab, setTab] = useState<Tab>(initialTab);
   const [users, setUsers] = useState<AdminUser[] | null>(null);
   const [groups, setGroups] = useState<GroupInfo[] | null>(null);
   const [departments, setDepartments] = useState<string[] | null>(null);
@@ -153,8 +159,9 @@ export function AdminPanel({ onClose, onToast }: { onClose: () => void; onToast:
           {tab === 'departments' && (
             <DepartmentsTab departments={departments} users={users} reload={reload} onToast={onToast} />
           )}
+          {tab === 'company' && <CompanyTab onToast={onToast} />}
           {tab === 'groups' && (
-            <GroupsTab groups={groups} users={users} reload={reload} onToast={onToast} openChat={openChat} />
+            <GroupsTab groups={groups} users={users} reload={reload} onToast={onToast} openChat={openChat} startNew={newGroup} />
           )}
           {tab === 'communities' && <CommunitiesTab groups={groups} onToast={onToast} />}
           {tab === 'rights' && <RightsTab users={users} groups={groups} departments={departments ?? []} onToast={onToast} />}
@@ -239,8 +246,8 @@ function UsersTab({
   const [dept, setDept] = useState('');
   const [adding, setAdding] = useState(false);
   const [share, setShare] = useState<Share | null>(null);
-  const [editing, setEditing] = useState<string | null>(null);
-  const [editingProfile, setEditingProfile] = useState<string | null>(null);
+  /** The user whose page is open (profile and every action, with labels). */
+  const [selected, setSelected] = useState<string | null>(null);
 
   const inDept =(u: AdminUser) => !dept || (dept === NO_DEPT ? !u.departments.length : u.departments.includes(dept));
 
@@ -312,6 +319,39 @@ function UsersTab({
     ).length;
   const deptCount = (d: string) => (users ?? []).filter((u) => (d === NO_DEPT ? !u.departments.length : u.departments.includes(d))).length;
 
+  const picked = selected ? users?.find((u) => u.username === selected) : undefined;
+  if (picked && !share) {
+    const who = picked.name || shortId(picked.username);
+    const other = picked.username !== me;
+    const ownerLocked = !!picked.owner && !iAmOwner;
+    return (
+      <UserDetail
+        user={picked}
+        departments={departments}
+        onBack={() => setSelected(null)}
+        reload={reload}
+        onToast={onToast}
+        actions={[
+          ...(other && picked.active && !picked.banned && !picked.moved
+            ? [{ icon: MessageSquare, label: `Message ${who}`, hint: 'Open the chat', go: () => openChat(picked.username) }]
+            : []),
+          ...(other && !picked.moved
+            ? [{ icon: QrCode, label: 'New QR invite', hint: 'New phone or forgotten password: they scan it and choose a new password', go: () => void newQr(picked) }]
+            : []),
+          ...(other && !picked.banned && !picked.moved && !ownerLocked
+            ? [{ icon: ShieldCheck, label: picked.admin ? 'Remove as admin' : 'Make admin', hint: picked.admin ? 'They stop managing people and settings' : 'They manage people, groups and settings, like you', go: () => toggleAdmin(picked) }]
+            : []),
+          ...(other && !picked.admin && !picked.moved
+            ? [{ icon: picked.banned ? CircleCheck : Ban, label: picked.banned ? 'Unblock' : 'Block', hint: picked.banned ? 'They need a new QR code to sign in again' : 'Signs them out at once; their password stops working', go: () => void ban(picked), warn: !picked.banned }]
+            : []),
+          ...(other && !ownerLocked
+            ? [{ icon: Trash2, label: 'Delete account', hint: 'Removed for good and signed out everywhere', go: () => (remove(picked.username), setSelected(null)), danger: true }]
+            : []),
+        ]}
+      />
+    );
+  }
+
   return (
     <>
       {share ? (
@@ -367,7 +407,7 @@ function UsersTab({
         {users === null && <li className="muted">Loading…</li>}
         {users && !shown.length && <li className="muted">No users match.</li>}
         {shown.slice(0, limit).map((u) => (
-          <li key={u.username} className={u.banned ? 'is-banned' : ''}>
+          <li key={u.username} className={`clickable ${u.banned ? 'is-banned' : ''}`} onClick={() => setSelected(u.username)} title="Open: profile and actions">
             <div className="avatar-wrap">
               <Avatar name={u.username} size="sm" />
               {u.online && <span className="presence-dot" />}
@@ -384,85 +424,12 @@ function UsersTab({
                   </span>
                 ))}
               </div>
-              {(u.phone || u.email) && (
-                <div className="contact-line">
-                  {u.phone && (
-                    <span>
-                      <Phone size={11} /> {u.phone}
-                    </span>
-                  )}
-                  {u.email && (
-                    <span>
-                      <Mail size={11} /> {u.email}
-                    </span>
-                  )}
-                </div>
-              )}
-              {editingProfile === u.username ? (
-                <ProfileEditor
-                  user={u}
-                  onDone={(changed) => {
-                    setEditingProfile(null);
-                    if (changed) reload();
-                  }}
-                  onToast={onToast}
-                />
-              ) : editing === u.username ? (
-                <DepartmentEditor
-                  user={u}
-                  departments={departments}
-                  onDone={(changed) => {
-                    setEditing(null);
-                    if (changed) reload();
-                  }}
-                  onToast={onToast}
-                />
-              ) : (
-                <div className="state">
-                  {userState(u)}
-                  {u.inviteExpires ? ` · QR waiting to be scanned (until ${new Date(u.inviteExpires).toLocaleDateString()})` : ''}
-                </div>
-              )}
+              <div className="state">
+                {userState(u)}
+                {u.inviteExpires ? ' · QR waiting to be scanned' : ''}
+              </div>
             </div>
-            <div className="row actions">
-              {!u.moved && (
-                <>
-              <button className="icon" title="Edit profile: name, photo, mobile, email" onClick={() => setEditingProfile(u.username)}>
-                <Pencil size={16} />
-              </button>
-              <button className="icon" title="Change departments" onClick={() => setEditing(u.username)}>
-                <Building2 size={16} />
-              </button>
-              {u.username !== me && (
-                <>
-                  {u.active && !u.banned && (
-                    <button className="icon" title="Message" onClick={() => openChat(u.username)}>
-                      <MessageSquare size={16} />
-                    </button>
-                  )}
-                  <button className="icon" title="New invite: QR, email or password (new phone or forgotten password)" onClick={() => void newQr(u)}>
-                    <QrCode size={16} />
-                  </button>
-                  {!u.banned && !(u.owner && !iAmOwner) && (
-                    <button className={`icon ${u.admin ? 'active' : ''}`} title={u.admin ? 'Remove admin' : 'Make admin'} onClick={() => toggleAdmin(u)}>
-                      <ShieldCheck size={16} />
-                    </button>
-                  )}
-                  {!u.admin && (
-                    <button className={`icon ${u.banned ? '' : 'warn'}`} title={u.banned ? 'Unblock' : 'Block (signs them out)'} onClick={() => void ban(u)}>
-                      {u.banned ? <CircleCheck size={16} /> : <Ban size={16} />}
-                    </button>
-                  )}
-                </>
-              )}
-                </>
-              )}
-              {u.username !== me && !(u.owner && !iAmOwner) && (
-                <button className="icon danger" title="Delete" onClick={() => remove(u.username)}>
-                  <Trash2 size={16} />
-                </button>
-              )}
-            </div>
+            <ChevronRight size={18} className="muted" />
           </li>
         ))}
       </ul>
@@ -692,7 +659,7 @@ function BirthdayInput({ value, onChange }: { value: string; onChange: (v: strin
 }
 
 /** Shrink a picked photo to a JPEG of at most 400 px. */
-async function shrinkPhoto(file: Blob): Promise<Uint8Array> {
+export async function shrinkPhoto(file: Blob): Promise<Uint8Array> {
   const bitmap = await createImageBitmap(file);
   const scale = Math.min(1, 400 / Math.max(bitmap.width, bitmap.height));
   const canvas = document.createElement('canvas');
@@ -827,6 +794,123 @@ function InviteView({ share, onDone, onToast }: { share: Share; onDone: () => vo
     </div>
   );
 }
+type UserAction = { icon: typeof Ban; label: string; hint: string; go: () => void; danger?: boolean; warn?: boolean };
+
+/** One user: their profile, departments and every admin action, each with a label (not a row of icons). */
+function UserDetail({
+  user,
+  departments,
+  actions,
+  onBack,
+  reload,
+  onToast,
+}: {
+  user: AdminUser;
+  departments: string[];
+  actions: UserAction[];
+  onBack: () => void;
+  reload: () => void;
+  onToast: Toast;
+}) {
+  const [mode, setMode] = useState<'view' | 'profile' | 'departments'>('view');
+  const done = (changed: boolean) => {
+    setMode('view');
+    if (changed) reload();
+  };
+  const detail = (icon: typeof Ban, label: string, value: string) =>
+    value ? (
+      <div className="detail-row">
+        {(() => {
+          const Icon = icon;
+          return <Icon size={17} />;
+        })()}
+        <div className="grow">
+          <div>{value}</div>
+          <div className="muted small">{label}</div>
+        </div>
+      </div>
+    ) : null;
+  return (
+    <div className="user-detail">
+      <button className="link-btn back-link" onClick={onBack}>
+        <ArrowLeft size={16} /> All users
+      </button>
+      <div className="user-head">
+        <div className="avatar-wrap">
+          <Avatar name={user.username} size="xl" />
+          {user.online && <span className="presence-dot" />}
+        </div>
+        <div className="grow">
+          <div className="name big">{user.name || shortId(user.username)}</div>
+          <div className="muted">@{shortId(user.username)}</div>
+          <div className="row" style={{ gap: 4, flexWrap: 'wrap', marginTop: 4 }}>
+            {user.admin && <span className="tag admin">{user.owner ? 'Main admin' : 'Admin'}</span>}
+            {user.banned && <span className="tag banned">Banned</span>}
+            {user.moved && <span className="tag">Moved</span>}
+            <span className="muted small">{userState(user)}</span>
+          </div>
+        </div>
+      </div>
+
+      {mode === 'profile' ? (
+        <ProfileEditor user={user} onDone={done} onToast={onToast} />
+      ) : (
+        <>
+          <div className="section-head">
+            <div className="section-title">Profile</div>
+            {!user.moved && (
+              <button onClick={() => setMode('profile')}>
+                <Pencil size={15} /> Edit profile
+              </button>
+            )}
+          </div>
+          <div className="detail-list">
+            {detail(UserRound, 'Full name', user.name)}
+            {detail(Phone, 'Mobile', user.phone)}
+            {detail(Mail, 'Email', user.email)}
+            {detail(Cake, 'Birth date', birthdayText(user.birthday))}
+            {!user.name && !user.phone && !user.email && !user.birthday && <p className="muted small">No details yet.</p>}
+          </div>
+        </>
+      )}
+
+      <div className="section-head">
+        <div className="section-title">Departments</div>
+        {!user.moved && mode !== 'departments' && (
+          <button onClick={() => setMode('departments')}>
+            <Building2 size={15} /> Change
+          </button>
+        )}
+      </div>
+      {mode === 'departments' ? (
+        <DepartmentEditor user={user} departments={departments} onDone={done} onToast={onToast} />
+      ) : (
+        <div className="row" style={{ gap: 4, flexWrap: 'wrap' }}>
+          {user.departments.length ? user.departments.map((d) => <span key={d} className="tag dept">{d}</span>) : <span className="muted small">No department</span>}
+        </div>
+      )}
+
+      {actions.length > 0 && (
+        <>
+          <div className="section-title">Actions</div>
+          <div className="action-list">
+            {actions.map(({ icon: Icon, label, hint, go, danger, warn }) => (
+              <button key={label} className={danger ? 'danger-text' : warn ? 'warn-text' : ''} onClick={go}>
+                <Icon size={18} />
+                <span className="grow">
+                  <span className="action-label">{label}</span>
+                  <span className="muted small">{hint}</span>
+                </span>
+                <ChevronRight size={16} className="muted" />
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 /** Admin: change a user's name, photo, mobile and email (users can't change these themselves). */
 function ProfileEditor({ user, onDone, onToast }: { user: AdminUser; onDone: (changed: boolean) => void; onToast: Toast }) {
   const [name, setName] = useState(user.name);
@@ -855,22 +939,33 @@ function ProfileEditor({ user, onDone, onToast }: { user: AdminUser; onDone: (ch
   }
 
   return (
-    <form className="profile-edit" onSubmit={save}>
-      <PhotoPicker value={photo ?? null} current={current} onChange={setPhoto} onError={onToast} />
-      <div className="grow stack" style={{ gap: 6 }}>
-        <input value={name} maxLength={MAX_NAME} onChange={(e) => setName(e.target.value)} placeholder="Full name" autoFocus />
-        <div className="row">
-          <input value={phone} maxLength={MAX_PHONE} onChange={(e) => setPhone(e.target.value)} placeholder="Mobile" type="tel" />
-          <input value={email} maxLength={MAX_EMAIL} onChange={(e) => setEmail(e.target.value)} placeholder="Email" type="email" />
-        </div>
-        <BirthdayInput value={birthday} onChange={setBirthday} />
-        <div className="row">
-          {(current || photo) && (
-            <button type="button" className="link-btn" onClick={() => setPhoto(null)}>
-              Remove photo
-            </button>
-          )}
-          <div className="grow" />
+    <form className="profile-form" onSubmit={save}>
+      <div className="profile-form-photo">
+        <PhotoPicker value={photo ?? null} current={current} onChange={setPhoto} onError={onToast} />
+        {(current || photo) && (
+          <button type="button" className="link-btn" onClick={() => setPhoto(null)}>
+            Remove photo
+          </button>
+        )}
+      </div>
+      <div className="form-grid">
+        <label className="field-label span-2">
+          Full name
+          <input value={name} maxLength={MAX_NAME} onChange={(e) => setName(e.target.value)} placeholder="e.g. Ravi Kumar" autoFocus />
+        </label>
+        <label className="field-label">
+          Mobile
+          <input value={phone} maxLength={MAX_PHONE} onChange={(e) => setPhone(e.target.value)} placeholder="+91 98765 43210" type="tel" />
+        </label>
+        <label className="field-label">
+          Email
+          <input value={email} maxLength={MAX_EMAIL} onChange={(e) => setEmail(e.target.value)} placeholder="name@company.com" type="email" />
+        </label>
+        <label className="field-label">
+          Birth date
+          <input type="date" value={birthday} min="1900-01-01" max={new Date().toISOString().slice(0, 10)} onChange={(e) => setBirthday(e.target.value)} />
+        </label>
+        <div className="row-end span-2">
           <button type="button" onClick={() => onDone(false)}>
             Cancel
           </button>
@@ -1020,15 +1115,17 @@ function GroupsTab({
   reload,
   onToast,
   openChat,
+  startNew,
 }: {
   groups: GroupInfo[] | null;
   users: AdminUser[] | null;
   reload: () => void;
   onToast: Toast;
   openChat: (key: string) => void;
+  startNew?: boolean;
 }) {
   const me = client.account?.username ?? '';
-  const [editing, setEditing] = useState<GroupInfo | 'new' | null>(null);
+  const [editing, setEditing] = useState<GroupInfo | 'new' | null>(startNew ? 'new' : null);
   const [query, setQuery] = useState('');
 
   const remove = async (g: GroupInfo) => {

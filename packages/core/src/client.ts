@@ -51,6 +51,8 @@ import {
   type GroupInfo,
   type LoginRequest,
   type MeResponse,
+  type CompanyItem,
+  type CompanyProfile,
   type Policy,
   type Presence,
   type PublicConfig,
@@ -177,8 +179,21 @@ export interface ChatPrefs {
   archived?: boolean;
   /** Muted until (ms); Number.MAX_SAFE_INTEGER = always. */
   muteUntil?: number;
+  /** In my Favourites (the chat list filter), like WhatsApp. */
+  favourite?: boolean;
 }
 export const MAX_PINNED = 3;
+
+/** Rejects if the promise takes longer than `ms`. */
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error('timed out')), ms);
+    p.then(
+      (v) => (clearTimeout(t), resolve(v)),
+      (e) => (clearTimeout(t), reject(e)),
+    );
+  });
+}
 
 /** Finds "@id" / "@Name" mentions of these members in a text (usernames, once each). */
 export function findMentions(text: string, members: string[], nameOf: (u: string) => string): string[] {
@@ -770,6 +785,7 @@ export class MessengerClient extends Emitter<Events> {
     this.statuses = await this.store.getSetting<StatusUpdate[]>('statuses', []);
     this.starred = await this.store.getSetting<StarredMessage[]>('starred', []);
     this.chatPrefs = await this.store.getSetting<Record<string, ChatPrefs>>('chatPrefs', {});
+    this.favouriteDepartments = await this.store.getSetting<string[]>('favouriteDepartments', []);
     this.privacy = { readReceipts: true, ...(await this.store.getSetting<Partial<{ readReceipts: boolean }>>('privacy', {})) };
     this.blocked = await this.store.getSetting<string[]>('blocked', []);
     await this.media.load();
@@ -1479,6 +1495,7 @@ export class MessengerClient extends Emitter<Events> {
     this.hideLastSeen = !!me.hideLastSeen;
     this.birthday = me.birthday ?? '';
     this.setRights(me.rights);
+    void this.loadCompanyProfile();
     this.emit('change');
   }
 
@@ -2506,10 +2523,15 @@ export class MessengerClient extends Emitter<Events> {
     const photo = 'photo' in s ? await this.uploadAttachment(s.photo) : undefined;
     const status: StatusUpdate = { id: newId(), from: this.account!.username, ts: Date.now(), text, bg, photo, outgoing: true, viewers: {} };
     const payload: Payload = { k: 'status', id: status.id, text, bg, photo, ts: status.ts };
-    const results = await Promise.allSettled(to.map((u) => this.sendPayload(u, payload)));
+    // Everyone at once, each with a time limit: one person whose phone can't be reached (or an account that was
+    // removed) must not hold the status up for everyone else.
+    const results = await Promise.allSettled(to.map((u) => withTimeout(this.sendPayload(u, payload), 20_000)));
     const failed = to.filter((_, i) => results[i]!.status === 'rejected');
     status.audience = to.filter((u) => !failed.includes(u));
-    if (!status.audience.length) throw new Error('Could not send the status to anyone');
+    if (!status.audience.length) {
+      const why = results.find((r): r is PromiseRejectedResult => r.status === 'rejected')?.reason;
+      throw new Error(`Could not send the status to anyone${why instanceof Error ? `: ${why.message}` : ''}`);
+    }
     if ('photo' in s) this.statusPhotos.set(status.id, Promise.resolve(s.photo.data));
     this.statuses.push(status);
     await this.saveStatuses();
@@ -3192,6 +3214,39 @@ export class MessengerClient extends Emitter<Events> {
   hideLastSeen = false;
   /** My birth date "YYYY-MM-DD" ('' = not given). */
   birthday = '';
+  /** My company's name, logo and information sections (null until loaded). */
+  companyProfile: CompanyProfile | null = null;
+  /** The company logo as a data: URL ('' = none). */
+  companyLogo = '';
+
+  private async loadCompanyProfile(): Promise<void> {
+    const p = await this.http<CompanyProfile>('GET', '/v1/company').catch(() => null);
+    if (!p) return;
+    const logoChanged = p.logo !== this.companyProfile?.logo;
+    this.companyProfile = p;
+    if (logoChanged) {
+      const a = p.logo ? await this.http<AvatarResponse>('GET', '/v1/company/logo').catch(() => null) : null;
+      this.companyLogo = a && (AVATAR_MIMES as readonly string[]).includes(a.mime) ? `data:${a.mime};base64,${a.data}` : '';
+    }
+    this.emit('change');
+  }
+
+  /** Admin: the company name and information sections everyone sees. */
+  async setCompanyProfile(p: { name?: string; items?: CompanyItem[] }): Promise<void> {
+    this.companyProfile = await this.http<CompanyProfile>('PUT', '/v1/admin/company', p);
+    if (p.name && this.company) this.company = { ...this.company, name: p.name.trim() };
+    this.emit('change');
+  }
+
+  /** Admin: the company logo (JPEG / PNG / WebP up to 2 MB), or null to remove it. */
+  async setCompanyLogo(photo: { mime: string; data: Uint8Array } | null): Promise<void> {
+    if (photo && !(AVATAR_MIMES as readonly string[]).includes(photo.mime)) throw new Error('Logo must be JPEG, PNG or WebP');
+    if (photo && photo.data.length > MAX_AVATAR_BYTES) throw new Error('Logo too large (max 2 MB)');
+    if (photo) await this.http('PUT', '/v1/admin/company/logo', { mime: photo.mime, data: toBase64(photo.data) });
+    else await this.http('DELETE', '/v1/admin/company/logo');
+    this.companyProfile = null;
+    await this.loadCompanyProfile();
+  }
 
   private setChatPref(key: string, patch: Partial<ChatPrefs>) {
     const next: ChatPrefs = { ...this.chatPrefs[key], ...patch };
@@ -3203,6 +3258,20 @@ export class MessengerClient extends Emitter<Events> {
   }
 
   isPinned = (key: string) => !!this.chatPrefs[key]?.pinned;
+  isFavourite = (key: string) => !!this.chatPrefs[key]?.favourite;
+
+  /** Add a person, group or channel to my Favourites (or take it out). */
+  favouriteChat(key: string, on: boolean): void {
+    this.setChatPref(key, { favourite: on || undefined });
+  }
+
+  /** Departments I keep as their own filter in the chat list. */
+  favouriteDepartments: string[] = [];
+  async favouriteDepartment(name: string, on: boolean): Promise<void> {
+    this.favouriteDepartments = on ? [...new Set([...this.favouriteDepartments, name])].sort() : this.favouriteDepartments.filter((d) => d !== name);
+    await this.store.setSetting('favouriteDepartments', this.favouriteDepartments);
+    this.emit('change');
+  }
   isArchived = (key: string) => !!this.chatPrefs[key]?.archived;
   isMuted = (key: string) => (this.chatPrefs[key]?.muteUntil ?? 0) > Date.now();
 
@@ -3697,6 +3766,9 @@ export class MessengerClient extends Emitter<Events> {
     this.lastOpId = 0;
     this.opsSinceFull = 0;
     this.chatPrefs = {};
+    this.favouriteDepartments = [];
+    this.companyProfile = null;
+    this.companyLogo = '';
     this.privacy = { readReceipts: true };
     this.blocked = [];
     this.about = '';
@@ -3787,6 +3859,7 @@ export const AUDIT_LABELS: Record<string, string> = {
   'user.department': 'Changed departments',
   'user.contact': 'Changed mobile / email',
   'user.profile': 'Changed profile',
+  'company.profile': 'Changed the company profile',
   'user.invite': 'New QR invite',
   'user.join': 'Joined with QR invite',
   'user.share_on': 'Allowed saving & sharing files',

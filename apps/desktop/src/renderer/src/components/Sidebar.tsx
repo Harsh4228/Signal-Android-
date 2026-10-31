@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Archive, ArchiveRestore, BellOff, ChevronLeft, Phone, Pin, PinOff, Ban, Bell, CircleDashed, EllipsisVertical, LifeBuoy, Lock, Megaphone, MessageSquareText, ShoppingBag, Star, MessageSquarePlus, Search, Settings as SettingsIcon, ShieldCheck, type LucideIcon } from 'lucide-react';
+import { Archive, ArchiveRestore, BellOff, ChevronLeft, Phone, Pin, PinOff, Ban, Bell, CircleDashed, EllipsisVertical, LifeBuoy, Lock, Megaphone, MessageSquareText, ShoppingBag, Star, StarOff, Eraser, Trash2, UsersRound, X, MessageSquarePlus, Search, Settings as SettingsIcon, ShieldCheck, type LucideIcon } from 'lucide-react';
 import { MessengerClient, isGroupKey } from '@meetme/core';
 import { appLock, client, useClient, useLock } from '../messenger';
 import { Broadcast } from './Broadcast';
@@ -10,6 +10,8 @@ import { StarredPanel } from './ChatExtras';
 import { CatalogPanel } from './Catalog';
 import { Avatar, ChatAvatar, PasswordInput, errorText, shortTime, typingText } from './ui';
 import { AvatarTap } from './Profile';
+import { CompanyBadge } from './Company';
+import type { Tab as AdminTab } from './AdminPanel';
 import { Directory } from './Directory';
 import { HelpDeskModal } from './AdminRights';
 import { CallsPanel } from './CallsPanel';
@@ -27,6 +29,8 @@ export function Sidebar({ onSettings, onError }: { onSettings: () => void; onErr
   /** The page picked in the navigation (left rail, or the bottom bar on phones); null = the chat list. */
   const [panel, setPanel] = useState<Page | null>(null);
   const [archived, setArchived] = useState(false);
+  const [view, setView] = useState<string>('all');
+  const [adminStart, setAdminStart] = useState<{ tab?: AdminTab; newGroup?: boolean }>({});
   /** Right-click menu of a chat: pin, archive, mute. */
   const [chatMenu, setChatMenu] = useState<{ key: string; x: number; y: number } | null>(null);
   useEffect(() => {
@@ -72,8 +76,20 @@ export function Sidebar({ onSettings, onError }: { onSettings: () => void; onErr
   }
 
   const q = filter.trim().toLowerCase();
+  const deptsOf = (k: string) => (isGroupKey(k) ? [] : (c.profileOf(k)?.departments ?? []));
+  // The filter chips, like WhatsApp: All, Unread, Favourites, Groups, Channels, a department.
+  const show = (k: string) =>
+    view === 'all' ||
+    (view === 'unread' && c.getUnread(k) > 0) ||
+    (view === 'favourites' && c.isFavourite(k)) ||
+    (view === 'groups' && isGroupKey(k) && !c.isChannel(k)) ||
+    (view === 'channels' && c.isChannel(k)) ||
+    (view.startsWith('dept:') && deptsOf(k).includes(view.slice(5)));
   // Pinned first, then the newest; archived chats have their own list (like WhatsApp).
-  const sorted = c.orderedChats({ archived }).filter((k) => !q || c.chatTitle(k).toLowerCase().includes(q));
+  const sorted = c
+    .orderedChats({ archived })
+    .filter((k) => show(k) && (!q || c.chatTitle(k).toLowerCase().includes(q) || deptsOf(k).some((d) => d.toLowerCase().includes(q))));
+  const allDepartments = [...new Set(c.chatKeys().flatMap(deptsOf))].sort();
   const offline = c.status !== 'online';
 
   const unreadChats = c.chatKeys().filter((k) => c.getUnread(k) > 0 && !c.isArchived(k)).length;
@@ -137,7 +153,7 @@ export function Sidebar({ onSettings, onError }: { onSettings: () => void; onErr
     </nav>
     <aside className="sidebar">
       <header>
-        <div className="sidebar-title">{archived ? 'Archived' : 'Chats'}</div>
+        {archived ? <div className="sidebar-title">Archived</div> : <CompanyBadge onToast={onError} />}
         <div className="actions">
           <button className={`icon ${newChat ? 'active' : ''}`} title="New chat" onClick={() => setNewChat((v) => !v)}>
             <MessageSquarePlus size={20} />
@@ -192,7 +208,14 @@ export function Sidebar({ onSettings, onError }: { onSettings: () => void; onErr
       {broadcasting && <Broadcast onClose={() => setBroadcasting(false)} onDone={onError} />}
       {/* Pages from the navigation sit beside the rail (above the bottom bar on phones), so it stays usable. */}
       <div className="nav-pages">
-        {panel === 'admin' && <AdminPanel onClose={() => setPanel(null)} onToast={onError} />}
+        {panel === 'admin' && (
+          <AdminPanel
+            onClose={() => (setPanel(null), setAdminStart({}))}
+            onToast={onError}
+            initialTab={adminStart.tab}
+            newGroup={adminStart.newGroup}
+          />
+        )}
         {panel === 'notices' && <NoticesPanel onClose={() => setPanel(null)} onToast={onError} />}
         {panel === 'status' && <StatusPanel onClose={() => setPanel(null)} onToast={onError} />}
         {panel === 'starred' && <StarredPanel onClose={() => setPanel(null)} />}
@@ -217,11 +240,64 @@ export function Sidebar({ onSettings, onError }: { onSettings: () => void; onErr
         <Directory onOpen={(u) => void open(u)} onToast={onError} />
       ) : (
         <>
-      {c.chatKeys().length > 6 && (
-        <div className="add">
-          <Search size={16} className="add-icon" />
-          <input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Search chats" />
-        </div>
+      <div className="add">
+        <Search size={16} className="add-icon" />
+        <input
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+          onKeyDown={(e) => e.key === 'Escape' && filter && (e.preventDefault(), setFilter(''))}
+          placeholder="Search name or department"
+        />
+        {filter && (
+          <button className="icon add-clear" title="Clear search" onClick={() => setFilter('')}>
+            <X size={16} />
+          </button>
+        )}
+      </div>
+      <div className="chips chat-chips">
+        {(
+          [
+            ['all', 'All'],
+            ['unread', `Unread${unreadChats ? ` ${unreadChats}` : ''}`],
+            ['favourites', 'Favourites'],
+            ['groups', 'Groups'],
+            ['channels', 'Channels'],
+            ...c.favouriteDepartments.map((d) => [`dept:${d}`, d]),
+          ] as [string, string][]
+        ).map(([id, label]) => (
+          <button key={id} className={view === id ? 'active' : ''} onClick={() => setView(view === id && id !== 'all' ? 'all' : id)}>
+            {label}
+          </button>
+        ))}
+        {allDepartments.length > 0 && (
+          <select
+            className={`chip-select ${view.startsWith('dept:') && !c.favouriteDepartments.includes(view.slice(5)) ? 'active' : ''}`}
+            value={view.startsWith('dept:') ? view.slice(5) : ''}
+            onChange={(e) => setView(e.target.value ? `dept:${e.target.value}` : 'all')}
+            title="Chats with people of a department"
+          >
+            <option value="">Department</option>
+            {allDepartments.map((d) => (
+              <option key={d} value={d}>
+                {d}
+              </option>
+            ))}
+          </select>
+        )}
+        {view.startsWith('dept:') && (
+          <button
+            className="icon"
+            title={c.favouriteDepartments.includes(view.slice(5)) ? 'Remove this department from Favourites' : 'Keep this department as a filter'}
+            onClick={() => void client.favouriteDepartment(view.slice(5), !c.favouriteDepartments.includes(view.slice(5)))}
+          >
+            <Star size={15} fill={c.favouriteDepartments.includes(view.slice(5)) ? 'currentColor' : 'none'} />
+          </button>
+        )}
+      </div>
+      {view === 'groups' && c.isAdmin && (
+        <button className="archived-row" disabled={offline} onClick={() => (setAdminStart({ tab: 'groups', newGroup: true }), go('admin'))}>
+          <UsersRound size={17} /> <span className="grow">New group</span>
+        </button>
       )}
 
       {archived ? (
@@ -239,7 +315,17 @@ export function Sidebar({ onSettings, onError }: { onSettings: () => void; onErr
         {sorted.length === 0 && (
           <li className="none">
             <MessageSquarePlus size={28} color="var(--faint)" />
-            <div>{q ? 'No chats match' : archived ? 'No archived chats' : 'No conversations yet'}</div>
+            <div>
+              {q
+                ? 'No chats match'
+                : archived
+                  ? 'No archived chats'
+                  : view === 'favourites'
+                    ? 'No favourites yet: right-click a chat > Add to favourites'
+                    : view === 'all'
+                      ? 'No conversations yet'
+                      : 'No chats here'}
+            </div>
           </li>
         )}
         {sorted.map((key) => {
@@ -257,7 +343,7 @@ export function Sidebar({ onSettings, onError }: { onSettings: () => void; onErr
                 e.preventDefault();
                 setChatMenu({ key, x: e.clientX, y: e.clientY });
               }}
-              title="Right-click: pin, archive, mute"
+              title="Right-click: favourite, pin, archive, mute, clear"
             >
               {group ? <ChatAvatar chatKey={key} /> : <AvatarTap user={key} onToast={onError} />}
               <div className="grow">
@@ -293,6 +379,9 @@ export function Sidebar({ onSettings, onError }: { onSettings: () => void; onErr
             c.isPinned(chatMenu.key)
               ? { icon: PinOff, label: 'Unpin', go: () => client.pinChat(chatMenu.key, false) }
               : { icon: Pin, label: 'Pin to top', go: () => client.pinChat(chatMenu.key, true) },
+            c.isFavourite(chatMenu.key)
+              ? { icon: StarOff, label: 'Remove from favourites', go: () => client.favouriteChat(chatMenu.key, false) }
+              : { icon: Star, label: 'Add to favourites', go: () => client.favouriteChat(chatMenu.key, true) },
             c.isArchived(chatMenu.key)
               ? { icon: ArchiveRestore, label: 'Unarchive', go: () => client.archiveChat(chatMenu.key, false) }
               : { icon: Archive, label: 'Archive', go: () => client.archiveChat(chatMenu.key, true) },
@@ -302,6 +391,29 @@ export function Sidebar({ onSettings, onError }: { onSettings: () => void; onErr
                   { icon: BellOff, label: 'Mute for 8 hours', go: () => client.muteChat(chatMenu.key, 8 * 3600_000) },
                   { icon: BellOff, label: 'Mute for 1 week', go: () => client.muteChat(chatMenu.key, 7 * 86400_000) },
                   { icon: BellOff, label: 'Mute always', go: () => client.muteChat(chatMenu.key, Infinity) },
+                ]),
+            ...(c.canClearHistory
+              ? [
+                  {
+                    icon: Eraser,
+                    label: 'Clear chat',
+                    go: () => confirm(`Clear all messages in ${c.chatTitle(chatMenu.key)}? The chat stays in your list.`) && void client.clearChat(chatMenu.key),
+                  },
+                ]
+              : []),
+            ...(isGroupKey(chatMenu.key)
+              ? []
+              : [
+                  {
+                    icon: Trash2,
+                    label: 'Delete chat',
+                    go: () => {
+                      const name = c.chatTitle(chatMenu.key);
+                      if (!confirm(c.canClearHistory ? `Delete the chat with ${name}? Its messages are removed from this device.` : `Remove ${name} from your chat list? The messages are kept.`)) return;
+                      if (c.activeChat === chatMenu.key) client.setActiveChat(null);
+                      void client.removeContact(chatMenu.key);
+                    },
+                  },
                 ]),
           ].map(({ icon: Icon, label, go }) => (
             <button key={label} role="menuitem" onClick={() => (setChatMenu(null), run(go))}>

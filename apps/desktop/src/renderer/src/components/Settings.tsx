@@ -6,6 +6,7 @@ import { AppLockSettings } from './AppLockSettings';
 import { getTheme, setTheme, type ThemeChoice } from '../theme';
 import { enableWebPush, needsHomeScreen, webPushState, webPushSupported } from '../webPush';
 import { Avatar, PasswordInput, errorText } from './ui';
+import { ProfileHero } from './Profile';
 import { requestDeletion, toggleBlock } from './Safety';
 
 const SECURITY = [
@@ -194,6 +195,7 @@ export function Settings({ onClose, onToast }: { onClose: () => void; onToast: (
           </button>
         </header>
 
+        {c.account && c.avatarOf(c.account.username) && <ProfileHero user={c.account.username} />}
         <div className="account-card">
           {canEditPhoto ? (
             <button

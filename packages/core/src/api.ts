@@ -389,6 +389,26 @@ export interface MeResponse {
   birthday?: string;
 }
 
+/**
+ * GET /v1/company - what everyone in the company sees at the top of the app: the name, the logo and the
+ * sections the admins wrote (address, office hours, rules, links...). Admins change it with PUT /v1/admin/company.
+ */
+export interface CompanyProfile {
+  code: string;
+  name: string;
+  /** Logo version (GET /v1/company/logo); null = none (the CellMate shield is shown). */
+  logo: number | null;
+  items: CompanyItem[];
+}
+export interface CompanyItem {
+  id: string;
+  title: string;
+  text: string;
+}
+export const MAX_COMPANY_ITEMS = 30;
+export const MAX_COMPANY_ITEM_TITLE = 80;
+export const MAX_COMPANY_ITEM_TEXT = 2000;
+
 export const MAX_ABOUT = 140;
 /** PUT /v1/me/privacy: fields left out stay. */
 export interface PrivacyRequest {

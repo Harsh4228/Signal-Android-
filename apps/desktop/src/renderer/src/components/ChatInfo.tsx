@@ -210,6 +210,7 @@ function PersonInfo({ peer, onClose, onError }: { peer: string; onClose: () => v
   const [showCatalog, setShowCatalog] = useState(false);
   const [reporting, setReporting] = useState(false);
   const [status, setStatus] = useState(false);
+  const [showSafety, setShowSafety] = useState(false);
   useEffect(() => {
     client
       .listProducts(peer)
@@ -308,25 +309,6 @@ function PersonInfo({ peer, onClose, onError }: { peer: string; onClose: () => v
       )}
       {showCatalog && <CatalogPanel owner={peer} onClose={() => setShowCatalog(false)} onToast={onError} />}
 
-      <div className="section-title">Safety number</div>
-      {safety ? (
-        <>
-          <pre className="safety">{safety.number}</pre>
-          <p className="muted small" style={{ margin: '0 0 4px' }}>
-            Compare these numbers with {client.displayName(peer)} in person or on a call. If they match, nobody can be listening in.
-          </p>
-          <button
-            className={safety.verified ? '' : 'primary'}
-            onClick={run(() => client.setVerified(peer, !safety.verified))}
-          >
-            {safety.verified ? <ShieldX size={16} /> : <BadgeCheck size={16} />}
-            {safety.verified ? 'Clear verification' : 'Mark as verified'}
-          </button>
-        </>
-      ) : (
-        <p className="muted small">Send or receive a message first to set up the secure session.</p>
-      )}
-
       <div className="section-title">Disappearing messages</div>
       {c.canClearHistory ? (
         <select
@@ -375,6 +357,27 @@ function PersonInfo({ peer, onClose, onError }: { peer: string; onClose: () => v
           <UserMinus size={16} /> Remove contact
         </button>
       </div>
+      {/* Encryption check: folded away (most people never need it); open it to compare the numbers. */}
+      <button className="media-head safety-head" onClick={() => setShowSafety(!showSafety)}>
+        <KeyRound size={16} />
+        <span className="grow">Safety number{safety?.verified ? ' · verified' : ''}</span>
+        <ChevronRight size={16} className={showSafety ? 'turned' : ''} />
+      </button>
+      {showSafety &&
+        (safety ? (
+          <>
+            <pre className="safety">{safety.number}</pre>
+            <p className="muted small" style={{ margin: '0 0 4px' }}>
+              Compare these numbers with {client.displayName(peer)} in person or on a call. If they match, nobody can be listening in.
+            </p>
+            <button className={safety.verified ? '' : 'primary'} onClick={run(() => client.setVerified(peer, !safety.verified))}>
+              {safety.verified ? <ShieldX size={16} /> : <BadgeCheck size={16} />}
+              {safety.verified ? 'Clear verification' : 'Mark as verified'}
+            </button>
+          </>
+        ) : (
+          <p className="muted small">Send or receive a message first to set up the secure session.</p>
+        ))}
       {reporting && <ReportDialog user={peer} onClose={() => setReporting(false)} onToast={onError} />}
     </aside>
   );

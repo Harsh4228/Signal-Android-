@@ -172,3 +172,30 @@ test('IDs may have capitals, spaces and symbols; birth dates', async () => {
     await s2.close();
   }
 });
+
+test('company profile: admins write information sections and a logo; everyone reads them', async () => {
+  const s3 = await startTestServer({ stunUrls: [], turnUrls: [], trustProxy: false, adminUsers: ['chief'], openRegistration: true });
+  const mine: MessengerClient[] = [];
+  try {
+    const chief = await fresh();
+    mine.push(chief);
+    await chief.register(s3.url, 'chief');
+    await online(chief);
+    await waitFor(() => chief.isAdmin, 'admin flag');
+    await chief.setCompanyProfile({ items: [{ id: '', title: 'Office address', text: 'MG Road, Pune' }] });
+    await assert.rejects(chief.setCompanyProfile({ items: [{ id: '', title: '', text: 'x' }] }), /needs a title/);
+    const png = Uint8Array.from(Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64'));
+    await chief.setCompanyLogo({ mime: 'image/png', data: png });
+    assert.ok(chief.companyLogo.startsWith('data:image/png;base64,'));
+
+    const worker = await fresh();
+    mine.push(worker);
+    await worker.register(s3.url, 'worker');
+    await online(worker);
+    await waitFor(() => worker.companyProfile?.items[0]?.title === 'Office address' && !!worker.companyLogo, 'company profile on the worker');
+    await assert.rejects(worker.setCompanyProfile({ items: [] }), /admin only/);
+  } finally {
+    mine.forEach((c) => c.dispose());
+    await s3.close();
+  }
+});

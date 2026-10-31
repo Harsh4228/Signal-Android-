@@ -672,6 +672,7 @@ img.avatar.photo {
   flex: 1;
   display: flex;
   min-height: 0;
+  position: relative;
 }
 .messages {
   flex: 1;
@@ -3291,11 +3292,12 @@ button.link { border: 0; background: none; padding: 0; color: var(--accent); box
   color: var(--accent);
 }
 .profile-hero {
-  width: calc(100% + 40px);
-  margin: 0 -20px 4px;
+  width: 100%;
+  margin: 0 0 12px;
+  border-radius: 12px;
+  overflow: hidden;
   padding: 0;
   border: none;
-  border-radius: 0;
   box-shadow: none;
   background: #000;
   display: flex;
@@ -3483,4 +3485,295 @@ a.detail-row > div > div:first-child {
 }
 .info .media-head > .grow {
   text-align: left;
+}
+
+/* In the details panel the photo runs edge to edge, like WhatsApp. */
+.info .profile-hero {
+  width: calc(100% + 40px);
+  margin: 0 -20px 4px;
+  border-radius: 0;
+}
+
+/* ---------- company: logo and name at the top of the chat list ---------- */
+.company-badge {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 4px 8px 4px 4px;
+  margin-left: -4px;
+  border: none;
+  background: none;
+  box-shadow: none;
+  border-radius: 10px;
+  cursor: pointer;
+}
+.company-badge:hover {
+  background: var(--hover);
+}
+.company-badge .name {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text);
+}
+.company-logo {
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  object-fit: cover;
+  flex-shrink: 0;
+  background: var(--surface-2);
+}
+.company-logo.lg {
+  width: 64px;
+  height: 64px;
+  border-radius: 16px;
+}
+.company-info {
+  width: 520px;
+}
+.company-hero {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 8px;
+}
+.name.big {
+  font-size: 19px;
+}
+.company-item .company-text {
+  user-select: text;
+  color: var(--text-2);
+}
+.company-item .company-text .text {
+  white-space: pre-wrap;
+}
+.company-info > button.block {
+  margin-top: 16px;
+}
+.logo-pick {
+  width: 84px;
+  height: 84px;
+  border-radius: 18px;
+  border: 1px dashed var(--line-strong);
+  background: var(--surface-2);
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.logo-pick img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.company-edit {
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.section-head .section-title {
+  margin-bottom: 8px;
+}
+.section-head > button {
+  font-size: 13px;
+  padding: 5px 10px;
+}
+
+/* ---------- chat list: search that stays, filter chips ---------- */
+.add-clear {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  padding: 5px;
+}
+.chat-chips {
+  margin: 0 12px 6px;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: none;
+  align-items: center;
+}
+.chat-chips::-webkit-scrollbar {
+  display: none;
+}
+.chat-chips button {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.chip-select {
+  width: auto;
+  flex-shrink: 0;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12.5px;
+  box-shadow: none;
+  background: var(--surface);
+}
+.chip-select.active {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
+/* ---------- admin: one user's page ---------- */
+.emp-list li.clickable {
+  cursor: pointer;
+}
+.emp-list li.clickable:hover {
+  background: var(--hover);
+}
+.user-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.back-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-start;
+}
+.user-head {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 8px 0 12px;
+  border-bottom: 1px solid var(--line);
+}
+.user-head .avatar.xl {
+  width: 84px;
+  height: 84px;
+  font-size: 32px;
+}
+.action-list {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  overflow: hidden;
+}
+.action-list > button {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 14px;
+  border: none;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  box-shadow: none;
+  background: var(--surface);
+  text-align: left;
+  justify-content: flex-start;
+}
+.action-list > button:last-child {
+  border-bottom: none;
+}
+.action-list > button:hover {
+  background: var(--hover);
+}
+.action-list .grow {
+  display: flex;
+  flex-direction: column;
+}
+.action-label {
+  font-weight: 600;
+  color: var(--text);
+}
+.action-list .danger-text .action-label,
+.action-list .danger-text > svg:first-child {
+  color: var(--danger);
+}
+.action-list .warn-text .action-label,
+.action-list .warn-text > svg:first-child {
+  color: var(--warn);
+}
+.profile-form {
+  display: flex;
+  gap: 18px;
+  align-items: flex-start;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface-2);
+}
+.profile-form-photo {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+.form-grid {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.form-grid .span-2 {
+  grid-column: span 2;
+}
+.form-grid .field-label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.form-grid input {
+  width: 100%;
+}
+.safety-head .turned {
+  transform: rotate(90deg);
+}
+
+/* ---------- panels opening and closing: nothing gets squeezed ---------- */
+.chat {
+  position: relative;
+}
+@media (max-width: 1180px) {
+  /* Not enough room for chat + details side by side: the details slide over the chat. */
+  .chat .body > .info {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 12;
+    max-width: 100%;
+    box-shadow: var(--shadow-lg);
+  }
+}
+@media (max-width: 960px) {
+  .sidebar {
+    width: 280px;
+  }
+}
+@media (max-width: 760px) {
+  .sidebar {
+    width: 100%;
+  }
+  .profile-form {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .form-grid {
+    grid-template-columns: 1fr;
+  }
+  .form-grid .span-2 {
+    grid-column: auto;
+  }
+  .company-info {
+    width: 100%;
+  }
 }

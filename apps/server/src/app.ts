@@ -30,6 +30,11 @@ import {
   ID_RE,
   ID_RULES,
   normalizeId,
+  MAX_COMPANY_ITEMS,
+  MAX_COMPANY_ITEM_TEXT,
+  MAX_COMPANY_ITEM_TITLE,
+  type CompanyItem,
+  type CompanyProfile,
   BIRTHDAY_RE,
   COMPANY_CODE_RE,
   MAX_COMPANY_NAME,
@@ -804,6 +809,39 @@ export function createMeetMeServer(
     return infoOf((await db.getGroup(group.id))!);
   }
 
+  // ---- company profile: logo and the sections admins write, shown to everyone (JSON in meta, per company) ----
+  async function companyProfile(company: string): Promise<CompanyProfile> {
+    let stored: { logo?: number | null; items?: CompanyItem[] } = {};
+    try {
+      stored = JSON.parse((await db.getMeta(metaKey('company_profile', company))) ?? '{}') as typeof stored;
+    } catch {
+      /* a broken entry shows as empty */
+    }
+    const info = await companyInfo(company);
+    return {
+      code: company,
+      name: info?.name ?? 'CellMate',
+      logo: typeof stored.logo === 'number' ? stored.logo : null,
+      items: Array.isArray(stored.items) ? stored.items : [],
+    };
+  }
+  const saveCompanyProfile = (company: string, p: CompanyProfile) =>
+    db.setMeta(metaKey('company_profile', company), JSON.stringify({ logo: p.logo, items: p.items }));
+  function checkCompanyItems(v: unknown): CompanyItem[] {
+    if (!Array.isArray(v) || v.length > MAX_COMPANY_ITEMS) throw new HttpError(400, `Up to ${MAX_COMPANY_ITEMS} sections`);
+    return v.map((raw) => {
+      const c = (raw ?? {}) as Record<string, unknown>;
+      const title = typeof c.title === 'string' ? c.title.trim().replace(/\s+/g, ' ') : '';
+      const text = typeof c.text === 'string' ? c.text.trim() : '';
+      if (!title) throw new HttpError(400, 'Every section needs a title, e.g. "Office address"');
+      if (title.length > MAX_COMPANY_ITEM_TITLE) throw new HttpError(400, `Title: at most ${MAX_COMPANY_ITEM_TITLE} characters`);
+      if (text.length > MAX_COMPANY_ITEM_TEXT) throw new HttpError(400, `Text: at most ${MAX_COMPANY_ITEM_TEXT} characters`);
+      if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(title + text)) throw new HttpError(400, 'invalid characters');
+      const id = typeof c.id === 'string' && /^[0-9a-f]{16}$/.test(c.id) ? c.id : randomBytes(8).toString('hex');
+      return { id, title, text };
+    });
+  }
+
   // ---- help desk contacts (JSON in meta, per company) ----
   async function getHelpDesk(company: string): Promise<HelpContact[]> {
     try {
@@ -1526,6 +1564,16 @@ export function createMeetMeServer(
       return send(201, { id: report.id });
     }
 
+    // ---- company profile: everyone in the company may read it ----
+    if (method === 'GET' && path === '/v1/company') {
+      return send(200, await companyProfile(companyOf(me)));
+    }
+    if (method === 'GET' && path === '/v1/company/logo') {
+      const raw = await db.getMeta(metaKey('company_logo', companyOf(me)));
+      if (!raw) throw new HttpError(404, 'no logo');
+      return send(200, JSON.parse(raw) as AvatarResponse);
+    }
+
     // ---- help desk: whom to call for what; everyone may read it, company admins edit it ----
     if (method === 'GET' && path === '/v1/helpdesk') {
       return send(200, { contacts: await getHelpDesk(companyOf(me)) });
@@ -1776,6 +1824,46 @@ export function createMeetMeServer(
     if (path.startsWith('/v1/admin/')) {
       if (!(await isAdminUser(me))) throw new HttpError(403, 'admin only');
       const co = companyOf(me);
+
+      // The company's name, logo and information sections, shown to everyone at the top of the app.
+      if (method === 'PUT' && path === '/v1/admin/company') {
+        const body = (await readJson(req, 128 * 1024)) as { name?: unknown; items?: unknown };
+        const profile = await companyProfile(co);
+        if (body.name !== undefined) {
+          if (!co) throw new HttpError(400, 'This server has no company to rename');
+          const name = checkCompanyName(body.name);
+          const list = await listCompanies();
+          const c = list.find((x) => x.code === co);
+          if (c && c.name !== name) {
+            c.name = name;
+            await saveCompanies(list);
+            await audit(me, 'company.profile', co, `name: ${name}`);
+          }
+        }
+        if (body.items !== undefined) {
+          profile.items = checkCompanyItems(body.items);
+          await saveCompanyProfile(co, profile);
+          await audit(me, 'company.profile', co, `${profile.items.length} information section(s)`);
+        }
+        await notify((await companyUsers(co)).map((u) => u.username), 'policy');
+        return send(200, await companyProfile(co));
+      }
+      if (path === '/v1/admin/company/logo' && (method === 'PUT' || method === 'DELETE')) {
+        const profile = await companyProfile(co);
+        if (method === 'DELETE') {
+          await db.setMeta(metaKey('company_logo', co), '');
+          profile.logo = null;
+        } else {
+          if (!uploadLimit.allow(me)) throw new HttpError(429, 'too many uploads');
+          const photo = checkPhoto(await readJson(req, Math.ceil((MAX_AVATAR_BYTES * 4) / 3) + 1024));
+          await db.setMeta(metaKey('company_logo', co), JSON.stringify({ ...photo, ver: Date.now() }));
+          profile.logo = Date.now();
+        }
+        await saveCompanyProfile(co, profile);
+        await audit(me, 'company.profile', co, method === 'DELETE' ? 'removed the logo' : 'new logo');
+        await notify((await companyUsers(co)).map((u) => u.username), 'policy');
+        return send(200, { logo: profile.logo });
+      }
 
       if (method === 'GET' && path === '/v1/admin/users') {
         const admins = await adminsOf(co);
