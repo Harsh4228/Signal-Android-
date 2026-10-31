@@ -28,7 +28,7 @@ export function Avatar({ name, size }: { name: string; size?: 'sm' | 'xl' }) {
   if (photo) return <img className={`avatar photo ${size ?? ''}`} src={photo} alt="" draggable={false} />;
   return (
     <div className={`avatar ${size ?? ''}`} style={{ background: bg, color: fg }}>
-      {name.slice(0, 1).toUpperCase()}
+      {client.displayName(name).slice(0, 1).toUpperCase()}
     </div>
   );
 }
@@ -42,8 +42,10 @@ export function ChatAvatar({ chatKey, size }: { chatKey: string; size?: 'sm' | '
       </div>
     );
   }
+  // A green ring while they have a status I haven't viewed (grey once viewed), like WhatsApp.
+  const ring = client.statusRingOf(chatKey);
   return (
-    <div className="avatar-wrap">
+    <div className={`avatar-wrap${ring ? ` ring ${ring}` : ''}`}>
       <Avatar name={chatKey} size={size} />
       {client.getPresence(chatKey)?.online && <span className="presence-dot" />}
     </div>

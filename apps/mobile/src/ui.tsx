@@ -60,7 +60,7 @@ export function Avatar({ name, size = 44 }: { name: string; size?: number }) {
         justifyContent: 'center',
       }}
     >
-      <Text style={{ color: fg, fontWeight: '600', fontSize: size * 0.4 }}>{name.slice(0, 1).toUpperCase()}</Text>
+      <Text style={{ color: fg, fontWeight: '600', fontSize: size * 0.4 }}>{client.displayName(name).slice(0, 1).toUpperCase()}</Text>
     </View>
   );
 }
@@ -84,8 +84,20 @@ export function ChatAvatar({ chatKey, size = 44 }: { chatKey: string; size?: num
     );
   }
   const dot = Math.max(10, Math.round(size * 0.26));
+  // A green ring while they have a status I haven't viewed (grey once viewed), like WhatsApp.
+  const ring = client.statusRingOf(chatKey);
   return (
-    <View>
+    <View
+      style={
+        ring && {
+          padding: 2,
+          borderRadius: size,
+          borderWidth: 2.5,
+          borderColor: ring === 'new' ? colors.ok : colors.lineStrong,
+          margin: -4.5,
+        }
+      }
+    >
       <Avatar name={chatKey} size={size} />
       {client.getPresence(chatKey)?.online && (
         <View

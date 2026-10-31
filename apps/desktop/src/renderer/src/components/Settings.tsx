@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Camera, CircleCheck, CloudUpload, LogOut, Settings as SettingsIcon, Trash2, X } from 'lucide-react';
-import { MAX_ABOUT, MAX_EMAIL, MAX_PHONE, MIN_PASSWORD_LENGTH, shortId } from '@meetme/core';
+import { birthdayText, MAX_ABOUT, MAX_EMAIL, MAX_PHONE, MIN_PASSWORD_LENGTH, shortId } from '@meetme/core';
 import { appLock, client, useClient } from '../messenger';
 import { AppLockSettings } from './AppLockSettings';
 import { getTheme, setTheme, type ThemeChoice } from '../theme';
@@ -245,6 +245,7 @@ export function Settings({ onClose, onToast }: { onClose: () => void; onToast: (
 
         <div className="section-title">{canEditProfile ? 'Mobile number & email' : 'My profile'}</div>
         <ContactSettings onToast={onToast} editable={canEditProfile} />
+        <BirthdaySetting onToast={onToast} />
 
         {(webPushSupported() || needsHomeScreen()) && (
           <>
@@ -392,6 +393,34 @@ function BackupSettings() {
     </div>
   );
 }
+/** My birth date: colleagues see it on my profile. */
+function BirthdaySetting({ onToast }: { onToast: (m: string) => void }) {
+  const c = useClient();
+  const [value, setValue] = useState(c.birthday);
+  useEffect(() => setValue(c.birthday), [c.birthday]);
+  return (
+    <label className="field-label" style={{ marginTop: 10 }}>
+      Birth date
+      <span className="row" style={{ gap: 6 }}>
+        <input
+          className="grow"
+          type="date"
+          value={value}
+          min="1900-01-01"
+          max={new Date().toISOString().slice(0, 10)}
+          onChange={(e) => setValue(e.target.value)}
+        />
+        {value !== c.birthday && (
+          <button onClick={() => void client.setPrivacy({ birthday: value }).then(() => onToast(value ? 'Birth date saved' : 'Birth date removed'), (e) => onToast(errorText(e)))}>
+            Save
+          </button>
+        )}
+      </span>
+      {c.birthday && <span className="muted small">{birthdayText(c.birthday)} · colleagues see it on your profile</span>}
+    </label>
+  );
+}
+
 /** Like WhatsApp: my About line, read receipts and last seen. */
 function PrivacySettings() {
   const c = useClient();

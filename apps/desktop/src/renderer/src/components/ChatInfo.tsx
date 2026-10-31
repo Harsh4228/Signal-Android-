@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
-import { Ban, BadgeCheck, Check, Flag, ChevronRight, Eraser, KeyRound, Mail, Phone, RotateCcw, Search, ShieldPlus, ShieldX, UserMinus, UserPlus, X } from 'lucide-react';
+import { Ban, BadgeCheck, Building2, Cake, Check, Flag, ChevronRight, Eraser, KeyRound, Mail, Phone, RotateCcw, Search, ShieldPlus, ShieldX, UserMinus, UserPlus, Video, X } from 'lucide-react';
 import { CatalogPanel } from './Catalog';
-import { formatLastSeen, groupIdOf, isGroupKey, type UserProfile } from '@meetme/core';
-import { client, useClient } from '../messenger';
+import { birthdayText, formatLastSeen, groupIdOf, isGroupKey, type UserProfile } from '@meetme/core';
+import { calls, client, useClient } from '../messenger';
+import { AvatarTap, ProfileHero, StatusOf, idLine, telLink } from './Profile';
 import { Avatar, ChatAvatar, errorText } from './ui';
 import { MediaSection } from './MediaGallery';
 import { GroupRightsModal } from './AdminRights';
@@ -87,7 +88,7 @@ function GroupDetails({ chatKey, onClose, onError }: { chatKey: string; onClose:
             onClick={() => u !== me && void client.addContact(u).then(() => client.setActiveChat(u))}
             title={u === me ? undefined : `Message ${client.displayName(u)}`}
           >
-            <ChatAvatar chatKey={u} size="sm" />
+            {u === me ? <ChatAvatar chatKey={u} size="sm" /> : <AvatarTap user={u} size="sm" onToast={onError} />}
             <div className="grow">
               <div className="name">
                 {u === me ? 'You' : client.displayName(u)} {c.admins.includes(u) && <span className="tag admin">Admin</span>}{' '}
@@ -208,6 +209,7 @@ function PersonInfo({ peer, onClose, onError }: { peer: string; onClose: () => v
   const [catalogCount, setCatalogCount] = useState<number | null>(null);
   const [showCatalog, setShowCatalog] = useState(false);
   const [reporting, setReporting] = useState(false);
+  const [status, setStatus] = useState(false);
   useEffect(() => {
     client
       .listProducts(peer)
@@ -230,31 +232,68 @@ function PersonInfo({ peer, onClose, onError }: { peer: string; onClose: () => v
       </header>
 
       <div className="profile">
-        <Avatar name={peer} />
+        <ProfileHero user={peer} />
         <div className="name">{client.displayName(peer)}</div>
+        <div className="muted small">{idLine(peer)}</div>
         <div className="muted small">{formatLastSeen(c.getPresence(peer))}</div>
-        {c.profileOf(peer)?.about && <div className="about-line">{c.profileOf(peer)!.about}</div>}
+        {profile?.about && <div className="about-line">{profile.about}</div>}
+        <div className="profile-actions">
+          <button onClick={() => void calls.startCall(peer, false).catch((e) => onError(errorText(e)))}>
+            <Phone size={18} /> Voice
+          </button>
+          <button onClick={() => void calls.startCall(peer, true).catch((e) => onError(errorText(e)))}>
+            <Video size={18} /> Video
+          </button>
+        </div>
+      </div>
+
+      {c.statusRingOf(peer) && (
+        <button className="media-head" onClick={() => setStatus(true)}>
+          <span className={`avatar-wrap ring ${c.statusRingOf(peer)}`}>
+            <Avatar name={peer} size="sm" />
+          </span>
+          <span className="grow">Status</span>
+          <span className="muted small">{c.statusRingOf(peer) === 'new' ? 'New update' : 'Viewed'}</span>
+          <ChevronRight size={16} />
+        </button>
+      )}
+      {status && <StatusOf user={peer} onClose={() => setStatus(false)} onToast={onError} />}
+
+      <div className="detail-list">
         {profile && profile.departments.length > 0 && (
-          <div className="row" style={{ gap: 4, flexWrap: 'wrap', justifyContent: 'center' }}>
-            {profile.departments.map((d) => (
-              <span key={d} className="tag dept">
-                {d}
-              </span>
-            ))}
+          <div className="detail-row">
+            <Building2 size={17} />
+            <div className="grow">
+              <div>{profile.departments.join(', ')}</div>
+              <div className="muted small">Department</div>
+            </div>
           </div>
         )}
         {profile?.phone && (
-          <div className="contact-line">
-            <span>
-              <Phone size={12} /> {profile.phone}
-            </span>
-          </div>
+          <a className="detail-row" href={telLink(profile.phone)} title="Call with your phone app">
+            <Phone size={17} />
+            <div className="grow">
+              <div>{profile.phone}</div>
+              <div className="muted small">Mobile</div>
+            </div>
+          </a>
         )}
         {profile?.email && (
-          <div className="contact-line">
-            <span>
-              <Mail size={12} /> {profile.email}
-            </span>
+          <a className="detail-row" href={`mailto:${profile.email}`} title="Write an email">
+            <Mail size={17} />
+            <div className="grow">
+              <div>{profile.email}</div>
+              <div className="muted small">Email</div>
+            </div>
+          </a>
+        )}
+        {birthdayText(profile?.birthday) && (
+          <div className="detail-row">
+            <Cake size={17} />
+            <div className="grow">
+              <div>{birthdayText(profile?.birthday)}</div>
+              <div className="muted small">Birth date</div>
+            </div>
           </div>
         )}
       </div>

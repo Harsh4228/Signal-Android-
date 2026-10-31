@@ -4,6 +4,7 @@ import {
   Ban,
   Flag,
   Building2,
+  Cake,
   Camera,
   Check,
   CircleCheck,
@@ -11,6 +12,7 @@ import {
   KeyRound,
   LayoutDashboard,
   LifeBuoy,
+  ImagePlus,
   Loader2,
   Mail,
   MessageSquare,
@@ -38,6 +40,8 @@ import {
   MAX_NAME,
   MAX_PHONE,
   ID_RE,
+  ID_RULES,
+  normalizeId,
   shortId,
   formatLastSeen,
   fromBase64,
@@ -57,6 +61,7 @@ import {
 import { client, useClient } from '../messenger';
 import { Avatar, errorText, shortTime } from './ui';
 import { HelpDeskTab, RightsTab } from './AdminRights';
+import { CameraCapture } from './Profile';
 import { CommunitiesTab } from './Channels';
 
 type Tab = 'overview' | 'users' | 'departments' | 'groups' | 'communities' | 'rights' | 'helpdesk' | 'reports' | 'activity' | 'settings';
@@ -559,6 +564,7 @@ function CreateUser({
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
+  const [birthday, setBirthday] = useState('');
   const [photo, setPhoto] = useState<{ mime: string; data: string } | null>(null);
   const [picked, setPicked] = useState<string[]>(initialDepartment ? [initialDepartment] : []);
   const [busy, setBusy] = useState(false);
@@ -567,8 +573,8 @@ function CreateUser({
   async function create(e: FormEvent) {
     e.preventDefault();
     setError(null);
-    const username = id.trim().toLowerCase();
-    if (!ID_RE.test(username)) return setError('ID: 3-32 characters, a-z 0-9 _ .');
+    const username = normalizeId(id);
+    if (!ID_RE.test(username)) return setError(ID_RULES);
     if (!name.trim()) return setError('Enter their full name');
     setBusy(true);
     try {
@@ -579,6 +585,7 @@ function CreateUser({
         email,
         departments: picked,
         photo: photo ?? undefined,
+        birthday: birthday || undefined,
       });
       onCreated({ invite, name: name.trim(), email: email.trim() || undefined, renewed: false });
     } catch (err) {
@@ -602,12 +609,13 @@ function CreateUser({
         <div className="grow stack" style={{ gap: 8 }}>
           <div className="row">
             <input value={name} maxLength={MAX_NAME} onChange={(e) => setName(e.target.value)} placeholder="Full name, e.g. Ravi Kumar" autoFocus />
-            <input value={id} onChange={(e) => setId(e.target.value.toLowerCase())} placeholder="User ID, e.g. ravi.k" />
+            <input value={id} onChange={(e) => setId(e.target.value)} placeholder="User ID, e.g. Ravi Kumar" title="Used to sign in. Spaces and capitals are fine; it is not case-sensitive." />
           </div>
           <div className="row">
             <input value={phone} maxLength={MAX_PHONE} onChange={(e) => setPhone(e.target.value)} placeholder="Mobile, e.g. +91 98765 43210" type="tel" />
             <input value={email} maxLength={MAX_EMAIL} onChange={(e) => setEmail(e.target.value)} placeholder="Email" type="email" />
           </div>
+          <BirthdayInput value={birthday} onChange={setBirthday} />
         </div>
       </div>
       <div className="row" style={{ marginTop: 10, alignItems: 'flex-start' }}>
@@ -626,7 +634,7 @@ function CreateUser({
         <button type="button" onClick={onCancel}>
           Cancel
         </button>
-        <button className="primary" disabled={busy || id.length < 3 || !name.trim()}>
+        <button className="primary" disabled={busy || normalizeId(id).length < 3 || !name.trim()}>
           <UserPlus size={16} /> Create & show QR
         </button>
       </div>
@@ -647,7 +655,8 @@ function PhotoPicker({
   onChange: (p: { mime: string; data: string } | null) => void;
   onError: (m: string) => void;
 }) {
-  async function pick(f: File | undefined) {
+  const [camera, setCamera] = useState(false);
+  async function pick(f: Blob | undefined) {
     if (!f) return;
     try {
       onChange({ mime: 'image/jpeg', data: toBase64(await shrinkPhoto(f)) });
@@ -657,16 +666,33 @@ function PhotoPicker({
   }
   const src = value ? `data:${value.mime};base64,${value.data}` : current;
   return (
-    <label className="photo-pick" title="Profile photo">
-      {src ? <img src={src} alt="" draggable={false} /> : <Camera size={22} />}
-      <span>{src ? 'Change' : 'Photo'}</span>
-      <input type="file" accept="image/*" hidden onChange={(e) => void pick(e.target.files?.[0])} />
+    <div className="photo-pick-wrap">
+      <label className="photo-pick" title="Choose a picture">
+        {src ? <img src={src} alt="" draggable={false} /> : <ImagePlus size={22} />}
+        <span>{src ? 'Change' : 'Photo'}</span>
+        <input type="file" accept="image/*" hidden onChange={(e) => void pick(e.target.files?.[0])} />
+      </label>
+      <button type="button" className="link-btn" onClick={() => setCamera(true)} title="Take a photo with the camera">
+        <Camera size={14} /> Camera
+      </button>
+      {camera && <CameraCapture onPhoto={(b) => void pick(b)} onClose={() => setCamera(false)} onError={onError} />}
+    </div>
+  );
+}
+
+/** Birth date ("YYYY-MM-DD", '' = none), with the calendar picker. */
+function BirthdayInput({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  return (
+    <label className="row birthday-input" title="Birth date">
+      <Cake size={17} color="var(--faint)" />
+      <span className="muted small">Birth date</span>
+      <input type="date" value={value} max={new Date().toISOString().slice(0, 10)} min="1900-01-01" onChange={(e) => onChange(e.target.value)} />
     </label>
   );
 }
 
 /** Shrink a picked photo to a JPEG of at most 400 px. */
-async function shrinkPhoto(file: File): Promise<Uint8Array> {
+async function shrinkPhoto(file: Blob): Promise<Uint8Array> {
   const bitmap = await createImageBitmap(file);
   const scale = Math.min(1, 400 / Math.max(bitmap.width, bitmap.height));
   const canvas = document.createElement('canvas');
@@ -806,6 +832,7 @@ function ProfileEditor({ user, onDone, onToast }: { user: AdminUser; onDone: (ch
   const [name, setName] = useState(user.name);
   const [phone, setPhone] = useState(user.phone);
   const [email, setEmail] = useState(user.email);
+  const [birthday, setBirthday] = useState(user.birthday ?? '');
   /** undefined = keep, null = remove */
   const [photo, setPhoto] = useState<{ mime: string; data: string } | null | undefined>(undefined);
   const [busy, setBusy] = useState(false);
@@ -815,7 +842,7 @@ function ProfileEditor({ user, onDone, onToast }: { user: AdminUser; onDone: (ch
     e.preventDefault();
     setBusy(true);
     try {
-      await client.setEmployeeProfile(user.username, { name, phone, email });
+      await client.setEmployeeProfile(user.username, { name, phone, email, birthday });
       if (photo !== undefined) {
         await client.setEmployeeAvatar(user.username, photo && { mime: photo.mime, data: fromBase64(photo.data) });
       }
@@ -836,6 +863,7 @@ function ProfileEditor({ user, onDone, onToast }: { user: AdminUser; onDone: (ch
           <input value={phone} maxLength={MAX_PHONE} onChange={(e) => setPhone(e.target.value)} placeholder="Mobile" type="tel" />
           <input value={email} maxLength={MAX_EMAIL} onChange={(e) => setEmail(e.target.value)} placeholder="Email" type="email" />
         </div>
+        <BirthdayInput value={birthday} onChange={setBirthday} />
         <div className="row">
           {(current || photo) && (
             <button type="button" className="link-btn" onClick={() => setPhoto(null)}>

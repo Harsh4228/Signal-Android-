@@ -6,6 +6,7 @@ import {
   Ban,
   Building2,
   Camera,
+  Image as ImageIcon,
   Check,
   CircleAlert,
   CircleCheck,
@@ -27,14 +28,14 @@ import {
 } from 'lucide-react-native';
 import {
   AUDIT_LABELS,
-  AVATAR_MIMES,
-  MAX_AVATAR_BYTES,
   MAX_DEPARTMENT,
   MAX_EMAIL,
   MAX_GROUP_NAME,
   MAX_NAME,
   MAX_PHONE,
   ID_RE,
+  ID_RULES,
+  normalizeId,
   formatLastSeen,
   shortId,
   groupKey,
@@ -51,7 +52,8 @@ import {
   type InviteResponse,
   type OutgoingFile,
 } from '@meetme/core';
-import { pickFile } from '../files';
+import { pickProfilePhoto } from '../photos';
+import { BirthdayField, CameraCapture } from './Profile';
 import { client, useClient } from '../messenger';
 import { colors, mono, s } from '../theme';
 import { Avatar, Banner, Button, Field, Header, IconButton, Sheet, errorText, shortTime, useBack, type SheetAction } from '../ui';
@@ -170,13 +172,15 @@ function ProfileEditor({ user, onDone, onToast }: { user: AdminUser; onDone: (ch
   const [name, setName] = useState(user.name);
   const [phone, setPhone] = useState(user.phone);
   const [email, setEmail] = useState(user.email);
+  const [birthday, setBirthday] = useState(user.birthday ?? '');
   /** undefined = keep, null = remove */
   const [photo, setPhoto] = useState<OutgoingFile | null | undefined>(undefined);
   const [busy, setBusy] = useState(false);
   async function save() {
+    if (birthday === 'invalid') return onToast('Birth date: enter day, month and year (e.g. 21 08 1994)');
     setBusy(true);
     try {
-      await client.setEmployeeProfile(user.username, { name, phone, email });
+      await client.setEmployeeProfile(user.username, { name, phone, email, birthday });
       if (photo !== undefined) await client.setEmployeeAvatar(user.username, photo);
       onToast(`Saved ${name || user.username}'s profile`);
       onDone(true);
@@ -193,6 +197,7 @@ function ProfileEditor({ user, onDone, onToast }: { user: AdminUser; onDone: (ch
       <Field value={name} onChangeText={setName} placeholder="Full name" maxLength={MAX_NAME} autoCapitalize="words" />
       <Field value={phone} onChangeText={setPhone} placeholder="Mobile" keyboardType="phone-pad" maxLength={MAX_PHONE} />
       <Field value={email} onChangeText={setEmail} placeholder="Email" keyboardType="email-address" maxLength={MAX_EMAIL} />
+      <BirthdayField value={birthday} onChange={setBirthday} />
       <View style={[s.row, { gap: 10 }]}>
         <Button title="Cancel" onPress={() => onDone(false)} style={{ flex: 1 }} />
         <Button variant="primary" title="Save" busy={busy} onPress={save} style={{ flex: 1 }} />
@@ -217,19 +222,29 @@ function PhotoField({
   onRemove: () => void;
   onError: (m: string) => void;
 }) {
+  const [ask, setAsk] = useState(false);
+  const [camera, setCamera] = useState(false);
   async function choose() {
     try {
-      const f = await pickFile('photo');
-      if (!f) return;
-      if (!(AVATAR_MIMES as readonly string[]).includes(f.mime)) throw new Error('Please choose a JPEG, PNG or WebP photo');
-      if (f.data.length > MAX_AVATAR_BYTES) throw new Error('Photo too large (max 2 MB)');
-      onPick(f);
+      const f = await pickProfilePhoto();
+      if (f) onPick(f);
     } catch (e) {
       onError(errorText(e));
     }
   }
   return (
     <View style={[s.row, { gap: 12 }]}>
+      {ask && (
+        <Sheet
+          title="Profile photo"
+          onClose={() => setAsk(false)}
+          actions={[
+            { icon: Camera, label: 'Take photo', onPress: () => setCamera(true) },
+            { icon: ImageIcon, label: 'Choose from gallery', onPress: () => void choose() },
+          ]}
+        />
+      )}
+      {camera && <CameraCapture onPhoto={onPick} onClose={() => setCamera(false)} onError={onError} />}
       {photo ? (
         <Image source={{ uri: `data:${photo.mime};base64,${toBase64(photo.data)}` }} style={{ width: 56, height: 56, borderRadius: 28 }} />
       ) : hasCurrent && user ? (
@@ -239,7 +254,7 @@ function PhotoField({
           <Camera size={22} color={colors.faint} />
         </View>
       )}
-      <Button title={photo || hasCurrent ? 'Change photo' : 'Add photo'} icon={Camera} onPress={() => void choose()} style={{ flex: 1 }} />
+      <Button title={photo || hasCurrent ? 'Change photo' : 'Add photo'} icon={Camera} onPress={() => setAsk(true)} style={{ flex: 1 }} />
       {(photo || hasCurrent) && <IconButton icon={Trash2} label="Remove photo" color={colors.danger} onPress={onRemove} />}
     </View>
   );
@@ -709,6 +724,7 @@ function CreateUser({
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
+  const [birthday, setBirthday] = useState('');
   const [photo, setPhoto] = useState<OutgoingFile | null>(null);
   const [picked, setPicked] = useState<string[]>(initialDepartment ? [initialDepartment] : []);
   const [busy, setBusy] = useState(false);
@@ -716,9 +732,10 @@ function CreateUser({
 
   async function create() {
     setError(null);
-    const username = id.trim().toLowerCase();
-    if (!ID_RE.test(username)) return setError('ID: 3-32 characters, a-z 0-9 _ .');
+    const username = normalizeId(id);
+    if (!ID_RE.test(username)) return setError(ID_RULES);
     if (!name.trim()) return setError('Enter their full name');
+    if (birthday === 'invalid') return setError('Birth date: enter day, month and year (e.g. 21 08 1994)');
     setBusy(true);
     try {
       const invite = await client.inviteEmployee({
@@ -728,6 +745,7 @@ function CreateUser({
         email,
         departments: picked,
         photo: photo ? { mime: photo.mime, data: toBase64(photo.data) } : undefined,
+        birthday: birthday || undefined,
       });
       onCreated({ invite, name: name.trim(), email: email.trim() || undefined, renewed: false });
     } catch (e) {
@@ -746,9 +764,10 @@ function CreateUser({
       </Text>
       <PhotoField photo={photo} hasCurrent={false} onPick={setPhoto} onRemove={() => setPhoto(null)} onError={onToast} />
       <Field value={name} onChangeText={setName} placeholder="Full name, e.g. Ravi Kumar" maxLength={MAX_NAME} autoCapitalize="words" autoFocus />
-      <Field value={id} onChangeText={(t) => setId(t.toLowerCase())} placeholder="User ID, e.g. ravi.k" />
+      <Field value={id} onChangeText={setId} placeholder="User ID (for sign-in), e.g. Ravi Kumar" autoCapitalize="none" autoCorrect={false} />
       <Field value={phone} onChangeText={setPhone} placeholder="Mobile, e.g. +91 98765 43210" keyboardType="phone-pad" maxLength={MAX_PHONE} />
       <Field value={email} onChangeText={setEmail} placeholder="Email" keyboardType="email-address" maxLength={MAX_EMAIL} />
+      <BirthdayField value={birthday} onChange={setBirthday} />
       <DepartmentField value={picked} onChange={setPicked} departments={departments} />
       {error && (
         <Banner kind="error" icon={CircleAlert}>
@@ -762,7 +781,7 @@ function CreateUser({
           icon={UserPlus}
           title="Create & QR"
           busy={busy}
-          disabled={id.length < 3 || !name.trim()}
+          disabled={normalizeId(id).length < 3 || !name.trim()}
           onPress={create}
           style={{ flex: 1 }}
         />

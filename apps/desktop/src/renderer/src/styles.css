@@ -3127,3 +3127,360 @@ button.link { border: 0; background: none; padding: 0; color: var(--accent); box
     max-width: none;
   }
 }
+
+/* ---------- navigation: a rail of icons on the left like WhatsApp (computers), a bottom bar (phones) ---------- */
+.rail {
+  width: 64px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 12px 0;
+  background: var(--surface-2);
+  border-right: 1px solid var(--line);
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+.rail-space {
+  flex: 1;
+}
+.rail-btn {
+  width: 48px;
+  height: 48px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: none;
+  box-shadow: none;
+  color: var(--muted);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  cursor: pointer;
+}
+.rail-btn:hover:not(:disabled) {
+  background: var(--hover);
+  color: var(--text);
+}
+.rail-btn.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.rail-icon {
+  position: relative;
+  display: flex;
+}
+.rail-label {
+  display: none;
+}
+.rail-badge {
+  position: absolute;
+  top: -7px;
+  left: 13px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: var(--ok);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
+  border: 2px solid var(--surface-2);
+  box-sizing: content-box;
+}
+.rail-dot {
+  position: absolute;
+  top: -2px;
+  right: -3px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--ok);
+  border: 2px solid var(--surface-2);
+}
+.rail-me .avatar {
+  width: 32px;
+  height: 32px;
+}
+.sidebar-title {
+  font-size: 20px;
+  font-weight: 700;
+}
+.phone-only {
+  display: none !important;
+}
+/* Pages opened from the rail leave the rail free, so another page is one click away. */
+.nav-pages > .modal-bg {
+  left: 64px;
+}
+
+/* ---------- status ring around a person's picture (green = new update, grey = viewed) ---------- */
+.avatar-wrap.ring > .avatar {
+  box-shadow: 0 0 0 2px var(--surface), 0 0 0 4.5px var(--ok);
+}
+.avatar-wrap.ring.seen > .avatar {
+  box-shadow: 0 0 0 2px var(--surface), 0 0 0 4.5px var(--line-strong);
+}
+.avatar-wrap.ring {
+  margin: 3px;
+}
+.avatar-tap {
+  display: flex;
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+/* ---------- profile photo popup (tap a picture), full photo, profile details ---------- */
+.photo-popup {
+  position: relative;
+  width: min(320px, 100%);
+  background: var(--surface);
+  border-radius: 6px;
+  overflow: hidden;
+  box-shadow: var(--shadow-lg);
+}
+.photo-popup-name {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 1;
+  padding: 10px 14px;
+  font-weight: 600;
+  color: #fff;
+  background: linear-gradient(rgba(0, 0, 0, 0.55), transparent);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.photo-popup-img {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  aspect-ratio: 1;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  background: var(--surface-2);
+  cursor: zoom-in;
+}
+.photo-popup-img img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.photo-popup-img .avatar.xl {
+  width: 160px;
+  height: 160px;
+  font-size: 64px;
+}
+.photo-popup-actions {
+  display: flex;
+  justify-content: space-around;
+  padding: 6px;
+  border-top: 1px solid var(--line);
+}
+.photo-popup-actions .icon {
+  color: var(--accent);
+}
+.profile-hero {
+  width: calc(100% + 40px);
+  margin: 0 -20px 4px;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  background: #000;
+  display: flex;
+  justify-content: center;
+  cursor: zoom-in;
+}
+.profile-hero img {
+  width: 100%;
+  max-height: 340px;
+  object-fit: contain;
+}
+.profile-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+}
+.profile-actions button {
+  flex-direction: column;
+  gap: 2px;
+  min-width: 84px;
+  padding: 8px 12px;
+  color: var(--accent);
+  font-size: 12px;
+}
+.detail-list {
+  display: flex;
+  flex-direction: column;
+  margin: 8px 0 0;
+  border-top: 1px solid var(--line);
+}
+.detail-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 4px;
+  color: var(--text);
+  text-decoration: none;
+  border-bottom: 1px solid var(--line);
+  user-select: text;
+}
+.detail-row > svg {
+  color: var(--muted);
+}
+a.detail-row:hover {
+  background: var(--hover);
+}
+a.detail-row > div > div:first-child {
+  color: var(--accent);
+}
+.info .media-head .avatar-wrap.ring .avatar {
+  width: 28px;
+  height: 28px;
+}
+
+/* ---------- admin: photo from the camera, birth date ---------- */
+.photo-pick-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.photo-pick-wrap .link-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+}
+.birthday-input {
+  gap: 8px;
+  align-items: center;
+}
+.birthday-input input {
+  width: auto;
+  flex: 1;
+}
+.camera-capture {
+  width: 440px;
+}
+.camera-frame {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1;
+  border-radius: 12px;
+  overflow: hidden;
+  background: #000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.camera-frame video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.camera-frame video.mirror {
+  transform: scaleX(-1);
+}
+.camera-frame .muted {
+  color: #ccc;
+}
+
+@media (max-width: 760px) {
+  /* The rail becomes WhatsApp's bottom bar: Chats, Status, Channels, Calls, Notices, You. */
+  .app {
+    flex-direction: column-reverse;
+  }
+  .sidebar {
+    flex: 1;
+    min-height: 0;
+    padding-bottom: 0;
+  }
+  .rail {
+    width: 100%;
+    flex-direction: row;
+    justify-content: space-around;
+    gap: 0;
+    padding: 6px 4px calc(6px + env(safe-area-inset-bottom));
+    border-right: none;
+    border-top: 1px solid var(--line);
+    background: var(--surface);
+    overflow: visible;
+  }
+  .app.has-chat .rail,
+  .rail .desk-only,
+  .rail-space {
+    display: none;
+  }
+  .rail-btn {
+    width: auto;
+    height: auto;
+    flex: 1;
+    border-radius: 12px;
+    padding: 2px 0;
+  }
+  .rail-btn .rail-icon {
+    padding: 4px 16px;
+    border-radius: 16px;
+  }
+  .rail-btn.active {
+    background: none;
+    color: var(--text);
+  }
+  .rail-btn.active .rail-icon {
+    background: var(--accent-soft);
+    color: var(--accent);
+  }
+  .rail-label {
+    display: block;
+    font-size: 11px;
+    font-weight: 600;
+  }
+  .rail-badge {
+    left: 26px;
+    top: -4px;
+    border-color: var(--surface);
+  }
+  .rail-me .rail-icon {
+    padding: 0 12px;
+  }
+  .rail-me .avatar {
+    width: 28px;
+    height: 28px;
+  }
+  .phone-only {
+    display: flex !important;
+  }
+  /* Pages from the bar end above it, so the bar stays (like WhatsApp's tabs). */
+  .nav-pages > .modal-bg {
+    left: 0;
+    bottom: calc(63px + env(safe-area-inset-bottom));
+  }
+  .nav-pages > .modal-bg > .modal {
+    padding-bottom: 16px !important;
+  }
+  .profile-hero {
+    width: calc(100% + 32px);
+    margin: 0 -16px 4px;
+  }
+  .camera-capture {
+    width: 100%;
+  }
+}
+.info .media-head > .grow {
+  text-align: left;
+}

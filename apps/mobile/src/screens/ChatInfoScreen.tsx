@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Alert, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
-import { Ban, BadgeCheck, Check, ChevronRight, Eraser, Flag, Mail, MessageSquare, Phone, ShieldCheck, ShieldPlus, ShoppingBag, RotateCcw, ShieldX, UserMinus, UserPlus } from 'lucide-react-native';
-import { formatLastSeen, groupIdOf, isGroupKey, type UserProfile } from '@meetme/core';
-import { client, useClient } from '../messenger';
+import { Ban, BadgeCheck, Building2, Cake, Check, ChevronRight, CircleDashed, Eraser, Flag, Mail, MessageSquare, Phone, ShieldCheck, ShieldPlus, ShoppingBag, RotateCcw, ShieldX, UserMinus, UserPlus, Video } from 'lucide-react-native';
+import { birthdayText, formatLastSeen, groupIdOf, isGroupKey, shortId, type UserProfile } from '@meetme/core';
+import { calls, client, useClient } from '../messenger';
+import { AvatarTap, DetailRow, ProfileHero, telLink } from './Profile';
 import { colors, mono, s } from '../theme';
 import { Avatar, Button, ChatAvatar, Header, Row, Sheet, errorText, useBack } from '../ui';
 import type { Route } from '../App';
@@ -123,7 +124,7 @@ function GroupInfoScreen({
                 }
                 style={({ pressed }) => [s.row, { gap: 12, padding: 12 }, pressed && { backgroundColor: colors.hover }]}
               >
-                <ChatAvatar chatKey={u} size={40} />
+                {u === me ? <ChatAvatar chatKey={u} size={40} /> : <AvatarTap user={u} size={40} navigate={navigate} onToast={onError} />}
                 <View style={{ flex: 1 }}>
                   <Text style={s.textStrong}>{u === me ? 'You' : client.displayName(u)}</Text>
                   {u !== me && (
@@ -272,6 +273,7 @@ function PersonInfoScreen({
   onError: (m: string) => void;
 }) {
   const c = useClient();
+  const profile = c.profileOf(peer);
   const [safety, setSafety] = useState<{ number: string; verified: boolean } | null>(null);
   const reload = useCallback(() => void client.getSafetyNumber(peer).then(setSafety), [peer]);
   useEffect(reload, [reload]);
@@ -297,29 +299,37 @@ function PersonInfoScreen({
     <View style={s.fill}>
       <Header title="Conversation details" onBack={() => navigate({ name: 'chat', peer })} />
       <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40 }}>
-        <View style={{ alignItems: 'center', gap: 8, paddingVertical: 8 }}>
-          <Avatar name={peer} size={80} />
-          <Text style={[s.h1, { fontSize: 20 }]}>{client.displayName(peer)}</Text>
+        <View style={{ alignItems: 'center', gap: 6, paddingVertical: 8 }}>
+          <ProfileHero user={peer} />
+          <Text style={[s.h1, { fontSize: 22, marginTop: 6 }]}>{client.displayName(peer)}</Text>
+          <Text style={s.muted}>@{shortId(peer)}</Text>
           {!!c.getPresence(peer) && <Text style={s.muted}>{formatLastSeen(c.getPresence(peer))}</Text>}
-          {!!c.profileOf(peer)?.about && <Text style={[s.text, { textAlign: 'center', color: colors.text2 }]}>{c.profileOf(peer)!.about}</Text>}
-          {!!c.profileOf(peer)?.departments.length && (
-            <Text style={[s.muted, { fontSize: 13, fontWeight: '600', color: colors.accentText }]}>{c.profileOf(peer)!.departments.join(', ')}</Text>
-          )}
-          {!!c.profileOf(peer)?.phone && (
-            <View style={[s.row, { gap: 5 }]}>
-              <Phone size={13} color={colors.muted} />
-              <Text style={s.muted} selectable>
-                {c.profileOf(peer)!.phone}
-              </Text>
-            </View>
-          )}
-          {!!c.profileOf(peer)?.email && (
-            <View style={[s.row, { gap: 5 }]}>
-              <Mail size={13} color={colors.muted} />
-              <Text style={s.muted} selectable>
-                {c.profileOf(peer)!.email}
-              </Text>
-            </View>
+          {!!profile?.about && <Text style={[s.text, { textAlign: 'center', color: colors.text2 }]}>{profile.about}</Text>}
+          <View style={[s.row, { gap: 10, marginTop: 6 }]}>
+            <Button title="Voice" icon={Phone} onPress={() => void calls.startCall(peer, false).catch((e) => onError(errorText(e)))} />
+            <Button title="Video" icon={Video} onPress={() => void calls.startCall(peer, true).catch((e) => onError(errorText(e)))} />
+          </View>
+        </View>
+
+        {!!c.statusRingOf(peer) && (
+          <View style={[s.card, { marginTop: 12, padding: 4 }]}>
+            <Row
+              icon={CircleDashed}
+              title="Status"
+              subtitle={c.statusRingOf(peer) === 'new' ? 'New update' : 'Viewed'}
+              onPress={() => navigate({ name: 'status-view', user: peer, start: client.statusStartOf(peer) })}
+              right={<ChevronRight size={18} color={colors.faint} />}
+            />
+          </View>
+        )}
+
+        <View style={[s.card, { marginTop: 12, paddingHorizontal: 12, paddingVertical: 2 }]}>
+          {!!profile?.departments.length && <DetailRow icon={Building2} value={profile.departments.join(', ')} label="Department" />}
+          {!!profile?.phone && <DetailRow icon={Phone} value={profile.phone} label="Mobile · tap to call" link={telLink(profile.phone)} />}
+          {!!profile?.email && <DetailRow icon={Mail} value={profile.email} label="Email · tap to write" link={`mailto:${profile.email}`} />}
+          {!!birthdayText(profile?.birthday) && <DetailRow icon={Cake} value={birthdayText(profile?.birthday)} label="Birth date" />}
+          {!profile?.departments.length && !profile?.phone && !profile?.email && !birthdayText(profile?.birthday) && (
+            <DetailRow icon={Building2} value="No details yet" label="Your admin adds department, mobile, email and birth date" />
           )}
         </View>
 

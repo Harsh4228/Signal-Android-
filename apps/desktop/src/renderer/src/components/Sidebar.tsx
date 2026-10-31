@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Archive, ArchiveRestore, BellOff, ChevronLeft, Phone, Pin, PinOff, Ban, Bell, CircleDashed, EllipsisVertical, LifeBuoy, Lock, Megaphone, ShoppingBag, Star, MessageSquarePlus, Search, Settings as SettingsIcon, ShieldCheck } from 'lucide-react';
+import { Archive, ArchiveRestore, BellOff, ChevronLeft, Phone, Pin, PinOff, Ban, Bell, CircleDashed, EllipsisVertical, LifeBuoy, Lock, Megaphone, MessageSquareText, ShoppingBag, Star, MessageSquarePlus, Search, Settings as SettingsIcon, ShieldCheck, type LucideIcon } from 'lucide-react';
 import { MessengerClient, isGroupKey } from '@meetme/core';
 import { appLock, client, useClient, useLock } from '../messenger';
 import { Broadcast } from './Broadcast';
@@ -8,11 +8,14 @@ import { NoticesPanel } from './Notices';
 import { StatusPanel } from './Status';
 import { StarredPanel } from './ChatExtras';
 import { CatalogPanel } from './Catalog';
-import { Avatar, ChatAvatar, Logo, PasswordInput, errorText, shortTime, typingText } from './ui';
+import { Avatar, ChatAvatar, PasswordInput, errorText, shortTime, typingText } from './ui';
+import { AvatarTap } from './Profile';
 import { Directory } from './Directory';
 import { HelpDeskModal } from './AdminRights';
 import { CallsPanel } from './CallsPanel';
 import { ChannelsPanel } from './Channels';
+
+type Page = 'status' | 'calls' | 'channels' | 'notices' | 'help' | 'starred' | 'catalog' | 'admin';
 
 export function Sidebar({ onSettings, onError }: { onSettings: () => void; onError: (m: string) => void }) {
   const c = useClient();
@@ -20,11 +23,9 @@ export function Sidebar({ onSettings, onError }: { onSettings: () => void; onErr
   const [newChat, setNewChat] = useState(false);
   const [filter, setFilter] = useState('');
   const [broadcasting, setBroadcasting] = useState(false);
-  const [managing, setManaging] = useState(false);
-  const [showNotices, setShowNotices] = useState(false);
-  const [showStatus, setShowStatus] = useState(false);
   const [more, setMore] = useState(false);
-  const [panel, setPanel] = useState<'starred' | 'catalog' | 'help' | 'calls' | 'channels' | null>(null);
+  /** The page picked in the navigation (left rail, or the bottom bar on phones); null = the chat list. */
+  const [panel, setPanel] = useState<Page | null>(null);
   const [archived, setArchived] = useState(false);
   /** Right-click menu of a chat: pin, archive, mute. */
   const [chatMenu, setChatMenu] = useState<{ key: string; x: number; y: number } | null>(null);
@@ -75,29 +76,71 @@ export function Sidebar({ onSettings, onError }: { onSettings: () => void; onErr
   const sorted = c.orderedChats({ archived }).filter((k) => !q || c.chatTitle(k).toLowerCase().includes(q));
   const offline = c.status !== 'online';
 
+  const unreadChats = c.chatKeys().filter((k) => c.getUnread(k) > 0 && !c.isArchived(k)).length;
+  const me = c.account!.username;
+  /** Navigation like WhatsApp: a rail of icons on the left (computers), a bar at the bottom (phones). */
+  const nav: { page: Page | null; icon: LucideIcon; label: string; badge?: number; dot?: boolean; phone?: boolean; off?: boolean }[] = [
+    { page: null, icon: MessageSquareText, label: 'Chats', badge: unreadChats, phone: true },
+    { page: 'status', icon: CircleDashed, label: 'Status', dot: c.unseenStatusCount > 0, phone: true },
+    { page: 'channels', icon: Megaphone, label: 'Channels', phone: true, off: offline },
+    { page: 'calls', icon: Phone, label: 'Calls', phone: true },
+    { page: 'notices', icon: Bell, label: 'Notices', phone: true },
+    { page: 'help', icon: LifeBuoy, label: 'Help desk', off: offline },
+    { page: 'starred', icon: Star, label: 'Starred' },
+    { page: 'catalog', icon: ShoppingBag, label: 'My catalog' },
+  ];
+  const go = (page: Page | null) => {
+    setPanel(page);
+    setMore(false);
+  };
+
   return (
+    <>
+    <nav className="rail" aria-label="Navigation">
+      {nav.map(({ page, icon: Icon, label, badge, dot, phone, off }) => (
+        <button
+          key={label}
+          className={`rail-btn ${panel === page ? 'active' : ''} ${phone ? '' : 'desk-only'}`}
+          title={label}
+          disabled={off}
+          onClick={() => go(page)}
+        >
+          <span className="rail-icon">
+            <Icon size={22} />
+            {!!badge && <span className="rail-badge">{badge > 99 ? '99+' : badge}</span>}
+            {dot && <span className="rail-dot" />}
+          </span>
+          <span className="rail-label">{label}</span>
+        </button>
+      ))}
+      <div className="rail-space" />
+      {c.isAdmin && (
+        <button className={`rail-btn desk-only ${panel === 'admin' ? 'active' : ''}`} title="Admin panel" disabled={offline} onClick={() => go('admin')}>
+          <span className="rail-icon">
+            <ShieldCheck size={22} />
+          </span>
+          <span className="rail-label">Admin</span>
+        </button>
+      )}
+      <button className="rail-btn desk-only" title="Settings" onClick={onSettings}>
+        <span className="rail-icon">
+          <SettingsIcon size={22} />
+        </span>
+        <span className="rail-label">Settings</span>
+      </button>
+      <button className="rail-btn rail-me" title="Settings and my profile" onClick={onSettings}>
+        <span className="rail-icon">
+          <Avatar name={me} size="sm" />
+        </span>
+        <span className="rail-label">You</span>
+      </button>
+    </nav>
     <aside className="sidebar">
       <header>
-        <div className="brand">
-          <Logo />
-          CellMate
-        </div>
+        <div className="sidebar-title">{archived ? 'Archived' : 'Chats'}</div>
         <div className="actions">
           <button className={`icon ${newChat ? 'active' : ''}`} title="New chat" onClick={() => setNewChat((v) => !v)}>
-            <MessageSquarePlus size={19} />
-          </button>
-          <button className="icon dot-host" title="Status" onClick={() => setShowStatus(true)}>
-            <CircleDashed size={19} />
-            {c.unseenStatusCount > 0 && <span className="dot" />}
-          </button>
-          <button className="icon" title="Calls" onClick={() => setPanel('calls')}>
-            <Phone size={18} />
-          </button>
-          <button className="icon" title="Help desk: whom to contact" disabled={offline} onClick={() => setPanel('help')}>
-            <LifeBuoy size={19} />
-          </button>
-          <button className="icon" title={c.isAdmin ? 'Notices: send and see who read them' : 'Notices'} onClick={() => setShowNotices(true)}>
-            <Bell size={19} />
+            <MessageSquarePlus size={20} />
           </button>
           {/* Everything else lives in the ⋮ menu, like WhatsApp. */}
           <div className="menu-host" ref={moreRef}>
@@ -108,12 +151,12 @@ export function Sidebar({ onSettings, onError }: { onSettings: () => void; onErr
               aria-expanded={more}
               onClick={() => setMore((m) => !m)}
             >
-              <EllipsisVertical size={19} />
+              <EllipsisVertical size={20} />
             </button>
             {more && (
               <div className="dropdown" role="menu">
                 {c.isAdmin && (
-                  <button role="menuitem" disabled={offline} onClick={() => pick(() => setManaging(true))}>
+                  <button role="menuitem" disabled={offline} onClick={() => go('admin')}>
                     <ShieldCheck size={17} /> Admin panel
                   </button>
                 )}
@@ -123,16 +166,16 @@ export function Sidebar({ onSettings, onError }: { onSettings: () => void; onErr
                   </button>
                 )}
                 {c.isAdmin && <hr />}
-                <button role="menuitem" disabled={offline} onClick={() => pick(() => setPanel('channels'))}>
-                  <Megaphone size={17} /> Channels & communities
+                {/* On phones these are not in the bottom bar. */}
+                <button role="menuitem" className="phone-only" disabled={offline} onClick={() => go('help')}>
+                  <LifeBuoy size={17} /> Help desk
                 </button>
-                <button role="menuitem" onClick={() => pick(() => setPanel('starred'))}>
+                <button role="menuitem" className="phone-only" onClick={() => go('starred')}>
                   <Star size={17} /> Starred messages
                 </button>
-                <button role="menuitem" onClick={() => pick(() => setPanel('catalog'))}>
+                <button role="menuitem" className="phone-only" onClick={() => go('catalog')}>
                   <ShoppingBag size={17} /> My catalog
                 </button>
-                <hr />
                 {lock.enabled && (
                   <button role="menuitem" onClick={() => pick(() => appLock.lock())}>
                     <Lock size={17} /> Lock now
@@ -147,14 +190,17 @@ export function Sidebar({ onSettings, onError }: { onSettings: () => void; onErr
         </div>
       </header>
       {broadcasting && <Broadcast onClose={() => setBroadcasting(false)} onDone={onError} />}
-      {managing && <AdminPanel onClose={() => setManaging(false)} onToast={onError} />}
-      {showNotices && <NoticesPanel onClose={() => setShowNotices(false)} onToast={onError} />}
-      {showStatus && <StatusPanel onClose={() => setShowStatus(false)} onToast={onError} />}
-      {panel === 'starred' && <StarredPanel onClose={() => setPanel(null)} />}
-      {panel === 'help' && <HelpDeskModal onClose={() => setPanel(null)} onToast={onError} />}
-      {panel === 'calls' && <CallsPanel onClose={() => setPanel(null)} onError={onError} />}
-      {panel === 'channels' && <ChannelsPanel onClose={() => setPanel(null)} onToast={onError} />}
-      {panel === 'catalog' && <CatalogPanel onClose={() => setPanel(null)} onToast={onError} />}
+      {/* Pages from the navigation sit beside the rail (above the bottom bar on phones), so it stays usable. */}
+      <div className="nav-pages">
+        {panel === 'admin' && <AdminPanel onClose={() => setPanel(null)} onToast={onError} />}
+        {panel === 'notices' && <NoticesPanel onClose={() => setPanel(null)} onToast={onError} />}
+        {panel === 'status' && <StatusPanel onClose={() => setPanel(null)} onToast={onError} />}
+        {panel === 'starred' && <StarredPanel onClose={() => setPanel(null)} />}
+        {panel === 'help' && <HelpDeskModal onClose={() => setPanel(null)} onToast={onError} />}
+        {panel === 'calls' && <CallsPanel onClose={() => setPanel(null)} onError={onError} />}
+        {panel === 'channels' && <ChannelsPanel onClose={() => setPanel(null)} onToast={onError} />}
+        {panel === 'catalog' && <CatalogPanel onClose={() => setPanel(null)} onToast={onError} />}
+      </div>
 
       {c.backupNeedsPassword && <BackupPrompt onError={onError} />}
       {c.banned && (
@@ -165,10 +211,10 @@ export function Sidebar({ onSettings, onError }: { onSettings: () => void; onErr
       )}
 
       {newChat ? (
-        <Directory onOpen={(u) => void open(u)} onBack={() => setNewChat(false)} />
+        <Directory onOpen={(u) => void open(u)} onBack={() => setNewChat(false)} onToast={onError} />
       ) : c.chatKeys().length === 0 ? (
         // First login: everyone is listed at once, no need to search for names.
-        <Directory onOpen={(u) => void open(u)} />
+        <Directory onOpen={(u) => void open(u)} onToast={onError} />
       ) : (
         <>
       {c.chatKeys().length > 6 && (
@@ -213,7 +259,7 @@ export function Sidebar({ onSettings, onError }: { onSettings: () => void; onErr
               }}
               title="Right-click: pin, archive, mute"
             >
-              <ChatAvatar chatKey={key} />
+              {group ? <ChatAvatar chatKey={key} /> : <AvatarTap user={key} onToast={onError} />}
               <div className="grow">
                 <div className="top">
                   <div className="name grow">{c.chatTitle(key)}</div>
@@ -265,16 +311,8 @@ export function Sidebar({ onSettings, onError }: { onSettings: () => void; onErr
         </div>
       )}
 
-      <div className="me">
-        <Avatar name={c.account!.username} size="sm" />
-        <div className="grow">
-          <div className="name">
-            {c.displayName(c.account!.username)} {c.isAdmin && <span className="tag admin">Admin</span>}
-          </div>
-          <div className={`status ${c.banned ? 'offline' : c.status}`}>{c.banned ? 'suspended' : c.status}</div>
-        </div>
-      </div>
     </aside>
+    </>
   );
 }
 

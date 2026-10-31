@@ -62,6 +62,7 @@ const SCHEMA = `
   ALTER TABLE users ADD COLUMN IF NOT EXISTS invite_expires BIGINT;
   ALTER TABLE users ADD COLUMN IF NOT EXISTS about TEXT NOT NULL DEFAULT '';
   ALTER TABLE users ADD COLUMN IF NOT EXISTS hide_last_seen SMALLINT NOT NULL DEFAULT 0;
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS birthday TEXT NOT NULL DEFAULT '';
   CREATE TABLE IF NOT EXISTS avatars (
     username TEXT PRIMARY KEY REFERENCES users(username) ON DELETE CASCADE,
     mime     TEXT NOT NULL,
@@ -245,12 +246,15 @@ export async function openPostgres(connectionString: string): Promise<{ db: Db; 
         );
         await insertOpks(c, u.username, opks);
       }),
-    async createPendingUser(username, passHash, { departments = [], canShare = false, phone = '', email = '', name = '' } = {}) {
+    async createPendingUser(username, passHash, { departments = [], canShare = false, phone = '', email = '', name = '', birthday = '' } = {}) {
       await pool.query(
-        `INSERT INTO users (username, pass_hash, device_hash, must_change, identity_key, spk_id, spk_pub, spk_sig, created_at, departments, can_share, phone, email, display_name)
-         VALUES ($1, $2, NULL, 1, '', 0, '', '', $3, $4, $5, $6, $7, $8)`,
-        [username, passHash, Date.now(), JSON.stringify(departments), canShare ? 1 : 0, phone, email, name],
+        `INSERT INTO users (username, pass_hash, device_hash, must_change, identity_key, spk_id, spk_pub, spk_sig, created_at, departments, can_share, phone, email, display_name, birthday)
+         VALUES ($1, $2, NULL, 1, '', 0, '', '', $3, $4, $5, $6, $7, $8, $9)`,
+        [username, passHash, Date.now(), JSON.stringify(departments), canShare ? 1 : 0, phone, email, name, birthday],
       );
+    },
+    async setBirthday(username, birthday) {
+      await pool.query('UPDATE users SET birthday = $1 WHERE username = $2', [birthday, username]);
     },
     async setDisplayName(username, name) {
       await pool.query('UPDATE users SET display_name = $1 WHERE username = $2', [name, username]);

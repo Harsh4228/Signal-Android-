@@ -73,6 +73,7 @@ test('admin creates employee, employee logs in and must set own password', async
     phone: '',
     email: '',
     name: '',
+    birthday: '',
   });
 
   // Can't message someone who hasn't logged in yet.
@@ -129,4 +130,45 @@ test('admin creates employee, employee logs in and must set own password', async
   await admin.removeEmployee('ravi');
   await waitFor(() => raviPhone3.account === null, 'removed employee logged out');
   await assert.rejects((await fresh()).login(url, 'ravi', 'after-reset-99'), /Wrong ID or password/);
+});
+
+test('IDs may have capitals, spaces and symbols; birth dates', async () => {
+  const s2 = await startTestServer({ stunUrls: [], turnUrls: [], trustProxy: false, adminUsers: ['boss'], openRegistration: false });
+  const mine: MessengerClient[] = [];
+  try {
+    const boss = await fresh();
+    mine.push(boss);
+    await boss.register(s2.url, 'boss');
+    await online(boss);
+    await waitFor(() => boss.isAdmin, 'admin flag');
+
+    // Typed with capitals and extra spaces: stored lowercase with single spaces.
+    await boss.createEmployee('  Ravi   Kumar@2 ', 'temp-password-1');
+    await assert.rejects(boss.createEmployee('ravi-kumar', 'temp-password-1'), /ID: 3-32/);
+    await assert.rejects(boss.createEmployee('a/b', 'temp-password-1'), /ID: 3-32/);
+    const ravi = await fresh();
+    mine.push(ravi);
+    await ravi.login(s2.url, 'RAVI KUMAR@2', 'temp-password-1', 'ravi-own-secret');
+    assert.equal(ravi.account!.username, 'ravi kumar@2');
+    await online(ravi);
+
+    // Keys, profile, photo and sealed sending all go through the %-encoded ID.
+    await boss.setEmployeeProfile('ravi kumar@2', { name: 'Ravi Kumar', birthday: '1995-03-14' });
+    await assert.rejects(boss.setEmployeeProfile('ravi kumar@2', { birthday: '2999-01-01' }), /Birth date/);
+    boss.profileOf('ravi kumar@2');
+    await waitFor(() => boss.profileOf('ravi kumar@2')?.birthday === '1995-03-14', 'birthday on the profile');
+    await boss.addContact('ravi kumar@2');
+    await boss.sendText('ravi kumar@2', 'hello with spaces');
+    await waitFor(() => ravi.getMessages('boss').some((m) => m.text === 'hello with spaces'), 'message to spaced ID');
+    await ravi.sendText('boss', 'reply');
+    await waitFor(() => boss.getMessages('ravi kumar@2').some((m) => m.text === 'reply'), 'reply from spaced ID');
+
+    // Their own birth date, on their profile.
+    await ravi.setPrivacy({ birthday: '1995-03-15' });
+    assert.equal(ravi.birthday, '1995-03-15');
+    assert.equal((await boss.listAllUsers()).find((u) => u.username === 'ravi kumar@2')!.birthday, '1995-03-15');
+  } finally {
+    mine.forEach((c) => c.dispose());
+    await s2.close();
+  }
 });

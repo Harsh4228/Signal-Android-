@@ -78,6 +78,7 @@ import {
 } from './ChatExtras';
 import { CatalogPanel } from './Catalog';
 import { ChatAvatar, errorText, typingText } from './ui';
+import { takeInfoRequest } from './Profile';
 
 const time = (ts: number) => new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
@@ -114,7 +115,13 @@ export function ChatView({ peer, onError }: { peer: string; onError: (m: string)
   const [flash, setFlash] = useState<string | null>(null);
   const [viewingCatalog, setViewingCatalog] = useState<string | null>(null);
   const [menuFor, setMenuFor] = useState<string | null>(null);
-  const [showInfo, setShowInfo] = useState(false);
+  const [showInfo, setShowInfo] = useState(() => takeInfoRequest(peer));
+  // "Details" in a profile photo popup while this chat is already open.
+  useEffect(() => {
+    const on = (e: Event) => (e as CustomEvent<string>).detail === peer && (takeInfoRequest(peer), setShowInfo(true));
+    window.addEventListener('meetme:info', on);
+    return () => window.removeEventListener('meetme:info', on);
+  }, [peer]);
   const [verified, setVerified] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);

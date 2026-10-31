@@ -25,6 +25,8 @@ import {
   STATUS_TTL_MS,
   USERNAME_RE,
   ID_RE,
+  ID_RULES,
+  normalizeId,
   COMPANY_CODE_RE,
   MIN_PASSWORD_LENGTH,
   makeUsername,
@@ -802,8 +804,8 @@ export class MessengerClient extends Emitter<Events> {
     id: string,
     opts: { loginPassword?: string; company?: { code: string; name: string } },
   ): Promise<void> {
-    id = id.trim().toLowerCase();
-    if (!ID_RE.test(id)) throw new Error('ID: 3-32 characters, a-z 0-9 _ .');
+    id = normalizeId(id);
+    if (!ID_RE.test(id)) throw new Error(ID_RULES);
     if (opts.loginPassword !== undefined && opts.loginPassword.length < MIN_PASSWORD_LENGTH) {
       throw new Error(`Password: at least ${MIN_PASSWORD_LENGTH} characters`);
     }
@@ -849,7 +851,7 @@ export class MessengerClient extends Emitter<Events> {
    * public halves go to the server. Throws MustChangePasswordError on first login - call again with `newPassword`.
    */
   async login(serverUrl: string, username: string, password: string, newPassword?: string): Promise<void> {
-    username = username.trim().toLowerCase();
+    username = normalizeId(username);
     if (!USERNAME_RE.test(username)) throw new Error('Invalid ID');
     serverUrl = normalizeServerUrl(serverUrl);
     const { account, signedPreKey, oneTimePreKeys } = await createAccount(this.store, serverUrl, username);
@@ -926,7 +928,7 @@ export class MessengerClient extends Emitter<Events> {
     opts: { canShare?: boolean; phone?: string; email?: string } = {},
   ): Promise<void> {
     const body = {
-      username: username.trim().toLowerCase(),
+      username: normalizeId(username),
       password,
       departments,
       canShare: opts.canShare,
@@ -941,7 +943,7 @@ export class MessengerClient extends Emitter<Events> {
    * QR invite (show it with inviteCode()); the person scans it and only chooses their password.
    */
   async inviteEmployee(input: EmployeeInput): Promise<InviteResponse> {
-    const body = { ...input, username: input.username.trim().toLowerCase(), name: input.name.trim() };
+    const body = { ...input, username: normalizeId(input.username), name: input.name.trim(), birthday: input.birthday || undefined };
     return (await this.http<{ invite: InviteResponse }>('POST', '/v1/admin/users', body)).invite;
   }
 
@@ -951,7 +953,7 @@ export class MessengerClient extends Emitter<Events> {
   }
 
   /** Admin: change a user's name / mobile / email (fields left out stay). Users can't change these themselves. */
-  async setEmployeeProfile(username: string, p: { name?: string; phone?: string; email?: string }): Promise<void> {
+  async setEmployeeProfile(username: string, p: { name?: string; phone?: string; email?: string; birthday?: string }): Promise<void> {
     await this.http('PUT', `/v1/admin/users/${encodeURIComponent(username)}/profile`, p);
     this.profiles.delete(username);
     this.emit('change');
@@ -1475,6 +1477,7 @@ export class MessengerClient extends Emitter<Events> {
     this.isSuper = !!me.isSuper;
     this.about = me.about ?? '';
     this.hideLastSeen = !!me.hideLastSeen;
+    this.birthday = me.birthday ?? '';
     this.setRights(me.rights);
     this.emit('change');
   }
@@ -2035,7 +2038,7 @@ export class MessengerClient extends Emitter<Events> {
 
   /** Share a colleague's contact card; the other side can start a chat with them in one tap. */
   async sendContact(peer: string, username: string): Promise<void> {
-    username = username.trim().toLowerCase();
+    username = normalizeId(username);
     if (!USERNAME_RE.test(username) || !(await this.userExists(username))) throw new Error('User not found');
     await this.sendMessage(peer, '', { contact: username });
   }
@@ -2542,6 +2545,24 @@ export class MessengerClient extends Emitter<Events> {
       .sort((a, b) => Number(a.allSeen) - Number(b.allSeen) || b.latest - a.latest);
   }
 
+  /** The ring around someone's photo, like WhatsApp: 'new' = updates I haven't viewed, 'seen' = all viewed, null = none. */
+  statusRingOf(user: string): 'new' | 'seen' | null {
+    const mine = user === this.account?.username;
+    let any = false;
+    for (const s of this.statuses) {
+      if (s.from !== user || s.outgoing !== mine) continue;
+      if (!mine && !s.seen) return 'new';
+      any = true;
+    }
+    return any ? 'seen' : null;
+  }
+
+  /** Where to start playing someone's statuses: the first one I haven't viewed, or the first. */
+  statusStartOf(user: string): number {
+    const g = this.statusGroups().find((x) => x.user === user);
+    return g && !g.allSeen ? Math.max(0, g.items.findIndex((s) => !s.seen)) : 0;
+  }
+
   /** How many people have status updates I haven't viewed yet. */
   get unseenStatusCount(): number {
     return this.statusGroups().filter((g) => !g.allSeen).length;
@@ -2782,7 +2803,7 @@ export class MessengerClient extends Emitter<Events> {
       .slice(0, 200);
     if (!names.length || this.status !== 'online') return;
     try {
-      const res = await this.http<Record<string, Presence>>('GET', `/v1/presence?u=${names.join(',')}`);
+      const res = await this.http<Record<string, Presence>>('GET', `/v1/presence?u=${names.map(encodeURIComponent).join(',')}`);
       for (const [u, p] of Object.entries(res)) {
         this.presence.set(u, p);
         this.noteAvatar(u, p.avatar ?? null);
@@ -2948,7 +2969,7 @@ export class MessengerClient extends Emitter<Events> {
   }
 
   async addContact(username: string): Promise<void> {
-    username = username.trim().toLowerCase();
+    username = normalizeId(username);
     if (!USERNAME_RE.test(username)) throw new Error('Invalid username');
     if (username === this.account?.username) throw new Error("That's you");
     if (!(await this.userExists(username))) throw new Error('User not found');
@@ -3169,6 +3190,8 @@ export class MessengerClient extends Emitter<Events> {
   /** My "About" line and last-seen choice (on the server). */
   about = '';
   hideLastSeen = false;
+  /** My birth date "YYYY-MM-DD" ('' = not given). */
+  birthday = '';
 
   private setChatPref(key: string, patch: Partial<ChatPrefs>) {
     const next: ChatPrefs = { ...this.chatPrefs[key], ...patch };
@@ -3285,6 +3308,7 @@ export class MessengerClient extends Emitter<Events> {
     await this.http('PUT', '/v1/me/privacy', p);
     if (p.about !== undefined) this.about = p.about.trim();
     if (p.hideLastSeen !== undefined) this.hideLastSeen = p.hideLastSeen;
+    if (p.birthday !== undefined) this.birthday = p.birthday;
     this.emit('change');
   }
 
@@ -3677,6 +3701,7 @@ export class MessengerClient extends Emitter<Events> {
     this.blocked = [];
     this.about = '';
     this.hideLastSeen = false;
+    this.birthday = '';
     this.emit('change');
   }
 

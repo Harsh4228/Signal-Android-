@@ -92,7 +92,7 @@ test('owner sets up the server on the web page and creates companies; admins man
   await boss.login(url, 'boss-acme', acme.tempPassword, 'boss-password-1');
   await online(boss);
   await waitFor(() => boss.isAdmin && !boss.isSuper && boss.company?.name === 'Acme Ltd', 'boss is acme admin');
-  await assert.rejects(boss.inviteEmployee({ username: 'ravi-beta', name: 'x' }), /ID must be/); // can't make people elsewhere
+  await assert.rejects(boss.inviteEmployee({ username: 'ravi-beta', name: 'x' }), /ID: 3-32/); // can't make people elsewhere
   assert.equal((await fetch(`${url}/v1/super/companies`, { headers: deviceAuth(boss) })).status, 403);
 
   // A second company; the same ID can exist in both.

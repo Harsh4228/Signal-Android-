@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Alert, Linking, Pressable, ScrollView, Switch, Text, View } from 'react-native';
 import { Ban, Building2, Camera, ChevronRight, CircleAlert, CircleCheck, CloudUpload, FileText, Lock, LogOut, ShieldCheck, Trash2 } from 'lucide-react-native';
-import { AVATAR_MIMES, MAX_ABOUT, MAX_EMAIL, MAX_PHONE, MIN_PASSWORD_LENGTH, shortId } from '@meetme/core';
+import { AVATAR_MIMES, birthdayText, MAX_ABOUT, MAX_EMAIL, MAX_PHONE, MIN_PASSWORD_LENGTH, shortId } from '@meetme/core';
 import { pickFile } from '../files';
 import { appLock, client, useClient, useLock } from '../messenger';
 import { resetPush } from '../push';
@@ -9,6 +9,7 @@ import { chooseTheme, colors, s, themeChoice, type ThemeChoice } from '../theme'
 import { Avatar, Banner, Button, Field, Header, Row, errorText } from '../ui';
 import type { Route } from '../App';
 import { BlockedScreen, requestDeletion } from './Safety';
+import { BirthdayField } from './Profile';
 import { LEGAL_BASE } from '../config';
 
 const SECURITY = [
@@ -386,6 +387,8 @@ function PrivacySettings() {
   const [about, setAbout] = useState(c.about);
   const [msg, setMsg] = useState<string | null>(null);
   useEffect(() => setAbout(c.about), [c.about]);
+  const [birthday, setBirthday] = useState(c.birthday);
+  useEffect(() => setBirthday(c.birthday), [c.birthday]);
   const save = (fn: () => Promise<void>, done: string) =>
     void fn().then(
       () => setMsg(done),
@@ -406,6 +409,21 @@ function PrivacySettings() {
         <Text style={s.textStrong}>About</Text>
         <Field value={about} onChangeText={setAbout} placeholder="e.g. At the Pune office" maxLength={MAX_ABOUT} autoCapitalize="sentences" />
         {about.trim() !== c.about && <Button title="Save About" onPress={() => save(() => client.setPrivacy({ about }), 'About saved')} />}
+      </View>
+      {/* My birth date: colleagues see it on my profile. */}
+      <View style={{ paddingHorizontal: 12, paddingBottom: 8, gap: 8 }}>
+        <BirthdayField key={c.birthday} value={birthday} onChange={setBirthday} />
+        {!!c.birthday && birthday === c.birthday && <Text style={s.muted}>{birthdayText(c.birthday)} · colleagues see it on your profile</Text>}
+        {birthday !== c.birthday && (
+          <Button
+            title="Save birth date"
+            onPress={() =>
+              birthday === 'invalid'
+                ? setMsg('Birth date: enter day, month and year (e.g. 21 08 1994)')
+                : save(() => client.setPrivacy({ birthday }), birthday ? 'Birth date saved' : 'Birth date removed')
+            }
+          />
+        )}
       </View>
       {toggle('Read receipts', 'When off, people don\'t see when you read their messages, and you don\'t see theirs.', c.privacy.readReceipts, (v) =>
         save(() => client.setReadReceipts(v), v ? 'Read receipts on' : 'Read receipts off'),

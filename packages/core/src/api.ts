@@ -5,9 +5,21 @@
  * both have a "ravi"; people only ever see the ID part. Without a company (older / open servers) it is just
  * the ID.
  */
-export const USERNAME_RE = /^[a-z0-9_.]{3,32}(-[a-z0-9]{2,16})?$/;
-/** What a person types as their ID (no company part). */
-export const ID_RE = /^[a-z0-9_.]{3,32}$/;
+export const USERNAME_RE = new RegExp(`^(?=[^-]{3,32}(?:-|$))${idWords()}(-[a-z0-9]{2,16})?$`);
+/**
+ * What a person types as their ID (no company part): 3-32 characters, letters of any language, digits, single
+ * spaces between words and most symbols. Not allowed: "-" (it separates the company code), characters that
+ * mean something in links or sign-in (, : ; / \ ? # % & + = < > " `) and control characters.
+ */
+export const ID_RE = new RegExp(`^(?=.{3,32}$)${idWords()}$`);
+function idWords(): string {
+  const c = '[^\\s\\-,:;/\\\\?#%&+=<>"`\\u0000-\\u001f\\u007f\\u202a-\\u202e\\u2066-\\u2069]';
+  return `${c}+(?: ${c}+)*`;
+}
+/** An ID as typed, the way it is stored: lowercase, no spaces at the ends, single spaces between words. */
+export const normalizeId = (typed: string) => typed.trim().replace(/\s+/g, ' ').toLowerCase();
+/** Says what an ID may contain, for forms. */
+export const ID_RULES = 'ID: 3-32 characters; letters, numbers, spaces and symbols, but not - , : ; / \\ ? # % & + = < > "';
 /** A company code, typed at login: 2-16 lowercase letters / digits. */
 export const COMPANY_CODE_RE = /^[a-z0-9]{2,16}$/;
 export const MAX_COMPANY_NAME = 80;
@@ -84,6 +96,8 @@ export interface AdminUser {
   email: string;
   /** Full name ('' = none, the ID is shown). */
   name: string;
+  /** Birth date "YYYY-MM-DD" ('' = not given). */
+  birthday?: string;
   /** A QR invite is waiting to be used (until this time, ms); null = none. */
   inviteExpires: number | null;
   /** Moved to another company: the account is kept (groups, departments, catalog) in case they come back. */
@@ -99,6 +113,8 @@ export interface EmployeeInput {
   departments?: string[];
   /** Profile photo, base64 (JPEG / PNG / WebP up to 2 MB). */
   photo?: { mime: string; data: string };
+  /** Birth date "YYYY-MM-DD". */
+  birthday?: string;
 }
 
 /** A one-time QR invite: scan (or paste the code), choose a password, done. */
@@ -139,6 +155,8 @@ export interface UserProfile {
   departments: string[];
   phone: string;
   email: string;
+  /** Birth date "YYYY-MM-DD" ('' / missing = not given). */
+  birthday?: string;
   /** May edit / delete their messages for everyone (so my app accepts their edits). */
   editDelete?: boolean;
 }
@@ -146,6 +164,15 @@ export interface UserProfile {
 export const MAX_PHONE = 20;
 export const MAX_EMAIL = 254;
 export const PHONE_RE = /^\+?[0-9 ()\-]{6,20}$/;
+/** A birth date, "YYYY-MM-DD". */
+export const BIRTHDAY_RE = /^(19|20)\d\d-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
+/** "1995-03-14" -> "14 March 1995" ('' stays ''). */
+export function birthdayText(b: string | undefined): string {
+  if (!b || !BIRTHDAY_RE.test(b)) return '';
+  const [y, m, d] = b.split('-').map(Number);
+  const month = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'][m! - 1];
+  return `${d} ${month} ${y}`;
+}
 export const EMAIL_RE = /^[^\s@]{1,64}@[^\s@]+\.[^\s@]{2,}$/;
 
 /** Org-wide rules the admin sets. Clients enforce them (message content never reaches the server). */
@@ -358,6 +385,8 @@ export interface MeResponse {
   /** My "About" line and whether I hide my last seen / online. */
   about?: string;
   hideLastSeen?: boolean;
+  /** My birth date "YYYY-MM-DD" ('' / missing = not given). */
+  birthday?: string;
 }
 
 export const MAX_ABOUT = 140;
@@ -366,6 +395,8 @@ export interface PrivacyRequest {
   about?: string;
   /** Nobody sees when I was last online (and, like WhatsApp, I don't see theirs). */
   hideLastSeen?: boolean;
+  /** My birth date "YYYY-MM-DD", '' to remove it. */
+  birthday?: string;
 }
 
 /** Reporting someone to the admins (POST /v1/report). The messages are what the reporter chose to show them. */

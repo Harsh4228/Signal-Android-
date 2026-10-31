@@ -7,6 +7,7 @@ RCT_EXTERN_METHOD(setTheme:(NSString *)theme resolver:(RCTPromiseResolveBlock)re
 RCT_EXTERN_METHOD(restart)
 RCT_EXTERN_METHOD(copyText:(NSString *)text resolver:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
 RCT_EXTERN_METHOD(saveToDownloads:(NSString *)name mime:(NSString *)mime base64:(NSString *)base64 resolver:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
+RCT_EXTERN_METHOD(shrinkPhoto:(NSString *)uri max:(nonnull NSNumber *)max resolver:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
 @end
 
 @interface RCT_EXTERN_MODULE(ApplePush, RCTEventEmitter)

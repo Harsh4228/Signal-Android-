@@ -28,6 +28,9 @@ import {
   MIN_PASSWORD_LENGTH,
   USERNAME_RE,
   ID_RE,
+  ID_RULES,
+  normalizeId,
+  BIRTHDAY_RE,
   COMPANY_CODE_RE,
   MAX_COMPANY_NAME,
   companyOf,
@@ -143,7 +146,18 @@ const WEB_FILES: Record<string, [file: string, type: string]> = {
 const WEB_CSP =
   "default-src 'none'; script-src 'self'; style-src 'self'; img-src data:; connect-src 'self'; form-action 'none'; frame-ancestors 'none'; base-uri 'none'";
 const WEB_SESSION_MS = 8 * 3600_000;
-const SEALED_PATH = new RegExp('^/v1/sealed/([a-z0-9_.]{3,32}(?:-[a-z0-9]{2,16})?)$');
+const SEALED_PATH = /^\/v1\/sealed\/([^/]+)$/;
+/** An account address from a URL path segment (IDs may have spaces and symbols, so they come %-encoded). */
+function userSeg(raw: string): string {
+  let u: string;
+  try {
+    u = decodeURIComponent(raw);
+  } catch {
+    throw new HttpError(400, 'invalid ID');
+  }
+  if (!USERNAME_RE.test(u)) throw new HttpError(404, 'user not found');
+  return u;
+}
 
 class HttpError extends Error {
   constructor(
@@ -634,6 +648,15 @@ export function createMeetMeServer(
     return v.trim().replace(/\s+/g, ' ');
   }
 
+  /** A birth date "YYYY-MM-DD" ('' = none), not in the future. */
+  function checkBirthday(v: unknown): string {
+    if (v === undefined || v === null || v === '') return '';
+    if (typeof v !== 'string' || !BIRTHDAY_RE.test(v) || v > new Date().toISOString().slice(0, 10)) {
+      throw new HttpError(400, 'Birth date: choose a valid date');
+    }
+    return v;
+  }
+
   /** A profile photo: { mime, data (base64) }, JPEG / PNG / WebP up to 2 MB, and really an image. */
   function checkPhoto(v: unknown): { mime: string; data: string } {
     const p = (v ?? {}) as { mime?: unknown; data?: unknown };
@@ -962,7 +985,7 @@ export function createMeetMeServer(
         throw new HttpError(401, 'Wrong setup code. It is in the server log.');
       }
       if (typeof body.username !== 'string' || !ID_RE.test(body.username)) {
-        throw new HttpError(400, 'ID must be 3-32 characters: a-z, 0-9, _ or .');
+        throw new HttpError(400, ID_RULES);
       }
       checkNewPassword(body.password);
       const hash = await hashPassword(body.password as string);
@@ -1126,7 +1149,7 @@ export function createMeetMeServer(
     let sm: RegExpMatchArray | null;
     if (method === 'POST' && (sm = path.match(SEALED_PATH))) {
       if (!sealedLimit.allow(clientIp(req))) throw new HttpError(429, 'slow down');
-      const to = sm[1]!;
+      const to = userSeg(sm[1]!);
       const key = req.headers['x-delivery-key'];
       const target = await db.getUser(to);
       let ok = false;
@@ -1156,8 +1179,8 @@ export function createMeetMeServer(
     if (method === 'GET' && path === '/v1/keys/count') {
       return send(200, { count: await db.countOneTimePreKeys(me) });
     }
-    if (method === 'GET' && (m = path.match(/^\/v1\/keys\/([a-z0-9_.]{3,32}(?:-[a-z0-9]{2,16})?)$/))) {
-      const user = await colleague(me, m[1]!);
+    if (method === 'GET' && (m = path.match(/^\/v1\/keys\/([^/]+)$/))) {
+      const user = await colleague(me, userSeg(m[1]!));
       if (!user) throw new HttpError(404, 'user not found');
       if (!isActive(user)) throw new HttpError(409, `${user.username} has not logged in yet`);
       if (user.banned) throw new HttpError(409, `${user.username} is suspended`);
@@ -1179,7 +1202,7 @@ export function createMeetMeServer(
     // Username search for "start a chat": prefix match over people you can actually message.
     if (method === 'GET' && path === '/v1/users') {
       const q = (url.searchParams.get('q') ?? '').trim().toLowerCase();
-      if (!/^[a-z0-9_.]{1,32}$/.test(q)) return send(200, { users: [] });
+      if (!q || q.length > 32) return send(200, { users: [] });
       const users = (await companyUsers(companyOf(me)))
         .filter((u) => u.username !== me && shortId(u.username).startsWith(q) && isActive(u) && !u.banned)
         .slice(0, 20)
@@ -1201,12 +1224,13 @@ export function createMeetMeServer(
           phone: u.phone,
           email: u.email,
           about: u.about,
+          birthday: u.birthday,
           editDelete: admins.includes(u.username) || resolveRight(rules, 'editDelete', { username: u.username, departments: u.departments }),
         }));
       return send(200, { users });
     }
-    if (method === 'GET' && (m = path.match(/^\/v1\/users\/([a-z0-9_.]{3,32}(?:-[a-z0-9]{2,16})?)$/))) {
-      const u = await colleague(me, m[1]!);
+    if (method === 'GET' && (m = path.match(/^\/v1\/users\/([^/]+)$/))) {
+      const u = await colleague(me, userSeg(m[1]!));
       if (!u) throw new HttpError(404, 'user not found');
       // The company directory: department and the work contact details the admin entered.
       const profile: UserProfile & { exists: true } = {
@@ -1218,6 +1242,7 @@ export function createMeetMeServer(
         phone: u.phone,
         email: u.email,
         about: u.about,
+        birthday: u.birthday,
         editDelete:
           (await isAdminUser(u.username)) ||
           resolveRight(await getRules(companyOf(me)), 'editDelete', { username: u.username, departments: u.departments }),
@@ -1295,6 +1320,7 @@ export function createMeetMeServer(
         rights: await rightsOf(user),
         about: user.about,
         hideLastSeen: !!user.hide_last_seen,
+        birthday: user.birthday,
       };
       return send(200, me_);
     }
@@ -1321,6 +1347,7 @@ export function createMeetMeServer(
         if (typeof body.hideLastSeen !== 'boolean') throw new HttpError(400, 'hideLastSeen must be true or false');
         p.hideLastSeen = body.hideLastSeen;
       }
+      if (body.birthday !== undefined) await db.setBirthday(me, checkBirthday(body.birthday));
       await db.setPrivacy(me, p);
       return send(204);
     }
@@ -1346,8 +1373,9 @@ export function createMeetMeServer(
       await db.setAvatar(me, null);
       return send(204);
     }
-    if (method === 'GET' && (m = path.match(/^\/v1\/avatars\/([a-z0-9_.]{3,32}(?:-[a-z0-9]{2,16})?)$/))) {
-      const a = sameCompany(me, m[1]!) ? await db.getAvatar(m[1]!) : undefined;
+    if (method === 'GET' && (m = path.match(/^\/v1\/avatars\/([^/]+)$/))) {
+      const owner = userSeg(m[1]!);
+      const a = sameCompany(me, owner) ? await db.getAvatar(owner) : undefined;
       if (!a) throw new HttpError(404, 'no photo');
       const out: AvatarResponse = a;
       return send(200, out);
@@ -1769,6 +1797,7 @@ export function createMeetMeServer(
           phone: u.phone,
           email: u.email,
           name: u.display_name,
+          birthday: u.birthday,
           inviteExpires: u.invite_hash && Number(u.invite_expires) > Date.now() ? Number(u.invite_expires) : null,
         }));
         return send(200, { users });
@@ -1783,11 +1812,13 @@ export function createMeetMeServer(
           email?: unknown;
           name?: unknown;
           photo?: unknown;
+          birthday?: unknown;
         };
         // The admin types an ID; the account gets the company part (apps of the same version send just the ID).
-        const typed = typeof body.username === 'string' && co && body.username.endsWith(`-${co}`) ? shortId(body.username) : body.username;
+        const raw = typeof body.username === 'string' ? normalizeId(body.username) : body.username;
+        const typed = typeof raw === 'string' && co && raw.endsWith(`-${co}`) ? shortId(raw) : raw;
         if (typeof typed !== 'string' || !ID_RE.test(typed)) {
-          throw new HttpError(400, 'ID must be 3-32 characters: a-z, 0-9, _ or .');
+          throw new HttpError(400, ID_RULES);
         }
         const username = makeUsername(typed, co);
         // Normally there is no password: the person chooses one when they scan the QR invite.
@@ -1795,6 +1826,7 @@ export function createMeetMeServer(
         const departments = await checkDepartments(co, body.departments);
         const { phone, email } = checkContactInfo(body.phone, body.email);
         const name = checkName(body.name);
+        const birthday = checkBirthday(body.birthday);
         const photo = body.photo === undefined ? null : checkPhoto(body.photo);
         if (body.canShare !== undefined && typeof body.canShare !== 'boolean') {
           throw new HttpError(400, 'canShare must be true or false');
@@ -1802,15 +1834,15 @@ export function createMeetMeServer(
         const canShare = body.canShare === true;
         if (await db.getUser(username)) throw new HttpError(409, 'That ID already exists');
         const password = typeof body.password === 'string' ? body.password : randomBytes(24).toString('base64url');
-        await db.createPendingUser(username, await hashPassword(password), { departments, canShare, phone, email, name });
+        await db.createPendingUser(username, await hashPassword(password), { departments, canShare, phone, email, name, birthday });
         if (photo) await db.setAvatar(username, { ...photo, ver: Date.now() });
         const invite = await newInvite(username);
-        const detail = [name, departments.length && `departments: ${departments.join(', ')}`, phone && `mobile ${phone}`, email && `email ${email}`];
+        const detail = [name, departments.length && `departments: ${departments.join(', ')}`, phone && `mobile ${phone}`, email && `email ${email}`, birthday && `born ${birthday}`];
         await audit(me, 'user.create', username, detail.filter(Boolean).join(', '));
         return send(200, { ok: true, invite });
       }
-      if ((m = path.match(/^\/v1\/admin\/users\/([a-z0-9_.]{3,32}(?:-[a-z0-9]{2,16})?)(\/password|\/ban|\/departments|\/share|\/contact|\/invite|\/profile|\/avatar|\/admin)?$/))) {
-        const target = await colleague(me, m[1]!);
+      if ((m = path.match(/^\/v1\/admin\/users\/([^/]+)(\/password|\/ban|\/departments|\/share|\/contact|\/invite|\/profile|\/avatar|\/admin)?$/))) {
+        const target = await colleague(me, userSeg(m[1]!));
         if (!target) throw new HttpError(404, 'user not found');
         if (target.banned === MOVED && m[2] && method !== 'GET') {
           throw new HttpError(400, `${shortId(target.username)} was moved to another company`);
@@ -1845,12 +1877,14 @@ export function createMeetMeServer(
           return send(200, invite);
         }
         if (method === 'PUT' && m[2] === '/profile') {
-          const body = (await readJson(req)) as { name?: unknown; phone?: unknown; email?: unknown };
+          const body = (await readJson(req)) as { name?: unknown; phone?: unknown; email?: unknown; birthday?: unknown };
           const name = body.name === undefined ? target.display_name : checkName(body.name);
+          const birthday = body.birthday === undefined ? target.birthday : checkBirthday(body.birthday);
           const { phone, email } = checkContactInfo(body.phone ?? target.phone, body.email ?? target.email);
           await db.setDisplayName(target.username, name);
           await db.setContactInfo(target.username, phone, email);
-          await audit(me, 'user.profile', target.username, [name, phone, email].filter(Boolean).join(', ') || 'cleared');
+          await db.setBirthday(target.username, birthday);
+          await audit(me, 'user.profile', target.username, [name, phone, email, birthday && `born ${birthday}`].filter(Boolean).join(', ') || 'cleared');
           return send(204);
         }
         if (m[2] === '/avatar' && (method === 'PUT' || method === 'DELETE')) {

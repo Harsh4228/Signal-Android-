@@ -147,7 +147,7 @@ function PersonRow({ user, items, onOpen }: { user: string; items: StatusUpdate[
     <li className="clickable" onClick={onOpen}>
       <Ring name={user} count={items.length} seen={items.filter((s) => s.seen).length} />
       <div className="grow">
-        <div className="name">{user}</div>
+        <div className="name">{client.displayName(user)}</div>
         <div className="muted small">{ago(items[items.length - 1]!.ts)}</div>
       </div>
     </li>
@@ -245,7 +245,7 @@ function StatusComposer({
 }
 
 /** Full-screen player: each update for 5 seconds with progress bars; click left / right to go back / on. */
-function StatusViewer({ user, start, onClose, onToast }: { user: string; start: number; onClose: () => void; onToast: (m: string) => void }) {
+export function StatusViewer({ user, start, onClose, onToast }: { user: string; start: number; onClose: () => void; onToast: (m: string) => void }) {
   const c = useClient();
   const mineView = user === c.account?.username;
   const items = mineView ? c.myStatuses() : (c.statusGroups().find((g) => g.user === user)?.items ?? []);
@@ -340,7 +340,7 @@ function StatusViewer({ user, start, onClose, onToast }: { user: string; start: 
         <header>
           <Avatar name={user} size="sm" />
           <div className="grow">
-            <div className="name">{mineView ? 'My status' : user}</div>
+            <div className="name">{mineView ? 'My status' : client.displayName(user)}</div>
             <div className="small">{ago(s.ts)}</div>
           </div>
           {mineView && (
@@ -382,7 +382,7 @@ function StatusViewer({ user, start, onClose, onToast }: { user: string; start: 
                   viewers.map(([u, ts]) => (
                     <li key={u}>
                       <Avatar name={u} size="sm" />
-                      <span className="grow">{u}</span>
+                      <span className="grow">{client.displayName(u)}</span>
                       <span className="muted small">{shortTime(ts)}</span>
                     </li>
                   ))

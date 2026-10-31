@@ -2,7 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { ArrowLeft, Search } from 'lucide-react';
 import { shortId, type UserProfile } from '@meetme/core';
 import { client } from '../messenger';
-import { Avatar, errorText } from './ui';
+import { errorText } from './ui';
+import { AvatarTap } from './Profile';
 
 const NO_DEPT = 'No department';
 
@@ -24,7 +25,7 @@ function byDepartment(users: UserProfile[], q: string): [string, UserProfile[]][
  * Everyone in the company you can message, by department, like WhatsApp's "New chat" list.
  * With onBack it is a full sidebar pane with its own header; without, it fills the empty chat list (first login).
  */
-export function Directory({ onOpen, onBack }: { onOpen: (username: string) => void; onBack?: () => void }) {
+export function Directory({ onOpen, onBack, onToast }: { onOpen: (username: string) => void; onBack?: () => void; onToast: (m: string) => void }) {
   const [users, setUsers] = useState<UserProfile[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
@@ -64,7 +65,7 @@ export function Directory({ onOpen, onBack }: { onOpen: (username: string) => vo
           </li>,
           ...people.map((u) => (
             <li key={`${dept}:${u.username}`} onClick={() => onOpen(u.username)}>
-              <Avatar name={u.username} />
+              <AvatarTap user={u.username} onToast={onToast} />
               <div className="grow">
                 <div className="name">{u.name || shortId(u.username)}</div>
                 <div className="preview">{[shortId(u.username), ...u.departments].join(' · ')}</div>

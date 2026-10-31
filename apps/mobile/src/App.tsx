@@ -29,6 +29,7 @@ import { CatalogScreen, StarredScreen } from './screens/ChatExtras';
 import { HelpDeskScreen } from './screens/HelpDesk';
 import { CallsScreen } from './screens/CallsScreen';
 import { ChannelsScreen } from './screens/ChannelsScreen';
+import { BottomTabs, TAB_ROUTES } from './screens/BottomTabs';
 
 export type Route =
   | { name: 'list' }
@@ -151,6 +152,7 @@ export default function App() {
     return () => sub.remove();
   }, [route, call.status, callHidden, groupCall.status, groupHidden]);
 
+  const tab = (TAB_ROUTES as readonly string[]).includes(route.name) ? (route.name as (typeof TAB_ROUTES)[number]) : null;
   let screen;
   if (!ready) {
     screen = (
@@ -213,6 +215,8 @@ export default function App() {
         <KeyboardAvoidingView style={s.fill} behavior="padding">
           {screen}
         </KeyboardAvoidingView>
+        {/* WhatsApp's bottom bar on the main pages (not inside a chat or a sub-page). */}
+        {ready && c.account && !c.moved && !c.pending && tab && <BottomTabs current={tab} navigate={setRoute} />}
         <MediaViewerHost onToast={setToast} />
         {ready && c.account && !lock.locked && call.status === 'idle' && <NoticePopup />}
         {ready && c.account && lock.locked && <LockScreen />}

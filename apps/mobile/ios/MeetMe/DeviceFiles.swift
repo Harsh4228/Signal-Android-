@@ -81,6 +81,31 @@ class DeviceFiles: NSObject {
     }
   }
 
+  /**
+   * A profile photo from the camera or the gallery: upright, the middle square, at most `max` px, as a JPEG in
+   * base64 (camera pictures are far larger than the 2 MB a profile photo may be).
+   */
+  @objc func shrinkPhoto(_ uri: String, max: NSNumber, resolver resolve: @escaping RCTPromiseResolveBlock, rejecter reject: @escaping RCTPromiseRejectBlock) {
+    DispatchQueue.global(qos: .userInitiated).async {
+      let url = URL(string: uri).flatMap { $0.scheme == nil ? nil : $0 } ?? URL(fileURLWithPath: uri)
+      let scoped = url.startAccessingSecurityScopedResource()
+      defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+      guard let data = try? Data(contentsOf: url), let image = UIImage(data: data) else {
+        return reject("photo_failed", "That file is not a photo", nil)
+      }
+      // UIImage knows the camera's orientation; drawing it makes the pixels upright.
+      let side = min(image.size.width, image.size.height)
+      let out = min(CGFloat(max.doubleValue), side)
+      let format = UIGraphicsImageRendererFormat()
+      format.scale = 1
+      let jpeg = UIGraphicsImageRenderer(size: CGSize(width: out, height: out), format: format).jpegData(withCompressionQuality: 0.85) { _ in
+        let k = out / side
+        image.draw(in: CGRect(x: -(image.size.width - side) / 2 * k, y: -(image.size.height - side) / 2 * k, width: image.size.width * k, height: image.size.height * k))
+      }
+      resolve(jpeg.base64EncodedString())
+    }
+  }
+
   static var appWindow: UIWindow? { (UIApplication.shared.delegate as? AppDelegate)?.window }
 
   static func topController() -> UIViewController? {

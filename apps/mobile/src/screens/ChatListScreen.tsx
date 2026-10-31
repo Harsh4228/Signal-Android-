@@ -1,11 +1,12 @@
 import { useState } from 'react';
 import { FlatList, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
-import { Archive, ArchiveRestore, BellOff, Ban, Bell, ChevronLeft, CircleDashed, EllipsisVertical, LifeBuoy, Megaphone, Phone, Pin, PinOff, ShoppingBag, Star, MessageSquarePlus, Search, Settings, ShieldCheck } from 'lucide-react-native';
+import { Archive, ArchiveRestore, BellOff, Ban, Bell, ChevronLeft, EllipsisVertical, LifeBuoy, Megaphone, Pin, PinOff, ShoppingBag, Star, MessageSquarePlus, Search, Settings, ShieldCheck } from 'lucide-react-native';
 import { MessengerClient, isGroupKey } from '@meetme/core';
 import { client, useClient } from '../messenger';
 import { colors, s } from '../theme';
-import { Banner, Button, ChatAvatar, Field, Header, IconButton, Logo, Sheet, shortTime, typingText } from '../ui';
+import { Banner, Button, ChatAvatar, Field, Header, IconButton, Sheet, shortTime, typingText } from '../ui';
 import { DirectoryList, openDirectChat } from './DirectoryScreen';
+import { AvatarTap } from './Profile';
 import type { Route } from '../App';
 
 export function ChatListScreen({ navigate, onError }: { navigate: (r: Route) => void; onError: (m: string) => void }) {
@@ -32,37 +33,21 @@ export function ChatListScreen({ navigate, onError }: { navigate: (r: Route) => 
   return (
     <View style={s.screen}>
       <Header
-        left={
-          <View style={{ paddingLeft: 8 }}>
-            <Logo size={32} />
-          </View>
-        }
         title={
           <View>
-            <Text style={[s.title, { fontSize: 19, fontWeight: '700' }]}>CellMate</Text>
-            <View style={[s.row, { gap: 5 }]}>
-              <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: statusColor }} />
-              <Text style={[s.muted, { fontSize: 12, textTransform: 'capitalize' }]}>
-                {c.account!.username} · {c.banned ? 'suspended' : c.status}
-              </Text>
-            </View>
+            <Text style={[s.title, { fontSize: 22, fontWeight: '700' }]}>{archived ? 'Archived' : 'Chats'}</Text>
+            {(!online || c.banned) && (
+              <View style={[s.row, { gap: 5 }]}>
+                <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: statusColor }} />
+                <Text style={[s.muted, { fontSize: 12, textTransform: 'capitalize' }]}>{c.banned ? 'suspended' : c.status}</Text>
+              </View>
+            )}
           </View>
         }
         right={
           <>
-            <View>
-              <IconButton icon={CircleDashed} label="Status" onPress={() => navigate({ name: 'status' })} />
-              {c.unseenStatusCount > 0 && (
-                <View
-                  pointerEvents="none"
-                  style={{ position: 'absolute', top: 8, right: 8, width: 9, height: 9, borderRadius: 5, backgroundColor: colors.ok, borderWidth: 2, borderColor: colors.surface }}
-                />
-              )}
-            </View>
-            <IconButton icon={Phone} label="Calls" onPress={() => navigate({ name: 'calls' })} />
             <IconButton icon={LifeBuoy} label="Help desk" onPress={() => navigate({ name: 'help' })} />
-            <IconButton icon={Bell} label="Notices" onPress={() => navigate({ name: 'notices' })} />
-            {/* Everything else lives in the ⋮ menu, like WhatsApp. */}
+            {/* Everything else lives in the ⋮ menu, like WhatsApp; the main pages are in the bottom bar. */}
             <IconButton icon={EllipsisVertical} label="Menu" onPress={() => setMore(true)} />
           </>
         }
@@ -138,7 +123,7 @@ export function ChatListScreen({ navigate, onError }: { navigate: (r: Route) => 
               onLongPress={() => setActing(key)}
               style={({ pressed }) => [styles.item, pressed && { backgroundColor: colors.hover }]}
             >
-              <ChatAvatar chatKey={key} size={50} />
+              {group ? <ChatAvatar chatKey={key} size={50} /> : <AvatarTap user={key} size={50} navigate={navigate} onToast={onError} />}
               <View style={styles.itemBody}>
                 <View style={[s.row, { gap: 8 }]}>
                   <Text style={[s.textStrong, { flex: 1, fontSize: 16 }]} numberOfLines={1}>
@@ -220,7 +205,6 @@ export function ChatListScreen({ navigate, onError }: { navigate: (r: Route) => 
                   { icon: Megaphone, label: 'New announcement', onPress: () => navigate({ name: 'broadcast' }) },
                 ]
               : []),
-            { icon: Megaphone, label: 'Channels & communities', onPress: () => navigate({ name: 'channels' }) },
             { icon: Star, label: 'Starred messages', onPress: () => navigate({ name: 'starred' }) },
             { icon: ShoppingBag, label: 'My catalog', onPress: () => navigate({ name: 'catalog' }) },
             { icon: Settings, label: 'Settings', onPress: () => navigate({ name: 'settings' }) },
