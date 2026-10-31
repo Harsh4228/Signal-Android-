@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { Archive, ArchiveRestore, BellOff, ChevronLeft, Phone, Pin, PinOff, Ban, Bell, CircleDashed, EllipsisVertical, Headset, Lock, Megaphone, MessageSquareText, RadioTower, ListPlus, ListX, Pencil, Plus, ArrowUpDown, Check, ShoppingBag, Star, StarOff, Eraser, Trash2, UsersRound, X, MessageSquarePlus, Search, Settings as SettingsIcon, ShieldCheck, type LucideIcon } from 'lucide-react';
-import { CHAT_SORTS, MessengerClient, isGroupKey, type ChatList, type ChatSort } from '@meetme/core';
+import { Archive, ArchiveRestore, BellOff, ChevronLeft, Phone, Pin, PinOff, Ban, Bell, CircleDashed, EllipsisVertical, Headset, Lock, Megaphone, MessageSquareText, RadioTower, ListPlus, ListX, Pencil, Plus, ShoppingBag, Star, StarOff, Eraser, Trash2, UsersRound, X, MessageSquarePlus, Search, Settings as SettingsIcon, ShieldCheck, type LucideIcon } from 'lucide-react';
+import { MessengerClient, isGroupKey, type ChatList } from '@meetme/core';
 import { appLock, client, useClient, useLock } from '../messenger';
 import { Broadcast } from './Broadcast';
 import { AdminPanel } from './AdminPanel';
@@ -31,10 +31,8 @@ export function Sidebar({ onSettings, onError }: { onSettings: () => void; onErr
   const [panel, setPanel] = useState<Page | null>(null);
   const [archived, setArchived] = useState(false);
   const [view, setView] = useState<string>('all');
-  const [chatSort, setChatSort] = useState<ChatSort>('recent');
   /** My lists (WhatsApp-style chips): the one being made or changed. */
   const [editingList, setEditingList] = useState<ChatList | 'new' | null>(null);
-  const [sortOpen, setSortOpen] = useState(false);
   const [adminStart, setAdminStart] = useState<{ tab?: AdminTab; newGroup?: boolean }>({});
   /** Right-click menu of a chat: pin, archive, mute. */
   const [chatMenu, setChatMenu] = useState<{ key: string; x: number; y: number } | null>(null);
@@ -94,7 +92,7 @@ export function Sidebar({ onSettings, onError }: { onSettings: () => void; onErr
     (view.startsWith('list:') && !!activeList && c.inChatList(activeList, k));
   // Pinned first, then the newest; archived chats have their own list (like WhatsApp).
   const sorted = c
-    .orderedChats({ archived, sort: chatSort })
+    .orderedChats({ archived })
     .filter((k) => show(k) && (!q || c.chatTitle(k).toLowerCase().includes(q) || deptsOf(k).some((d) => d.toLowerCase().includes(q))));
   const allDepartments = [...new Set(c.chatKeys().flatMap(deptsOf))].sort();
   const offline = c.status !== 'online';
@@ -162,20 +160,6 @@ export function Sidebar({ onSettings, onError }: { onSettings: () => void; onErr
       <header>
         {archived ? <div className="sidebar-title">Archived</div> : <CompanyBadge onToast={onError} />}
         <div className="actions">
-          <div className="menu-host">
-            <button className={`icon ${sortOpen || chatSort !== 'recent' ? 'active' : ''}`} title="Sort chats" onClick={() => setSortOpen((v) => !v)}>
-              <ArrowUpDown size={19} />
-            </button>
-            {sortOpen && (
-              <div className="dropdown" role="menu" onMouseLeave={() => setSortOpen(false)}>
-                {CHAT_SORTS.map(([v, label]) => (
-                  <button key={v} role="menuitemradio" aria-checked={chatSort === v} onClick={() => (setChatSort(v), setSortOpen(false))}>
-                    {chatSort === v ? <Check size={17} /> : <span style={{ width: 17 }} />} {label}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
           <button className={`icon ${newChat ? 'active' : ''}`} title="New chat" onClick={() => setNewChat((v) => !v)}>
             <MessageSquarePlus size={20} />
           </button>
