@@ -4255,3 +4255,96 @@ a.rich.phone {
   font-weight: 700;
   line-height: 1;
 }
+
+/* The admin panel button stands out: navy blue with a white shield. */
+.rail-btn.rail-admin {
+  background: #1e3a8a;
+  color: #fff;
+  box-shadow: 0 2px 6px rgba(30, 58, 138, 0.35);
+}
+.rail-btn.rail-admin:hover:not(:disabled),
+:root[data-theme='light'] .rail-btn.rail-admin:hover:not(:disabled) {
+  background: #172f73;
+  color: #fff;
+}
+:root[data-theme='light'] .rail-btn.rail-admin,
+:root[data-theme='light'] .rail-btn.rail-admin.active {
+  background: #1e3a8a;
+  color: #fff;
+}
+.rail-btn.rail-admin.active {
+  box-shadow: 0 0 0 3px #93b4f5;
+}
+
+/* Departments: a dropdown with search and a tick box per department. */
+.dept-dropdown {
+  position: relative;
+  min-width: 0;
+}
+.dept-dropdown-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 6px 10px;
+  text-align: left;
+  justify-content: flex-start;
+  background: var(--surface);
+}
+.dept-dropdown-value {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-width: 0;
+}
+.dept-dropdown-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 30;
+  padding: 8px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: var(--shadow-lg);
+  min-width: 240px;
+}
+.dept-dropdown-menu ul {
+  list-style: none;
+  margin: 6px 0;
+  padding: 0;
+  max-height: 220px;
+  overflow-y: auto;
+}
+.dept-dropdown-menu li label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 8px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: 500;
+  color: var(--text);
+}
+.dept-dropdown-menu li label:hover {
+  background: var(--hover);
+}
+.dept-dropdown-menu li input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+}
+.dept-dropdown-foot {
+  gap: 8px;
+  align-items: center;
+  padding-top: 6px;
+  border-top: 1px solid var(--line);
+}
+/* Opens in place (pushing what's below down), so it is never cut off inside a scrolling window. */
+.dept-dropdown-menu {
+  position: static;
+  margin-top: 6px;
+  box-shadow: var(--shadow-md);
+}

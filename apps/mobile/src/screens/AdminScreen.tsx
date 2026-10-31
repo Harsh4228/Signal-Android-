@@ -8,7 +8,9 @@ import {
   Camera,
   Image as ImageIcon,
   Check,
+  ChevronDown,
   ChevronRight,
+  ChevronUp,
   CircleAlert,
   CircleCheck,
   KeyRound,
@@ -635,6 +637,7 @@ function UsersTab({
 }
 
 /** Tick any number of departments from the admin's list (none ticked = no department). */
+/** Departments: a dropdown with a search box and a tick box per department (none ticked = no department). */
 function DepartmentField({
   value,
   onChange,
@@ -644,28 +647,65 @@ function DepartmentField({
   onChange: (v: string[]) => void;
   departments: string[];
 }) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
   const toggle = (d: string) => onChange(value.includes(d) ? value.filter((x) => x !== d) : [...value, d]);
+  const q = query.trim().toLowerCase();
+  const shown = departments.filter((d) => d.toLowerCase().includes(q));
   return (
     <View>
       <Text style={s.label}>Departments{value.length ? ` (${value.length})` : ''}</Text>
       {departments.length ? (
-        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
-          {departments.map((d) => {
-            const on = value.includes(d);
-            return (
-              <Pressable
-                key={d}
-                onPress={() => toggle(d)}
-                accessibilityRole="checkbox"
-                accessibilityState={{ checked: on }}
-                style={[styles.chip, on && styles.chipActive, s.row, { gap: 4 }]}
-              >
-                {on && <Check size={13} color={colors.accentText} />}
-                <Text style={{ fontSize: 13, color: on ? colors.accentText : colors.text2, fontWeight: '500' }}>{d}</Text>
-              </Pressable>
-            );
-          })}
-        </View>
+        <>
+          <Pressable onPress={() => setOpen(!open)} style={[s.input, s.row, { gap: 6, minHeight: 46 }]} accessibilityLabel="Choose departments">
+            <View style={{ flex: 1, flexDirection: 'row', flexWrap: 'wrap', gap: 4 }}>
+              {value.length ? (
+                value.map((d) => (
+                  <View key={d} style={[styles.chip, styles.chipActive]}>
+                    <Text style={{ fontSize: 12.5, color: colors.accentText, fontWeight: '600' }}>{d}</Text>
+                  </View>
+                ))
+              ) : (
+                <Text style={s.muted}>Choose departments</Text>
+              )}
+            </View>
+            {open ? <ChevronUp size={18} color={colors.muted} /> : <ChevronDown size={18} color={colors.muted} />}
+          </Pressable>
+          {open && (
+            <View style={[s.card, { marginTop: 6, padding: 8, gap: 4 }]}>
+              <View style={[s.row, { gap: 8, paddingHorizontal: 10, borderRadius: 10, backgroundColor: colors.bg }]}>
+                <Search size={16} color={colors.faint} />
+                <TextInput
+                  style={{ flex: 1, color: colors.text, paddingVertical: 8 }}
+                  value={query}
+                  onChangeText={setQuery}
+                  placeholder="Search departments"
+                  placeholderTextColor={colors.faint}
+                />
+              </View>
+              {shown.map((d) => {
+                const on = value.includes(d);
+                return (
+                  <Pressable
+                    key={d}
+                    onPress={() => toggle(d)}
+                    accessibilityRole="checkbox"
+                    accessibilityState={{ checked: on }}
+                    style={({ pressed }) => [s.row, { gap: 12, paddingVertical: 10, paddingHorizontal: 8, borderRadius: 8 }, pressed && { backgroundColor: colors.hover }]}
+                  >
+                    {on ? <SquareCheck size={20} color={colors.accent} /> : <Square size={20} color={colors.faint} />}
+                    <Text style={[s.text, { flex: 1 }]}>{d}</Text>
+                  </Pressable>
+                );
+              })}
+              {!shown.length && <Text style={[s.muted, { padding: 8 }]}>No department matches</Text>}
+              <View style={[s.row, { justifyContent: 'flex-end', gap: 8, paddingTop: 4 }]}>
+                {!!value.length && <Button title="Clear" onPress={() => onChange([])} />}
+                <Button variant="primary" title="Done" onPress={() => setOpen(false)} />
+              </View>
+            </View>
+          )}
+        </>
       ) : (
         <Text style={[s.muted, { fontSize: 13 }]}>No departments yet. Add them in the Departments tab.</Text>
       )}

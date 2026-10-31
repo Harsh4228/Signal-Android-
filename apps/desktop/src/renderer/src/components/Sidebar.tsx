@@ -136,7 +136,7 @@ export function Sidebar({ onSettings, onError }: { onSettings: () => void; onErr
       ))}
       <div className="rail-space" />
       {c.isAdmin && (
-        <button className={`rail-btn desk-only ${panel === 'admin' ? 'active' : ''}`} title="Admin panel" disabled={offline} onClick={() => go('admin')}>
+        <button className={`rail-btn desk-only rail-admin ${panel === 'admin' ? 'active' : ''}`} title="Admin panel" disabled={offline} onClick={() => go('admin')}>
           <span className="rail-icon">
             <ShieldCheck size={22} />
           </span>

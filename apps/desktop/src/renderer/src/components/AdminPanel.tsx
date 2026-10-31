@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import QRCode from 'qrcode';
 import {
   ArrowLeft,
@@ -8,6 +8,7 @@ import {
   Cake,
   Camera,
   Check,
+  ChevronDown,
   ChevronRight,
   CircleCheck,
   Copy,
@@ -459,6 +460,10 @@ function UsersTab({
 }
 
 /** Tick any number of departments from the admin's list (none ticked = no department). */
+/**
+ * Pick any number of departments from the admin's list (none = no department): a dropdown with a search box
+ * and a tick box per department; the chosen ones show on the button.
+ */
 function DepartmentPicker({
   value,
   onChange,
@@ -468,21 +473,63 @@ function DepartmentPicker({
   onChange: (v: string[]) => void;
   departments: string[];
 }) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => !ref.current?.contains(e.target as Node) && setOpen(false);
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [open]);
   const toggle = (d: string) => onChange(value.includes(d) ? value.filter((x) => x !== d) : [...value, d]);
   if (!departments.length) return <span className="muted small">No departments yet</span>;
+  const q = query.trim().toLowerCase();
+  const shown = departments.filter((d) => d.toLowerCase().includes(q));
   return (
-    <div className="chips dept-picker" role="group" aria-label="Departments">
-      {departments.map((d) => (
-        <button
-          key={d}
-          type="button"
-          className={value.includes(d) ? 'active' : ''}
-          aria-pressed={value.includes(d)}
-          onClick={() => toggle(d)}
-        >
-          {value.includes(d) && <Check size={13} />} {d}
-        </button>
-      ))}
+    <div className="dept-dropdown grow" ref={ref}>
+      <button type="button" className="dept-dropdown-btn" onClick={() => setOpen(!open)} aria-expanded={open}>
+        <span className="grow dept-dropdown-value">
+          {value.length ? (
+            value.map((d) => (
+              <span key={d} className="tag dept">
+                {d}
+              </span>
+            ))
+          ) : (
+            <span className="muted">Choose departments</span>
+          )}
+        </span>
+        <ChevronDown size={16} className="muted" />
+      </button>
+      {open && (
+        <div className="dept-dropdown-menu">
+          <div className="search">
+            <Search size={15} />
+            <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search departments" autoFocus />
+          </div>
+          <ul>
+            {shown.map((d) => (
+              <li key={d}>
+                <label>
+                  <input type="checkbox" checked={value.includes(d)} onChange={() => toggle(d)} />
+                  <span className="grow">{d}</span>
+                </label>
+              </li>
+            ))}
+            {!shown.length && <li className="muted small">No department matches</li>}
+          </ul>
+          <div className="row dept-dropdown-foot">
+            <button type="button" className="link-btn" onClick={() => onChange([])} disabled={!value.length}>
+              Clear
+            </button>
+            <span className="grow muted small">{value.length} chosen</span>
+            <button type="button" className="primary" onClick={() => setOpen(false)}>
+              Done
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
