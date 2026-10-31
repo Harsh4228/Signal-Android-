@@ -285,6 +285,65 @@ export interface GroupInfo {
   createdAt: number;
 }
 
+// ---- sorting the lists people pick from (the same choices on every app) ----
+
+const byText = (a: string, b: string) => a.localeCompare(b, undefined, { sensitivity: 'base', numeric: true });
+const shownName = (u: { username: string; name?: string }) => u.name || u.username.replace(/-[a-z0-9]{2,16}$/, '');
+
+export type UserSort = 'name' | 'name-desc' | 'department' | 'active' | 'newest';
+export const USER_SORTS: [UserSort, string][] = [
+  ['name', 'Name A–Z'],
+  ['name-desc', 'Name Z–A'],
+  ['department', 'Department'],
+  ['active', 'Recently active'],
+  ['newest', 'Newest first'],
+];
+/** People sorted by name, department (then name), last online, or when they were added. */
+export function sortUsers<T extends { username: string; name?: string; departments: string[]; online?: boolean; lastSeen?: number | null; createdAt?: number }>(
+  list: T[],
+  by: UserSort,
+): T[] {
+  const name = (a: T, b: T) => byText(shownName(a), shownName(b));
+  const seen = (u: T) => (u.online ? Number.MAX_SAFE_INTEGER : (u.lastSeen ?? 0));
+  const dept = (u: T) => u.departments[0] ?? '￿'; // no department last
+  const cmp: Record<UserSort, (a: T, b: T) => number> = {
+    name,
+    'name-desc': (a, b) => name(b, a),
+    department: (a, b) => byText(dept(a), dept(b)) || name(a, b),
+    active: (a, b) => seen(b) - seen(a) || name(a, b),
+    newest: (a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0) || name(a, b),
+  };
+  return [...list].sort(cmp[by]);
+}
+
+export type GroupSort = 'name' | 'members' | 'newest';
+export const GROUP_SORTS: [GroupSort, string][] = [
+  ['name', 'Name A–Z'],
+  ['members', 'Most members'],
+  ['newest', 'Newest first'],
+];
+export function sortGroups<T extends { name: string; members: string[]; createdAt: number }>(list: T[], by: GroupSort): T[] {
+  return [...list].sort((a, b) =>
+    by === 'members' ? b.members.length - a.members.length || byText(a.name, b.name) : by === 'newest' ? b.createdAt - a.createdAt : byText(a.name, b.name),
+  );
+}
+
+export type DepartmentSort = 'name' | 'members';
+export const DEPARTMENT_SORTS: [DepartmentSort, string][] = [
+  ['name', 'Name A–Z'],
+  ['members', 'Most people'],
+];
+export function sortDepartments(list: string[], by: DepartmentSort, count: (d: string) => number): string[] {
+  return [...list].sort((a, b) => (by === 'members' ? count(b) - count(a) || byText(a, b) : byText(a, b)));
+}
+
+export type ChatSort = 'recent' | 'name' | 'unread';
+export const CHAT_SORTS: [ChatSort, string][] = [
+  ['recent', 'Most recent'],
+  ['name', 'Name A–Z'],
+  ['unread', 'Unread first'],
+];
+
 export const GROUP_ID_RE = /^[0-9a-f]{16}$/;
 export const MAX_GROUP_NAME = 64;
 export const MAX_DEPARTMENT = 40;

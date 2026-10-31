@@ -1,18 +1,20 @@
 import { useEffect, useMemo, useState } from 'react';
 import { ArrowLeft, Search } from 'lucide-react';
-import { shortId, type UserProfile } from '@meetme/core';
+import { shortId, sortUsers, type UserProfile } from '@meetme/core';
 import { client } from '../messenger';
-import { errorText } from './ui';
+import { SortSelect, errorText } from './ui';
 import { AvatarTap } from './Profile';
 
 const NO_DEPT = 'No department';
 
 /** Colleagues grouped by department (someone in two departments shows in both), filtered by name / ID / department. */
-function byDepartment(users: UserProfile[], q: string): [string, UserProfile[]][] {
+function byDepartment(users: UserProfile[], q: string, flat: boolean): [string, UserProfile[]][] {
   const match = (u: UserProfile) =>
     !q || (u.name || '').toLowerCase().includes(q) || shortId(u.username).includes(q) || u.departments.some((d) => d.toLowerCase().includes(q));
+  const found = sortUsers(users.filter(match), 'name');
+  if (flat) return found.length ? [['Everyone', found]] : [];
   const groups = new Map<string, UserProfile[]>();
-  for (const u of users.filter(match)) {
+  for (const u of found) {
     for (const d of u.departments.length ? u.departments : [NO_DEPT]) {
       if (!groups.has(d)) groups.set(d, []);
       groups.get(d)!.push(u);
@@ -33,7 +35,8 @@ export function Directory({ onOpen, onBack, onToast }: { onOpen: (username: stri
     client.listDirectory().then(setUsers, (e) => setError(errorText(e)));
   }, []);
   const q = query.trim().toLowerCase();
-  const groups = useMemo(() => byDepartment(users ?? [], q), [users, q]);
+  const [sort, setSort] = useState<'department' | 'name'>('department');
+  const groups = useMemo(() => byDepartment(users ?? [], q, sort === 'name'), [users, q, sort]);
 
   return (
     <>
@@ -53,6 +56,16 @@ export function Directory({ onOpen, onBack, onToast }: { onOpen: (username: stri
           onKeyDown={(e) => e.key === 'Escape' && onBack && (e.preventDefault(), onBack())}
           placeholder="Search name, ID or department"
           autoFocus={!!onBack}
+        />
+      </div>
+      <div className="row dir-sort">
+        <SortSelect
+          value={sort}
+          options={[
+            ['department', 'By department'],
+            ['name', 'Name A–Z'],
+          ]}
+          onChange={setSort}
         />
       </div>
       <ul className="contacts">

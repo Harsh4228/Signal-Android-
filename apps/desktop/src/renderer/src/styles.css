@@ -3777,3 +3777,35 @@ a.detail-row > div > div:first-child {
     width: 100%;
   }
 }
+
+/* ---------- "Sort" dropdown on lists ---------- */
+.sort-select {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  padding: 0 4px 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted);
+  cursor: pointer;
+}
+.sort-select select {
+  width: auto;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  padding: 4px 6px 4px 0;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text-2);
+  cursor: pointer;
+}
+.sort-select select:focus {
+  outline: none;
+}
+.dir-sort {
+  margin: 0 12px 6px;
+  justify-content: flex-end;
+}

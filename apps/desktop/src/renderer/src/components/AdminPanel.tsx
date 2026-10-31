@@ -37,6 +37,15 @@ import {
 import { ReportsTab } from './Safety';
 import {
   AUDIT_LABELS,
+  DEPARTMENT_SORTS,
+  GROUP_SORTS,
+  USER_SORTS,
+  sortDepartments,
+  sortGroups,
+  sortUsers,
+  type DepartmentSort,
+  type GroupSort,
+  type UserSort,
   birthdayText,
   MAX_DEPARTMENT,
   MAX_EMAIL,
@@ -63,7 +72,7 @@ import {
   type InviteResponse,
 } from '@meetme/core';
 import { client, useClient } from '../messenger';
-import { Avatar, errorText, shortTime } from './ui';
+import { Avatar, SortSelect, errorText, shortTime } from './ui';
 import { HelpDeskTab, RightsTab } from './AdminRights';
 import { CameraCapture } from './Profile';
 import { CompanyTab } from './Company';
@@ -244,6 +253,7 @@ function UsersTab({
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<Filter>('all');
   const [dept, setDept] = useState('');
+  const [sort, setSort] = useState<UserSort>('name');
   const [adding, setAdding] = useState(false);
   const [share, setShare] = useState<Share | null>(null);
   /** The user whose page is open (profile and every action, with labels). */
@@ -252,14 +262,17 @@ function UsersTab({
   const inDept =(u: AdminUser) => !dept || (dept === NO_DEPT ? !u.departments.length : u.departments.includes(dept));
 
   const q = query.trim().toLowerCase();
-  const shown = (users ?? []).filter(
-    (u) =>
-      (shortId(u.username).includes(q) || u.name.toLowerCase().includes(q)) &&
-      inDept(u) &&
-      (filter === 'all' ||
-        (filter === 'online' && u.online) ||
-        (filter === 'pending' && !u.active) ||
-        (filter === 'banned' && u.banned)),
+  const shown = sortUsers(
+    (users ?? []).filter(
+      (u) =>
+        (shortId(u.username).includes(q) || u.name.toLowerCase().includes(q)) &&
+        inDept(u) &&
+        (filter === 'all' ||
+          (filter === 'online' && u.online) ||
+          (filter === 'pending' && !u.active) ||
+          (filter === 'banned' && u.banned)),
+    ),
+    sort,
   );
 
   const act = (fn: () => Promise<unknown>, done?: string) => async () => {
@@ -401,6 +414,8 @@ function UsersTab({
             {f === 'all' ? 'All' : f === 'online' ? 'Online' : f === 'pending' ? 'Not logged in' : 'Banned'} ({count(f)})
           </button>
         ))}
+        <div className="grow" />
+        <SortSelect value={sort} options={USER_SORTS} onChange={setSort} />
       </div>
 
       <ul className="emp-list">
@@ -997,6 +1012,7 @@ function DepartmentsTab({
   const [busy, setBusy] = useState(false);
 
   const members = (d: string) => (users ?? []).filter((u) => u.departments.includes(d)).length;
+  const [sort, setSort] = useState<DepartmentSort>('name');
 
   const run = async (fn: () => Promise<unknown>, done: string) => {
     setBusy(true);
@@ -1046,13 +1062,16 @@ function DepartmentsTab({
           <Plus size={16} /> Add department
         </button>
       </form>
-      <p className="muted small" style={{ margin: '10px 0' }}>
-        Put each user in one or more departments, filter users by them, and send announcements to chosen departments only.
-      </p>
+      <div className="row" style={{ margin: '10px 0', alignItems: 'center' }}>
+        <p className="muted small grow" style={{ margin: 0 }}>
+          Put each user in one or more departments, filter users by them, and send announcements to chosen departments only.
+        </p>
+        <SortSelect value={sort} options={DEPARTMENT_SORTS} onChange={setSort} />
+      </div>
       <ul className="emp-list">
         {departments === null && <li className="muted">Loading…</li>}
         {departments && !departments.length && <li className="muted">No departments yet. Add your first one above.</li>}
-        {(departments ?? []).map((d) => (
+        {sortDepartments(departments ?? [], sort, members).map((d) => (
           <li key={d}>
             <div className="avatar sm group-avatar">
               <Building2 size={16} />
@@ -1127,6 +1146,7 @@ function GroupsTab({
   const me = client.account?.username ?? '';
   const [editing, setEditing] = useState<GroupInfo | 'new' | null>(startNew ? 'new' : null);
   const [query, setQuery] = useState('');
+  const [sort, setSort] = useState<GroupSort>('name');
 
   const remove = async (g: GroupInfo) => {
     if (!confirm(`Delete the group "${g.name}"? Members can no longer write in it.`)) return;
@@ -1155,7 +1175,10 @@ function GroupsTab({
   }
 
   const q = query.trim().toLowerCase();
-  const shown = (groups ?? []).filter((g) => g.name.toLowerCase().includes(q) || g.members.some((m) => m.includes(q)));
+  const shown = sortGroups(
+    (groups ?? []).filter((g) => g.name.toLowerCase().includes(q) || g.members.some((m) => m.includes(q))),
+    sort,
+  );
   return (
     <>
       <div className="row" style={{ marginTop: 4 }}>
@@ -1163,6 +1186,7 @@ function GroupsTab({
           <Search size={16} />
           <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search groups or members" />
         </div>
+        <SortSelect value={sort} options={GROUP_SORTS} onChange={setSort} />
         <button className="primary" onClick={() => setEditing('new')}>
           <Plus size={16} /> New group
         </button>

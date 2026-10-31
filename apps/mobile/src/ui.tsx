@@ -12,7 +12,7 @@ import {
   type TextInputProps,
   type ViewStyle,
 } from 'react-native';
-import { ChevronLeft, Eye, EyeOff, ShieldCheck, UsersRound, type LucideIcon } from 'lucide-react-native';
+import { ArrowUpDown, Check, ChevronLeft, Eye, EyeOff, ShieldCheck, UsersRound, type LucideIcon } from 'lucide-react-native';
 import { isGroupKey } from '@meetme/core';
 import { client } from './messenger';
 import { colors, s } from './theme';
@@ -460,3 +460,27 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
 });
+
+/** "Sort: Name A–Z ▾" chip for any list; the choices open as a sheet. */
+export function SortChip<T extends string>({ value, options, onChange }: { value: T; options: [T, string][]; onChange: (v: T) => void }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <Pressable
+        onPress={() => setOpen(true)}
+        accessibilityLabel="Sort"
+        style={{ flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 12, paddingVertical: 7, borderRadius: 18, borderWidth: 1, borderColor: colors.line }}
+      >
+        <ArrowUpDown size={14} color={colors.muted} />
+        <Text style={{ color: colors.text2, fontSize: 13, fontWeight: '600' }}>{options.find(([v]) => v === value)?.[1]}</Text>
+      </Pressable>
+      {open && (
+        <Sheet
+          title="Sort by"
+          onClose={() => setOpen(false)}
+          actions={options.map(([v, label]) => ({ icon: v === value ? Check : ArrowUpDown, label, onPress: () => onChange(v) }))}
+        />
+      )}
+    </>
+  );
+}

@@ -1,5 +1,5 @@
 import { useState, type InputHTMLAttributes } from 'react';
-import { Eye, EyeOff, ShieldCheck, UsersRound } from 'lucide-react';
+import { ArrowUpDown, Eye, EyeOff, ShieldCheck, UsersRound } from 'lucide-react';
 import { isGroupKey } from '@meetme/core';
 import { client } from '../messenger';
 
@@ -88,5 +88,20 @@ export function PasswordInput(props: Omit<InputHTMLAttributes<HTMLInputElement>,
         {shown ? <EyeOff size={17} /> : <Eye size={17} />}
       </button>
     </span>
+  );
+}
+/** "Sort: Name A–Z ▾", for any list. */
+export function SortSelect<T extends string>({ value, options, onChange }: { value: T; options: [T, string][]; onChange: (v: T) => void }) {
+  return (
+    <label className="sort-select" title="Sort">
+      <ArrowUpDown size={14} />
+      <select value={value} onChange={(e) => onChange(e.target.value as T)} aria-label="Sort">
+        {options.map(([v, label]) => (
+          <option key={v} value={v}>
+            {label}
+          </option>
+        ))}
+      </select>
+    </label>
   );
 }

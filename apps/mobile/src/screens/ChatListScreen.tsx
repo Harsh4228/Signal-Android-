@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Alert, FlatList, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
-import { Archive, ArchiveRestore, BellOff, Ban, Bell, Building2, ChevronDown, ChevronLeft, Eraser, StarOff, Trash2, UsersRound, X, EllipsisVertical, LifeBuoy, Megaphone, Pin, PinOff, ShoppingBag, Star, MessageSquarePlus, Search, Settings, ShieldCheck } from 'lucide-react-native';
-import { MessengerClient, isGroupKey } from '@meetme/core';
+import { ArrowUpDown, Check, Archive, ArchiveRestore, BellOff, Ban, Bell, Building2, ChevronDown, ChevronLeft, Eraser, StarOff, Trash2, UsersRound, X, EllipsisVertical, LifeBuoy, Megaphone, Pin, PinOff, ShoppingBag, Star, MessageSquarePlus, Search, Settings, ShieldCheck } from 'lucide-react-native';
+import { CHAT_SORTS, MessengerClient, isGroupKey, type ChatSort } from '@meetme/core';
 import { client, useClient } from '../messenger';
 import { colors, s } from '../theme';
 import { Banner, Button, ChatAvatar, Field, Header, IconButton, Sheet, shortTime, typingText } from '../ui';
@@ -17,6 +17,8 @@ export function ChatListScreen({ navigate, onError }: { navigate: (r: Route) => 
   const [archived, setArchived] = useState(false);
   const [acting, setActing] = useState<string | null>(null);
   const [view, setView] = useState('all');
+  const [chatSort, setChatSort] = useState<ChatSort>('recent');
+  const [sortOpen, setSortOpen] = useState(false);
   const [pickDept, setPickDept] = useState(false);
 
   const q = filter.trim().toLowerCase();
@@ -32,7 +34,7 @@ export function ChatListScreen({ navigate, onError }: { navigate: (r: Route) => 
     (view.startsWith('dept:') && deptsOf(k).includes(view.slice(5)));
   // Pinned first, then the newest; archived chats have their own list (like WhatsApp).
   const sorted = c
-    .orderedChats({ archived })
+    .orderedChats({ archived, sort: chatSort })
     .filter((k) => show(k) && (!q || c.chatTitle(k).toLowerCase().includes(q) || deptsOf(k).some((d) => d.toLowerCase().includes(q))));
   const allDepartments = [...new Set(all.flatMap(deptsOf))].sort();
   const unreadChats = all.filter((k) => c.getUnread(k) > 0 && !c.isArchived(k)).length;
@@ -77,6 +79,7 @@ export function ChatListScreen({ navigate, onError }: { navigate: (r: Route) => 
         }
         right={
           <>
+            <IconButton icon={ArrowUpDown} label="Sort chats" color={chatSort !== 'recent' ? colors.accent : undefined} onPress={() => setSortOpen(true)} />
             <IconButton icon={LifeBuoy} label="Help desk" onPress={() => navigate({ name: 'help' })} />
             {/* Everything else lives in the ⋮ menu, like WhatsApp; the main pages are in the bottom bar. */}
             <IconButton icon={EllipsisVertical} label="Menu" onPress={() => setMore(true)} />
@@ -122,6 +125,13 @@ export function ChatListScreen({ navigate, onError }: { navigate: (r: Route) => 
           </Pressable>
         )}
       </ScrollView>
+      {sortOpen && (
+        <Sheet
+          title="Sort chats"
+          onClose={() => setSortOpen(false)}
+          actions={CHAT_SORTS.map(([v, label]) => ({ icon: chatSort === v ? Check : ArrowUpDown, label, onPress: () => setChatSort(v) }))}
+        />
+      )}
       {view === 'groups' && c.isAdmin && online && (
         <Pressable onPress={() => navigate({ name: 'admin' })} style={[s.row, { gap: 14, paddingHorizontal: 22, paddingVertical: 12 }]}>
           <UsersRound size={20} color={colors.accent} />

@@ -1,20 +1,22 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Pressable, SectionList, StyleSheet, Text, TextInput, View } from 'react-native';
 import { CircleAlert, RefreshCw, Search } from 'lucide-react-native';
-import { shortId, type UserProfile } from '@meetme/core';
+import { shortId, sortUsers, type UserProfile } from '@meetme/core';
 import { client } from '../messenger';
 import { colors, s } from '../theme';
-import { Avatar, Banner, Header, IconButton, errorText } from '../ui';
+import { Avatar, Banner, Header, IconButton, SortChip, errorText } from '../ui';
 import type { Route } from '../App';
 
 const NO_DEPT = 'No department';
 
 /** Colleagues grouped by department (someone in two departments shows in both), A-Z, filtered by name / ID / department. */
-function sections(users: UserProfile[], q: string) {
+function sections(users: UserProfile[], q: string, flat: boolean) {
   const match = (u: UserProfile) =>
     !q || (u.name || '').toLowerCase().includes(q) || shortId(u.username).includes(q) || u.departments.some((d) => d.toLowerCase().includes(q));
+  const found = sortUsers(users.filter(match), 'name');
+  if (flat) return found.length ? [{ title: 'Everyone', data: found }] : [];
   const byDept = new Map<string, UserProfile[]>();
-  for (const u of users.filter(match)) {
+  for (const u of found) {
     for (const d of u.departments.length ? u.departments : [NO_DEPT]) {
       if (!byDept.has(d)) byDept.set(d, []);
       byDept.get(d)!.push(u);
@@ -39,7 +41,8 @@ export function DirectoryList({ onOpen, embedded }: { onOpen: (username: string)
   }, []);
   useEffect(load, [load]);
   const q = query.trim().toLowerCase();
-  const data = useMemo(() => sections(users ?? [], q), [users, q]);
+  const [sort, setSort] = useState<'department' | 'name'>('department');
+  const data = useMemo(() => sections(users ?? [], q, sort === 'name'), [users, q, sort]);
 
   return (
     <View style={{ flex: 1 }}>
@@ -53,6 +56,16 @@ export function DirectoryList({ onOpen, embedded }: { onOpen: (username: string)
           placeholderTextColor={colors.faint}
           autoCapitalize="none"
           autoCorrect={false}
+        />
+      </View>
+      <View style={[s.row, { justifyContent: 'flex-end', paddingHorizontal: 12, paddingBottom: 6 }]}>
+        <SortChip
+          value={sort}
+          options={[
+            ['department', 'By department'],
+            ['name', 'Name A–Z'],
+          ]}
+          onChange={setSort}
         />
       </View>
       {error && (

@@ -51,6 +51,7 @@ import {
   type GroupInfo,
   type LoginRequest,
   type MeResponse,
+  type ChatSort,
   type CompanyItem,
   type CompanyProfile,
   type Policy,
@@ -3294,11 +3295,19 @@ export class MessengerClient extends Emitter<Events> {
   }
 
   /** The chat list: pinned first (last pinned on top), then by the newest message. */
-  orderedChats(opts: { archived?: boolean } = {}): string[] {
+  orderedChats(opts: { archived?: boolean; sort?: ChatSort } = {}): string[] {
     const last = (k: string) => this.lastMessage(k)?.ts ?? 0;
+    const sort = opts.sort ?? 'recent';
+    // Pinned chats stay on top whatever the order, like WhatsApp.
+    const then = (a: string, b: string) =>
+      sort === 'name'
+        ? this.chatTitle(a).localeCompare(this.chatTitle(b), undefined, { sensitivity: 'base', numeric: true })
+        : sort === 'unread'
+          ? Number(this.getUnread(b) > 0) - Number(this.getUnread(a) > 0) || last(b) - last(a)
+          : last(b) - last(a);
     return this.chatKeys()
       .filter((k) => this.isArchived(k) === !!opts.archived)
-      .sort((a, b) => (this.chatPrefs[b]?.pinned ?? 0) - (this.chatPrefs[a]?.pinned ?? 0) || last(b) - last(a));
+      .sort((a, b) => (this.chatPrefs[b]?.pinned ?? 0) - (this.chatPrefs[a]?.pinned ?? 0) || then(a, b));
   }
 
   get archivedCount(): number {

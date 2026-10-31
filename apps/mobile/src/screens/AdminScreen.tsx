@@ -35,6 +35,15 @@ import {
   MAX_NAME,
   MAX_PHONE,
   ID_RE,
+  DEPARTMENT_SORTS,
+  GROUP_SORTS,
+  USER_SORTS,
+  sortDepartments,
+  sortGroups,
+  sortUsers,
+  type DepartmentSort,
+  type GroupSort,
+  type UserSort,
   ID_RULES,
   normalizeId,
   formatLastSeen,
@@ -58,7 +67,7 @@ import { BirthdayField, CameraCapture } from './Profile';
 import { CompanyTab } from './Company';
 import { client, useClient } from '../messenger';
 import { colors, mono, s } from '../theme';
-import { Avatar, Banner, Button, Field, Header, IconButton, Sheet, errorText, shortTime, useBack, type SheetAction } from '../ui';
+import { Avatar, Banner, Button, Field, Header, IconButton, Sheet, SortChip, errorText, shortTime, useBack, type SheetAction } from '../ui';
 import type { Route } from '../App';
 import { HelpDeskTab } from './HelpDesk';
 import { CommunitiesTab } from './AdminCommunities';
@@ -396,6 +405,7 @@ function UsersTab({
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<Filter>('all');
   const [dept, setDept] = useState('');
+  const [sort, setSort] = useState<UserSort>('name');
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<AdminUser | null>(null);
   const [editingProfile, setEditingProfile] = useState<AdminUser | null>(null);
@@ -406,10 +416,11 @@ function UsersTab({
 
   const shown = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return (users ?? []).filter(
-      (u) => (shortId(u.username).includes(q) || u.name.toLowerCase().includes(q)) && matches(u, filter) && inDept(u, dept),
+    return sortUsers(
+      (users ?? []).filter((u) => (shortId(u.username).includes(q) || u.name.toLowerCase().includes(q)) && matches(u, filter) && inDept(u, dept)),
+      sort,
     );
-  }, [users, query, filter, dept]);
+  }, [users, query, filter, dept, sort]);
   const deptCount = (d: string) => (users ?? []).filter((u) => inDept(u, d)).length;
 
   const run = async (fn: () => Promise<unknown>, done?: string) => {
@@ -557,6 +568,9 @@ function UsersTab({
             <Button variant="primary" icon={UserPlus} title="Add user" onPress={() => setAdding(true)} />
           )}
           <SearchBox value={query} onChange={setQuery} placeholder="Search users by name or ID" />
+          <View style={[s.row, { justifyContent: 'flex-end' }]}>
+            <SortChip value={sort} options={USER_SORTS} onChange={setSort} />
+          </View>
           <Chips
             items={FILTERS.map(([f, label]) => [
               f,
@@ -803,6 +817,7 @@ function DepartmentsTab({
   const [busy, setBusy] = useState(false);
 
   const members = (d: string) => (users ?? []).filter((u) => u.departments.includes(d)).length;
+  const [sort, setSort] = useState<DepartmentSort>('name');
 
   const run = async (fn: () => Promise<unknown>, done: string) => {
     setBusy(true);
@@ -855,7 +870,7 @@ function DepartmentsTab({
 
   return (
     <FlatList
-      data={departments ?? []}
+      data={sortDepartments(departments ?? [], sort, members)}
       keyExtractor={(d) => d}
       contentContainerStyle={{ paddingBottom: 32 }}
       keyboardShouldPersistTaps="handled"
@@ -889,6 +904,9 @@ function DepartmentsTab({
           <Text style={[s.muted, { lineHeight: 19 }]}>
             Put each user in one or more departments, filter users by them, and send announcements to chosen departments only.
           </Text>
+          <View style={[s.row, { justifyContent: 'flex-end' }]}>
+            <SortChip value={sort} options={DEPARTMENT_SORTS} onChange={setSort} />
+          </View>
         </View>
       }
       ListEmptyComponent={
@@ -934,6 +952,7 @@ function GroupsTab({
   const me = client.account?.username ?? '';
   const [editing, setEditing] = useState<GroupInfo | 'new' | null>(null);
   const [query, setQuery] = useState('');
+  const [sort, setSort] = useState<GroupSort>('name');
   const [sheet, setSheet] = useState<{ title: string; actions: SheetAction[] } | null>(null);
   const [rights, setRights] = useState<GroupInfo | null>(null);
 
@@ -983,7 +1002,10 @@ function GroupsTab({
   };
 
   const q = query.trim().toLowerCase();
-  const shown = (groups ?? []).filter((g) => g.name.toLowerCase().includes(q) || g.members.some((m) => m.includes(q)));
+  const shown = sortGroups(
+    (groups ?? []).filter((g) => g.name.toLowerCase().includes(q) || g.members.some((m) => m.includes(q))),
+    sort,
+  );
   return (
     <>
     <FlatList
@@ -995,6 +1017,9 @@ function GroupsTab({
         <View style={{ padding: 16, paddingBottom: 8, gap: 12 }}>
           <Button variant="primary" icon={Plus} title="New group" onPress={() => setEditing('new')} />
           <SearchBox value={query} onChange={setQuery} placeholder="Search groups or members" />
+          <View style={[s.row, { justifyContent: 'flex-end' }]}>
+            <SortChip value={sort} options={GROUP_SORTS} onChange={setSort} />
+          </View>
           <Text style={[s.muted, { lineHeight: 19 }]}>
             Only admins create groups and choose who is in them. Group messages are end-to-end encrypted for every member.
           </Text>
