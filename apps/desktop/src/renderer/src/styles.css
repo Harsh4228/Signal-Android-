@@ -4191,3 +4191,52 @@ a.rich.phone {
   max-width: 420px;
   align-self: center;
 }
+
+/* Pastel rail (softer than solid blue): light blue, dark blue-grey icons, the open page a white pill. */
+:root[data-theme='light'] .rail {
+  background: #e3ecfb;
+  border-right: 1px solid #d3e0f5;
+}
+:root[data-theme='light'] .rail-btn {
+  color: #4a5b7a;
+}
+:root[data-theme='light'] .rail-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.7);
+  color: #1e3a8a;
+}
+:root[data-theme='light'] .rail-btn.active {
+  background: #fff;
+  color: #1d4ed8;
+  box-shadow: 0 1px 3px rgba(30, 58, 138, 0.15);
+}
+:root[data-theme='light'] .rail-badge,
+:root[data-theme='light'] .rail-dot {
+  border-color: #e3ecfb;
+}
+:root[data-theme='light'] .rail-me .avatar {
+  box-shadow: 0 0 0 2px #fff;
+}
+/* Active chip and selected chat: pastel too. */
+:root[data-theme='light'] .chips button.active,
+:root[data-theme='light'] .chat-chips button.active {
+  background: #dbe7ff;
+  border-color: #b9cdf6;
+  color: #1e3a8a;
+}
+:root[data-theme='light'] .contacts li.active {
+  background: #e8f0fd;
+  box-shadow: inset 3px 0 0 #7aa2f2;
+}
+@media (max-width: 760px) {
+  :root[data-theme='light'] .rail {
+    background: #fff;
+    border-right: none;
+  }
+  :root[data-theme='light'] .rail-btn.active {
+    box-shadow: none;
+  }
+  :root[data-theme='light'] .rail-btn.active .rail-icon {
+    background: #dbe7ff;
+    color: #1d4ed8;
+  }
+}

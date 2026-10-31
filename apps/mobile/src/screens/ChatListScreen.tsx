@@ -123,7 +123,7 @@ export function ChatListScreen({ navigate, onError }: { navigate: (r: Route) => 
             onLongPress={() => id.startsWith('list:') && setEditingList(c.chatLists.find((l) => `list:${l.id}` === id) ?? null)}
             style={[styles.chip, view === id && styles.chipOn]}
           >
-            <Text style={[styles.chipText, view === id && { color: '#fff' }]}>{label}</Text>
+            <Text style={[styles.chipText, view === id && { color: colors.accentText }]}>{label}</Text>
           </Pressable>
         ))}
         {allDepartments.length > 0 && (
@@ -385,7 +385,7 @@ const styles = StyleSheet.create({
   item: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingLeft: 16 },
   chips: { gap: 8, paddingHorizontal: 12, paddingBottom: 8 },
   chip: { paddingHorizontal: 14, paddingVertical: 7, borderRadius: 18, backgroundColor: colors.bg },
-  chipOn: { backgroundColor: colors.accent },
+  chipOn: { backgroundColor: colors.accentSoft },
   chipText: { color: colors.text2, fontSize: 13.5, fontWeight: '600' },
   itemBody: {
     flex: 1,
