@@ -40,6 +40,8 @@
 	<string>CellMate uses the microphone for end-to-end encrypted calls and voice messages.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>CellMate uses your location only when you choose to share it in a chat.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>CellMate uses your location only when you choose to share it in a chat.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>
