@@ -100,7 +100,10 @@ export function ProfileHero({ user }: { user: string }) {
   return (
     <>
       <Pressable onPress={() => setFull(true)} style={styles.hero} accessibilityLabel="Show the photo full size">
-        <Image source={{ uri: photo }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+        {/* The whole photo (not cut); a blurred copy of it fills the sides, like WhatsApp. */}
+        <Image source={{ uri: photo }} style={StyleSheet.absoluteFill} resizeMode="cover" blurRadius={24} />
+        <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.25)' }]} />
+        <Image source={{ uri: photo }} style={StyleSheet.absoluteFill} resizeMode="contain" />
       </Pressable>
       {full && <FullPhoto uri={photo} title={c.displayName(user)} onClose={() => setFull(false)} />}
     </>

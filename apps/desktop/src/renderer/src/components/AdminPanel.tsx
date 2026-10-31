@@ -75,7 +75,7 @@ import {
 import { client, useClient } from '../messenger';
 import { Avatar, SortSelect, errorText, shortTime } from './ui';
 import { HelpDeskTab, RightsTab } from './AdminRights';
-import { CameraCapture } from './Profile';
+import { CameraCapture, ProfileHero } from './Profile';
 import { CompanyTab } from './Company';
 import { CommunitiesTab } from './Channels';
 
@@ -851,6 +851,7 @@ function UserDetail({
       <button className="link-btn back-link" onClick={onBack}>
         <ArrowLeft size={16} /> All users
       </button>
+      {client.avatarOf(user.username) && <ProfileHero user={user.username} />}
       <div className="user-head">
         <div className="avatar-wrap">
           <Avatar name={user.username} size="xl" />

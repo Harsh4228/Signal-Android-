@@ -4166,3 +4166,28 @@ a.rich.phone {
     border-color: #fff;
   }
 }
+
+/* Profile photo, whole (not a circle): a blurred copy of it fills the sides, like WhatsApp. */
+.profile-hero {
+  position: relative;
+  overflow: hidden;
+}
+.profile-hero .hero-blur {
+  position: absolute;
+  inset: -20px;
+  width: calc(100% + 40px);
+  height: calc(100% + 40px);
+  max-height: none;
+  object-fit: cover;
+  filter: blur(24px) brightness(0.75);
+}
+.profile-hero .hero-photo {
+  position: relative;
+  width: 100%;
+  max-height: 360px;
+  object-fit: contain;
+}
+.user-detail .profile-hero {
+  max-width: 420px;
+  align-self: center;
+}

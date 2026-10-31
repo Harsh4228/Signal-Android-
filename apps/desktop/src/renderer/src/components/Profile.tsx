@@ -143,7 +143,9 @@ export function ProfileHero({ user }: { user: string }) {
   return (
     <>
       <button className="profile-hero" onClick={() => setFull(true)} title="Full size">
-        <img src={photo} alt="" draggable={false} />
+        {/* The same photo blurred behind it fills the sides of a tall or wide photo (no black bars). */}
+        <img className="hero-blur" src={photo} alt="" draggable={false} aria-hidden />
+        <img className="hero-photo" src={photo} alt="" draggable={false} />
       </button>
       {full && <FullPhoto src={photo} title={c.displayName(user)} onClose={() => setFull(false)} />}
     </>
