@@ -4040,3 +4040,129 @@ a.rich.phone {
 .bubble {
   cursor: default;
 }
+
+/* ---------- light theme: blue and white, green for what's new / online, near-black text ---------- */
+:root[data-theme='light'],
+:root:not([data-theme]) {
+  --bg: #eaf1fc;
+  --surface: #ffffff;
+  --surface-2: #f4f8fe;
+  --hover: #e8f0fd;
+  --line: #d9e3f3;
+  --line-strong: #bccbe6;
+  --text: #0b1324;
+  --text-2: #1e2a40;
+  --muted: #55657f;
+  --faint: #8b9ab3;
+  --accent: #1d4ed8;
+  --accent-hover: #1e40af;
+  --accent-soft: #e2ebff;
+  --accent-text: #1e3a8a;
+  --out: #dbe7ff;
+  --in: #ffffff;
+  --ok: #16a34a;
+  --ok-soft: #e7f8ee;
+}
+/* The navigation rail: a blue bar with white icons; the active page is a white pill. */
+:root[data-theme='light'] .rail {
+  background: linear-gradient(180deg, #1e3a8a 0%, #1d4ed8 100%);
+  border-right: none;
+}
+:root[data-theme='light'] .rail-btn {
+  color: rgba(255, 255, 255, 0.78);
+}
+:root[data-theme='light'] .rail-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.14);
+  color: #fff;
+}
+:root[data-theme='light'] .rail-btn.active {
+  background: #fff;
+  color: #1d4ed8;
+}
+:root[data-theme='light'] .rail-badge,
+:root[data-theme='light'] .rail-dot {
+  border-color: #1e40af;
+}
+:root[data-theme='light'] .rail-me .avatar {
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.85);
+}
+/* Chat list header in blue, the list itself white. */
+:root[data-theme='light'] .sidebar > header {
+  background: #fff;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 8px;
+}
+:root[data-theme='light'] .company-badge .name {
+  color: #1e3a8a;
+}
+/* New / unread is green (like WhatsApp), the rest blue. */
+:root[data-theme='light'] .badge {
+  background: var(--ok);
+}
+:root[data-theme='light'] .badge.quiet {
+  background: var(--faint);
+}
+:root[data-theme='light'] .contacts li.unread .when {
+  color: var(--ok);
+}
+:root[data-theme='light'] .contacts li.active {
+  background: var(--accent-soft);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+:root[data-theme='light'] .chips button.active,
+:root[data-theme='light'] .chat-chips button.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+:root[data-theme='light'] .bubble.out {
+  background: var(--out);
+  border-color: #c7d8fb;
+}
+:root[data-theme='light'] .bubble.in {
+  border-color: var(--line);
+}
+:root[data-theme='light'] .chat > header {
+  background: #fff;
+  border-bottom: 1px solid var(--line);
+}
+:root[data-theme='light'] .chat .messages {
+  background: linear-gradient(180deg, #f2f6fd 0%, #eaf1fc 100%);
+}
+/* The send button is green, like WhatsApp; other main buttons blue. */
+:root[data-theme='light'] .composer button.primary,
+:root[data-theme='light'] .composer .send {
+  background: var(--ok);
+  border-color: var(--ok);
+}
+:root[data-theme='light'] .composer button.primary:hover:not(:disabled) {
+  background: #15803d;
+  border-color: #15803d;
+}
+:root[data-theme='light'] .modal > header .title-icon,
+:root[data-theme='light'] .title-icon {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+@media (max-width: 760px) {
+  /* Phones: the bottom bar stays white with a blue active tab. */
+  :root[data-theme='light'] .rail {
+    background: #fff;
+    border-top: 1px solid var(--line);
+  }
+  :root[data-theme='light'] .rail-btn {
+    color: var(--muted);
+  }
+  :root[data-theme='light'] .rail-btn.active {
+    background: none;
+    color: var(--text);
+  }
+  :root[data-theme='light'] .rail-btn.active .rail-icon {
+    background: var(--accent);
+    color: #fff;
+  }
+  :root[data-theme='light'] .rail-badge,
+  :root[data-theme='light'] .rail-dot {
+    border-color: #fff;
+  }
+}

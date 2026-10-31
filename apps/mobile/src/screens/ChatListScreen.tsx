@@ -123,7 +123,7 @@ export function ChatListScreen({ navigate, onError }: { navigate: (r: Route) => 
             onLongPress={() => id.startsWith('list:') && setEditingList(c.chatLists.find((l) => `list:${l.id}` === id) ?? null)}
             style={[styles.chip, view === id && styles.chipOn]}
           >
-            <Text style={[styles.chipText, view === id && { color: colors.accentText }]}>{label}</Text>
+            <Text style={[styles.chipText, view === id && { color: '#fff' }]}>{label}</Text>
           </Pressable>
         ))}
         {allDepartments.length > 0 && (
@@ -242,7 +242,7 @@ export function ChatListScreen({ navigate, onError }: { navigate: (r: Route) => 
                     {c.chatTitle(key)}
                   </Text>
                   {last && (
-                    <Text style={[s.muted, { fontSize: 12 }, unread > 0 && { color: colors.accent, fontWeight: '600' }]}>
+                    <Text style={[s.muted, { fontSize: 12 }, unread > 0 && { color: colors.ok, fontWeight: '600' }]}>
                       {shortTime(last.ts)}
                     </Text>
                   )}
@@ -385,7 +385,7 @@ const styles = StyleSheet.create({
   item: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingLeft: 16 },
   chips: { gap: 8, paddingHorizontal: 12, paddingBottom: 8 },
   chip: { paddingHorizontal: 14, paddingVertical: 7, borderRadius: 18, backgroundColor: colors.bg },
-  chipOn: { backgroundColor: colors.accentSoft },
+  chipOn: { backgroundColor: colors.accent },
   chipText: { color: colors.text2, fontSize: 13.5, fontWeight: '600' },
   itemBody: {
     flex: 1,
@@ -399,7 +399,8 @@ const styles = StyleSheet.create({
     height: 22,
     borderRadius: 11,
     paddingHorizontal: 6,
-    backgroundColor: colors.accent,
+    // Unread counts are green, like WhatsApp.
+    backgroundColor: colors.ok,
     alignItems: 'center',
     justifyContent: 'center',
   },
