@@ -1,11 +1,11 @@
 import { useRef, useState } from 'react';
 import { ActivityIndicator, Image, Linking, Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
-import { Cake, Camera as CameraIcon, Info, MessageSquare, Phone, RefreshCw, Video, X } from 'lucide-react-native';
+import { Cake, Camera as CameraIcon, CircleDashed, Info, MessageSquare, Phone, RefreshCw, UserRound, Video, X } from 'lucide-react-native';
 import { Camera, CameraType, type CameraApi } from 'react-native-camera-kit';
 import { BIRTHDAY_RE, type OutgoingFile } from '@meetme/core';
 import { calls, client, useClient } from '../messenger';
 import { colors, s } from '../theme';
-import { Avatar, ChatAvatar, IconButton, errorText } from '../ui';
+import { Avatar, ChatAvatar, IconButton, Sheet, errorText } from '../ui';
 import { profilePhotoFrom } from '../photos';
 import type { Route } from '../App';
 
@@ -17,17 +17,27 @@ type Toast = (m: string) => void;
  */
 export function AvatarTap({ user, size = 50, navigate, onToast }: { user: string; size?: number; navigate: (r: Route) => void; onToast: Toast }) {
   const [popup, setPopup] = useState(false);
+  /** With a status: ask which one, like WhatsApp. */
+  const [choose, setChoose] = useState(false);
   return (
     <>
       <Pressable
         hitSlop={4}
-        accessibilityLabel={client.statusRingOf(user) ? 'View status' : 'View photo'}
-        onPress={() =>
-          client.statusRingOf(user) === 'new' ? navigate({ name: 'status-view', user, start: client.statusStartOf(user) }) : setPopup(true)
-        }
+        accessibilityLabel={client.statusRingOf(user) ? 'View status or photo' : 'View photo'}
+        onPress={() => (client.statusRingOf(user) ? setChoose(true) : setPopup(true))}
       >
         <ChatAvatar chatKey={user} size={size} />
       </Pressable>
+      {choose && (
+        <Sheet
+          title={client.displayName(user)}
+          onClose={() => setChoose(false)}
+          actions={[
+            { icon: CircleDashed, label: 'View status', onPress: () => navigate({ name: 'status-view', user, start: client.statusStartOf(user) }) },
+            { icon: UserRound, label: 'View profile photo', onPress: () => setPopup(true) },
+          ]}
+        />
+      )}
       {popup && <PhotoPopup user={user} navigate={navigate} onClose={() => setPopup(false)} onToast={onToast} />}
     </>
   );

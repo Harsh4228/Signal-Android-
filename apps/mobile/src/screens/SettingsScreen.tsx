@@ -9,7 +9,7 @@ import { chooseTheme, colors, s, themeChoice, type ThemeChoice } from '../theme'
 import { Avatar, Banner, Button, Field, Header, Row, errorText } from '../ui';
 import type { Route } from '../App';
 import { BlockedScreen, requestDeletion } from './Safety';
-import { BirthdayField } from './Profile';
+import { BirthdayField, ProfileHero } from './Profile';
 import { LEGAL_BASE } from '../config';
 
 const SECURITY = [
@@ -184,6 +184,11 @@ export function SettingsScreen({ navigate }: { navigate: (r: Route) => void }) {
     <View style={s.fill}>
       <Header title="Settings" onBack={() => navigate({ name: 'list' })} />
       <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40 }} keyboardShouldPersistTaps="handled">
+        {!!c.account && !!c.avatarOf(c.account.username) && (
+          <View style={{ marginBottom: 12 }}>
+            <ProfileHero user={c.account.username} />
+          </View>
+        )}
         <View style={[s.card, s.row, { padding: 16, gap: 14 }]}>
           <Pressable
             onPress={() => canEditPhoto && photoOptions(!!c.account && !!c.avatarOf(c.account.username))}

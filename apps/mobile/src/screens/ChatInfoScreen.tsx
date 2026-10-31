@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Alert, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
-import { Ban, BadgeCheck, Building2, Cake, Check, ChevronRight, CircleDashed, Eraser, Flag, Mail, MessageSquare, Phone, ShieldCheck, ShieldPlus, ShoppingBag, RotateCcw, ShieldX, UserMinus, UserPlus, Video } from 'lucide-react-native';
+import { Ban, BadgeCheck, Building2, Cake, Check, ChevronDown, ChevronRight, KeyRound, CircleDashed, Eraser, Flag, Mail, MessageSquare, Phone, ShieldCheck, ShieldPlus, ShoppingBag, RotateCcw, ShieldX, UserMinus, UserPlus, Video } from 'lucide-react-native';
 import { birthdayText, formatLastSeen, groupIdOf, isGroupKey, shortId, type UserProfile } from '@meetme/core';
 import { calls, client, useClient } from '../messenger';
 import { AvatarTap, DetailRow, ProfileHero, telLink } from './Profile';
@@ -274,6 +274,7 @@ function PersonInfoScreen({
 }) {
   const c = useClient();
   const profile = c.profileOf(peer);
+  const [showSafety, setShowSafety] = useState(false);
   const [safety, setSafety] = useState<{ number: string; verified: boolean } | null>(null);
   const reload = useCallback(() => void client.getSafetyNumber(peer).then(setSafety), [peer]);
   useEffect(reload, [reload]);
@@ -346,41 +347,6 @@ function PersonInfoScreen({
           </View>
         )}
 
-        <Text style={s.section}>Safety number</Text>
-        <View style={[s.card, { padding: 16 }]}>
-          {safety ? (
-            <>
-              <Text
-                style={{
-                  color: colors.text2,
-                  fontFamily: mono,
-                  fontSize: 16,
-                  lineHeight: 28,
-                  letterSpacing: 1,
-                  textAlign: 'center',
-                  backgroundColor: colors.surface2,
-                  borderRadius: 10,
-                  padding: 12,
-                }}
-              >
-                {safety.number.replace(/(\S+ \S+ \S+ \S+) /g, '$1\n')}
-              </Text>
-              <Text style={[s.muted, { marginTop: 12, lineHeight: 19 }]}>
-                Compare these numbers with {client.displayName(peer)} in person or on a video call. If they match, nobody can be listening in.
-              </Text>
-              <Button
-                style={{ marginTop: 14 }}
-                variant={safety.verified ? 'secondary' : 'primary'}
-                icon={safety.verified ? ShieldX : BadgeCheck}
-                title={safety.verified ? 'Clear verification' : 'Mark as verified'}
-                onPress={run(() => client.setVerified(peer, !safety.verified))}
-              />
-            </>
-          ) : (
-            <Text style={s.muted}>Send or receive a message first to create the secure session.</Text>
-          )}
-        </View>
-
         <Text style={s.section}>Disappearing messages</Text>
         {!c.canClearHistory ? (
           <View style={[s.card, { padding: 16 }]}>
@@ -447,6 +413,51 @@ function PersonInfoScreen({
             }
           />
         </View>
+        {/* Encryption check: folded away (most people never need it); open it to compare the numbers. */}
+        <View style={[s.card, { marginTop: 16, padding: 4 }]}>
+          <Row
+            icon={KeyRound}
+            title={`Safety number${safety?.verified ? ' · verified' : ''}`}
+            subtitle="Check that your chat is end-to-end encrypted"
+            onPress={() => setShowSafety(!showSafety)}
+            right={showSafety ? <ChevronDown size={18} color={colors.faint} /> : <ChevronRight size={18} color={colors.faint} />}
+          />
+        </View>
+        {showSafety && (
+        <View style={[s.card, { padding: 16, marginTop: 8 }]}>
+          {safety ? (
+            <>
+              <Text
+                style={{
+                  color: colors.text2,
+                  fontFamily: mono,
+                  fontSize: 16,
+                  lineHeight: 28,
+                  letterSpacing: 1,
+                  textAlign: 'center',
+                  backgroundColor: colors.surface2,
+                  borderRadius: 10,
+                  padding: 12,
+                }}
+              >
+                {safety.number.replace(/(\S+ \S+ \S+ \S+) /g, '$1\n')}
+              </Text>
+              <Text style={[s.muted, { marginTop: 12, lineHeight: 19 }]}>
+                Compare these numbers with {client.displayName(peer)} in person or on a video call. If they match, nobody can be listening in.
+              </Text>
+              <Button
+                style={{ marginTop: 14 }}
+                variant={safety.verified ? 'secondary' : 'primary'}
+                icon={safety.verified ? ShieldX : BadgeCheck}
+                title={safety.verified ? 'Clear verification' : 'Mark as verified'}
+                onPress={run(() => client.setVerified(peer, !safety.verified))}
+              />
+            </>
+          ) : (
+            <Text style={s.muted}>Send or receive a message first to create the secure session.</Text>
+          )}
+        </View>
+        )}
       </ScrollView>
       {showCatalog && <CatalogScreen owner={peer} onClose={() => setShowCatalog(false)} onToast={onError} />}
       {reporting && <ReportSheet user={peer} onClose={() => setReporting(false)} onToast={onError} />}

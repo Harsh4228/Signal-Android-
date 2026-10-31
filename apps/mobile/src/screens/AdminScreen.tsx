@@ -8,6 +8,7 @@ import {
   Camera,
   Image as ImageIcon,
   Check,
+  ChevronRight,
   CircleAlert,
   CircleCheck,
   KeyRound,
@@ -54,6 +55,7 @@ import {
 } from '@meetme/core';
 import { pickProfilePhoto } from '../photos';
 import { BirthdayField, CameraCapture } from './Profile';
+import { CompanyTab } from './Company';
 import { client, useClient } from '../messenger';
 import { colors, mono, s } from '../theme';
 import { Avatar, Banner, Button, Field, Header, IconButton, Sheet, errorText, shortTime, useBack, type SheetAction } from '../ui';
@@ -63,10 +65,11 @@ import { CommunitiesTab } from './AdminCommunities';
 import { ReportsTab } from './Safety';
 import { GroupRightsScreen, RightsTab } from './RightsScreen';
 
-type Tab = 'overview' | 'users' | 'departments' | 'groups' | 'communities' | 'rights' | 'helpdesk' | 'reports' | 'activity' | 'settings';
+type Tab = 'overview' | 'company' | 'users' | 'departments' | 'groups' | 'communities' | 'rights' | 'helpdesk' | 'reports' | 'activity' | 'settings';
 type Toast = (m: string) => void;
 const TABS: [Tab, string][] = [
   ['overview', 'Overview'],
+  ['company', 'Company'],
   ['users', 'Users'],
   ['departments', 'Departments'],
   ['groups', 'Groups'],
@@ -302,6 +305,7 @@ export function AdminScreen({ navigate, onToast }: { navigate: (r: Route) => voi
         </View>
       )}
       {tab === 'overview' && <Overview users={users} onGo={setTab} />}
+      {tab === 'company' && <CompanyTab onToast={onToast} />}
       {tab === 'users' && (
         <UsersTab users={users} departments={departments ?? []} reload={reload} onToast={onToast} openChat={openChat} />
       )}
@@ -606,19 +610,8 @@ function UsersTab({
               {u.inviteExpires ? ' · QR waiting to be scanned' : ''}
             </Text>
           </View>
-          {u.username !== me && (
-            <View style={[s.row]}>
-              {u.active && !u.banned && <IconButton icon={MessageSquare} label="Message" size={19} onPress={() => openChat(u.username)} />}
-              <IconButton
-                icon={u.banned ? CircleCheck : Ban}
-                label={u.banned ? 'Unban' : 'Ban'}
-                size={19}
-                color={u.banned ? colors.ok : colors.muted}
-                disabled={u.admin || u.moved}
-                onPress={() => manage(u)}
-              />
-            </View>
-          )}
+          {/* Tap the row: every action, each with its name (no row of unexplained icons). */}
+          <ChevronRight size={18} color={colors.faint} />
         </Pressable>
       )}
     />

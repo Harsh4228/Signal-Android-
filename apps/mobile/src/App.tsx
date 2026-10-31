@@ -30,6 +30,7 @@ import { HelpDeskScreen } from './screens/HelpDesk';
 import { CallsScreen } from './screens/CallsScreen';
 import { ChannelsScreen } from './screens/ChannelsScreen';
 import { BottomTabs, TAB_ROUTES } from './screens/BottomTabs';
+import { CompanyInfoScreen } from './screens/Company';
 
 export type Route =
   | { name: 'list' }
@@ -50,7 +51,8 @@ export type Route =
   | { name: 'applock' }
   | { name: 'help' }
   | { name: 'calls' }
-  | { name: 'channels' };
+  | { name: 'channels' }
+  | { name: 'company' };
 
 export default function App() {
   const c = useClient();
@@ -193,6 +195,8 @@ export default function App() {
     screen = <NewNoticeScreen navigate={setRoute} onDone={setToast} />;
   } else if (route.name === 'applock') {
     screen = <AppLockScreen navigate={setRoute} onToast={setToast} />;
+  } else if (route.name === 'company') {
+    screen = <CompanyInfoScreen navigate={setRoute} />;
   } else if (route.name === 'channels') {
     screen = <ChannelsScreen navigate={setRoute} onToast={setToast} />;
   } else if (route.name === 'calls') {

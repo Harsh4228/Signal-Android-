@@ -1,12 +1,13 @@
 import { useState } from 'react';
-import { FlatList, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
-import { Archive, ArchiveRestore, BellOff, Ban, Bell, ChevronLeft, EllipsisVertical, LifeBuoy, Megaphone, Pin, PinOff, ShoppingBag, Star, MessageSquarePlus, Search, Settings, ShieldCheck } from 'lucide-react-native';
+import { Alert, FlatList, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Archive, ArchiveRestore, BellOff, Ban, Bell, Building2, ChevronDown, ChevronLeft, Eraser, StarOff, Trash2, UsersRound, X, EllipsisVertical, LifeBuoy, Megaphone, Pin, PinOff, ShoppingBag, Star, MessageSquarePlus, Search, Settings, ShieldCheck } from 'lucide-react-native';
 import { MessengerClient, isGroupKey } from '@meetme/core';
 import { client, useClient } from '../messenger';
 import { colors, s } from '../theme';
 import { Banner, Button, ChatAvatar, Field, Header, IconButton, Sheet, shortTime, typingText } from '../ui';
 import { DirectoryList, openDirectChat } from './DirectoryScreen';
 import { AvatarTap } from './Profile';
+import { CompanyBadge } from './Company';
 import type { Route } from '../App';
 
 export function ChatListScreen({ navigate, onError }: { navigate: (r: Route) => void; onError: (m: string) => void }) {
@@ -15,11 +16,35 @@ export function ChatListScreen({ navigate, onError }: { navigate: (r: Route) => 
   const [more, setMore] = useState(false);
   const [archived, setArchived] = useState(false);
   const [acting, setActing] = useState<string | null>(null);
+  const [view, setView] = useState('all');
+  const [pickDept, setPickDept] = useState(false);
 
   const q = filter.trim().toLowerCase();
   const all = c.chatKeys();
+  const deptsOf = (k: string) => (isGroupKey(k) ? [] : (c.profileOf(k)?.departments ?? []));
+  // The filter chips, like WhatsApp: All, Unread, Favourites, Groups, Channels, a department.
+  const show = (k: string) =>
+    view === 'all' ||
+    (view === 'unread' && c.getUnread(k) > 0) ||
+    (view === 'favourites' && c.isFavourite(k)) ||
+    (view === 'groups' && isGroupKey(k) && !c.isChannel(k)) ||
+    (view === 'channels' && c.isChannel(k)) ||
+    (view.startsWith('dept:') && deptsOf(k).includes(view.slice(5)));
   // Pinned first, then the newest; archived chats have their own list (like WhatsApp).
-  const sorted = c.orderedChats({ archived }).filter((k) => !q || c.chatTitle(k).toLowerCase().includes(q));
+  const sorted = c
+    .orderedChats({ archived })
+    .filter((k) => show(k) && (!q || c.chatTitle(k).toLowerCase().includes(q) || deptsOf(k).some((d) => d.toLowerCase().includes(q))));
+  const allDepartments = [...new Set(all.flatMap(deptsOf))].sort();
+  const unreadChats = all.filter((k) => c.getUnread(k) > 0 && !c.isArchived(k)).length;
+  const dept = view.startsWith('dept:') ? view.slice(5) : '';
+  const chips: [string, string][] = [
+    ['all', 'All'],
+    ['unread', unreadChats ? `Unread ${unreadChats}` : 'Unread'],
+    ['favourites', 'Favourites'],
+    ['groups', 'Groups'],
+    ['channels', 'Channels'],
+    ...c.favouriteDepartments.map((d): [string, string] => [`dept:${d}`, d]),
+  ];
   const run = (fn: () => void) => {
     try {
       fn();
@@ -34,15 +59,21 @@ export function ChatListScreen({ navigate, onError }: { navigate: (r: Route) => 
     <View style={s.screen}>
       <Header
         title={
-          <View>
-            <Text style={[s.title, { fontSize: 22, fontWeight: '700' }]}>{archived ? 'Archived' : 'Chats'}</Text>
-            {(!online || c.banned) && (
-              <View style={[s.row, { gap: 5 }]}>
-                <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: statusColor }} />
-                <Text style={[s.muted, { fontSize: 12, textTransform: 'capitalize' }]}>{c.banned ? 'suspended' : c.status}</Text>
-              </View>
-            )}
-          </View>
+          archived ? (
+            <Text style={[s.title, { fontSize: 22, fontWeight: '700' }]}>Archived</Text>
+          ) : (
+            <CompanyBadge
+              navigate={navigate}
+              subtitle={
+                (!online || c.banned) && (
+                  <View style={[s.row, { gap: 5 }]}>
+                    <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: statusColor }} />
+                    <Text style={[s.muted, { fontSize: 12, textTransform: 'capitalize' }]}>{c.banned ? 'suspended' : c.status}</Text>
+                  </View>
+                )
+              }
+            />
+          )
         }
         right={
           <>
@@ -63,19 +94,55 @@ export function ChatListScreen({ navigate, onError }: { navigate: (r: Route) => 
 
       {c.backupNeedsPassword && <BackupPrompt onError={onError} />}
 
-      {all.length > 6 && (
-        <View style={[styles.search, { marginTop: 0 }]}>
-          <Search size={18} color={colors.faint} />
-          <TextInput
-            style={styles.searchInput}
-            value={filter}
-            onChangeText={setFilter}
-            placeholder="Search chats"
-            placeholderTextColor={colors.faint}
-            autoCapitalize="none"
-            autoCorrect={false}
-          />
-        </View>
+      <View style={[styles.search, { marginTop: 4, marginBottom: 8 }]}>
+        <Search size={18} color={colors.faint} />
+        <TextInput
+          style={styles.searchInput}
+          value={filter}
+          onChangeText={setFilter}
+          placeholder="Search name or department"
+          placeholderTextColor={colors.faint}
+          autoCapitalize="none"
+          autoCorrect={false}
+        />
+        {!!filter && <IconButton icon={X} label="Clear search" size={18} onPress={() => setFilter('')} />}
+      </View>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flexGrow: 0 }} contentContainerStyle={styles.chips}>
+        {chips.map(([id, label]) => (
+          <Pressable key={id} onPress={() => setView(view === id && id !== 'all' ? 'all' : id)} style={[styles.chip, view === id && styles.chipOn]}>
+            <Text style={[styles.chipText, view === id && { color: colors.accentText }]}>{label}</Text>
+          </Pressable>
+        ))}
+        {allDepartments.length > 0 && (
+          <Pressable onPress={() => setPickDept(true)} style={[styles.chip, !!dept && !c.favouriteDepartments.includes(dept) && styles.chipOn, s.row, { gap: 4 }]}>
+            <Text style={[styles.chipText, !!dept && !c.favouriteDepartments.includes(dept) && { color: colors.accentText }]}>
+              {dept && !c.favouriteDepartments.includes(dept) ? dept : 'Department'}
+            </Text>
+            <ChevronDown size={14} color={colors.muted} />
+          </Pressable>
+        )}
+      </ScrollView>
+      {view === 'groups' && c.isAdmin && online && (
+        <Pressable onPress={() => navigate({ name: 'admin' })} style={[s.row, { gap: 14, paddingHorizontal: 22, paddingVertical: 12 }]}>
+          <UsersRound size={20} color={colors.accent} />
+          <Text style={[s.textStrong, { color: colors.accent, flex: 1 }]}>New group (Admin &gt; Groups)</Text>
+        </Pressable>
+      )}
+      {pickDept && (
+        <Sheet
+          title="Chats with people of a department"
+          onClose={() => setPickDept(false)}
+          actions={[
+            ...allDepartments.map((d) => ({ icon: Building2, label: d, onPress: () => setView(`dept:${d}`) })),
+            ...(dept
+              ? [
+                  c.favouriteDepartments.includes(dept)
+                    ? { icon: StarOff, label: `Remove "${dept}" from the chips`, onPress: () => void client.favouriteDepartment(dept, false) }
+                    : { icon: Star, label: `Keep "${dept}" as a chip`, onPress: () => void client.favouriteDepartment(dept, true) },
+                ]
+              : []),
+          ]}
+        />
       )}
 
       {archived ? (
@@ -100,6 +167,12 @@ export function ChatListScreen({ navigate, onError }: { navigate: (r: Route) => 
           q || archived ? (
             <View style={[s.center, { gap: 8 }]}>
               <Text style={s.title}>{archived && !q ? 'No archived chats' : 'No chats match'}</Text>
+            </View>
+          ) : view !== 'all' ? (
+            <View style={[s.center, { gap: 8, padding: 24 }]}>
+              <Text style={[s.muted, { textAlign: 'center' }]}>
+                {view === 'favourites' ? 'No favourites yet: long-press a chat > Add to favourites' : 'No chats here'}
+              </Text>
             </View>
           ) : (
             // First login: show everyone at once, no need to search for names.
@@ -182,6 +255,9 @@ export function ChatListScreen({ navigate, onError }: { navigate: (r: Route) => 
             c.isPinned(acting)
               ? { icon: PinOff, label: 'Unpin', onPress: () => run(() => client.pinChat(acting, false)) }
               : { icon: Pin, label: 'Pin to top', onPress: () => run(() => client.pinChat(acting, true)) },
+            c.isFavourite(acting)
+              ? { icon: StarOff, label: 'Remove from favourites', onPress: () => run(() => client.favouriteChat(acting, false)) }
+              : { icon: Star, label: 'Add to favourites', onPress: () => run(() => client.favouriteChat(acting, true)) },
             c.isArchived(acting)
               ? { icon: ArchiveRestore, label: 'Unarchive', onPress: () => run(() => client.archiveChat(acting, false)) }
               : { icon: Archive, label: 'Archive', onPress: () => run(() => client.archiveChat(acting, true)) },
@@ -191,6 +267,32 @@ export function ChatListScreen({ navigate, onError }: { navigate: (r: Route) => 
                   { icon: BellOff, label: 'Mute for 8 hours', onPress: () => run(() => client.muteChat(acting, 8 * 3600_000)) },
                   { icon: BellOff, label: 'Mute for 1 week', onPress: () => run(() => client.muteChat(acting, 7 * 86400_000)) },
                   { icon: BellOff, label: 'Mute always', onPress: () => run(() => client.muteChat(acting, Infinity)) },
+                ]),
+            ...(c.canClearHistory
+              ? [
+                  {
+                    icon: Eraser,
+                    label: 'Clear chat',
+                    onPress: () =>
+                      Alert.alert('Clear chat', `Clear all messages in ${c.chatTitle(acting)}? The chat stays in your list.`, [
+                        { text: 'Cancel', style: 'cancel' },
+                        { text: 'Clear', style: 'destructive', onPress: () => void client.clearChat(acting) },
+                      ]),
+                  },
+                ]
+              : []),
+            ...(isGroupKey(acting)
+              ? []
+              : [
+                  {
+                    icon: Trash2,
+                    label: 'Delete chat',
+                    onPress: () =>
+                      Alert.alert('Delete chat', c.canClearHistory ? `Delete the chat with ${c.chatTitle(acting)}? Its messages are removed from this phone.` : `Remove ${c.chatTitle(acting)} from your chat list? The messages are kept.`, [
+                        { text: 'Cancel', style: 'cancel' },
+                        { text: 'Delete', style: 'destructive', onPress: () => void client.removeContact(acting) },
+                      ]),
+                  },
                 ]),
           ]}
         />
@@ -243,6 +345,10 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 3 },
   },
   item: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingLeft: 16 },
+  chips: { gap: 8, paddingHorizontal: 12, paddingBottom: 8 },
+  chip: { paddingHorizontal: 14, paddingVertical: 7, borderRadius: 18, backgroundColor: colors.bg },
+  chipOn: { backgroundColor: colors.accentSoft },
+  chipText: { color: colors.text2, fontSize: 13.5, fontWeight: '600' },
   itemBody: {
     flex: 1,
     paddingVertical: 14,
