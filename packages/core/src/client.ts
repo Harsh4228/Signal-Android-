@@ -9,6 +9,7 @@ import {
   type ClearKind,
   type ClearOrder,
   type ClearRequest,
+  type ShareLogRequest,
   MAX_EVENT_DESC,
   MAX_EVENT_PLACE,
   MAX_EVENT_TITLE,
@@ -1008,6 +1009,26 @@ export class MessengerClient extends Emitter<Events> {
   /** Admin: a new QR invite for a user (the old one stops working). Also moves someone to a new phone. */
   newInvite(username: string): Promise<InviteResponse> {
     return this.http<InviteResponse>('POST', `/v1/admin/users/${encodeURIComponent(username)}/invite`);
+  }
+
+  /**
+   * May this message leave CellMate (the system share menu: WhatsApp, email…)? Only with the admin's
+   * "Share outside CellMate" right for this chat; never view-once, deleted or unsent files.
+   */
+  canShareOut(m: ChatMessage, chat: string): boolean {
+    if (!this.can('shareOut', chat) || m.viewOnce || m.deleted || m.system || m.call || m.poll || m.event) return false;
+    return m.attachment ? !!m.attachment.data : !!m.text;
+  }
+
+  /** After a share out: the admins see who shared what kind of message from which chat (never the content). */
+  noteSharedOut(m: ChatMessage, chat: string): void {
+    const kind = clearKindOf(m);
+    const body: ShareLogRequest = {
+      chat,
+      kind: kind === 'photos' || kind === 'files' || kind === 'voice' ? kind : 'text',
+      mime: m.attachment?.mime ?? '',
+    };
+    void this.http('POST', '/v1/share-log', body).catch(() => {});
   }
 
   /** My second mobile and email (I add these myself; '' removes them). Colleagues see them on my profile. */
@@ -4085,6 +4106,9 @@ export const AUDIT_LABELS: Record<string, string> = {
   'report.delete_request': 'Asked for account deletion',
   'user.admin_on': 'Made admin',
   'user.admin_off': 'Removed as admin',
+  'group.photo': 'Changed group photo',
+  'history.clear': 'Cleared chat history',
+  'share.out': 'Shared outside CellMate from',
 };
 
 export function formatDuration(s: number): string {

@@ -13,6 +13,8 @@ import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
+import android.provider.OpenableColumns
+import androidx.core.content.FileProvider
 import android.util.Base64
 import com.facebook.react.ReactPackage
 import com.facebook.react.bridge.Arguments
@@ -136,6 +138,40 @@ class DeviceFilesModule(context: ReactApplicationContext) : ReactContextBaseJava
     }.start()
   }
 
+  /** What another app shared to CellMate since the last call: { files: [{ uri, name, mime, size }], text }, or null. */
+  @ReactMethod
+  fun takeShared(promise: Promise) {
+    promise.resolve(ShareInbox.takePending())
+  }
+
+  /**
+   * Share a file out of CellMate with the Android share menu (WhatsApp, email...). The JavaScript checks the admin's
+   * "Share outside CellMate" right first. The copy lives in the cache's share/ folder, which is emptied each time.
+   */
+  @ReactMethod
+  fun shareFile(name: String, mime: String, base64: String, promise: Promise) {
+    try {
+      val activity = reactApplicationContext.currentActivity ?: throw Exception("CellMate is not open")
+      val dir = File(reactApplicationContext.cacheDir, "share")
+      dir.deleteRecursively()
+      dir.mkdirs()
+      val safe = name.replace(Regex("[\\\\/:*?\"<>|\\u0000-\\u001f]"), "_").take(120).ifBlank { "file" }
+      val file = File(dir, safe)
+      file.writeBytes(Base64.decode(base64, Base64.DEFAULT))
+      val uri = FileProvider.getUriForFile(reactApplicationContext, "${reactApplicationContext.packageName}.share", file)
+      val send = Intent(Intent.ACTION_SEND).apply {
+        type = mime.ifBlank { "application/octet-stream" }
+        putExtra(Intent.EXTRA_STREAM, uri)
+        clipData = ClipData.newRawUri(safe, uri)
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+      }
+      activity.startActivity(Intent.createChooser(send, "Share").addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
+      promise.resolve(true)
+    } catch (e: Exception) {
+      promise.reject("share_failed", e.message ?: "Could not share the file", e)
+    }
+  }
+
   /**
    * For the photo cropper: an upright copy of the picture (camera rotation applied), at most `max` px on its long
    * side, saved in the app's cache. Resolves { uri, width, height }; cropPhoto then cuts the chosen square from it.
@@ -204,6 +240,57 @@ class DeviceFilesModule(context: ReactApplicationContext) : ReactContextBaseJava
       }
     }.start()
   }
+}
+
+/**
+ * What was shared to CellMate from another app (Android "Share" -> CellMate): kept until the JavaScript takes it.
+ * The content:// links stay readable while CellMate runs (the sender granted that); nothing is copied.
+ */
+object ShareInbox {
+  @Volatile private var pending: com.facebook.react.bridge.WritableMap? = null
+
+  fun take(activity: android.app.Activity, intent: Intent?) {
+    val action = intent?.action ?: return
+    if (action != Intent.ACTION_SEND && action != Intent.ACTION_SEND_MULTIPLE) return
+    val uris = mutableListOf<Uri>()
+    if (action == Intent.ACTION_SEND) {
+      @Suppress("DEPRECATION")
+      (intent.getParcelableExtra<android.os.Parcelable>(Intent.EXTRA_STREAM) as? Uri)?.let { uris.add(it) }
+    } else {
+      @Suppress("DEPRECATION")
+      intent.getParcelableArrayListExtra<android.os.Parcelable>(Intent.EXTRA_STREAM)?.forEach { (it as? Uri)?.let(uris::add) }
+    }
+    val files = Arguments.createArray()
+    for (u in uris.take(20)) {
+      var name = u.lastPathSegment ?: "file"
+      var size = -1L
+      try {
+        activity.contentResolver.query(u, arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE), null, null, null)?.use { c ->
+          if (c.moveToFirst()) {
+            c.getString(0)?.let { name = it }
+            if (!c.isNull(1)) size = c.getLong(1)
+          }
+        }
+      } catch (e: Exception) { /* name from the link */ }
+      files.pushMap(Arguments.createMap().apply {
+        putString("uri", u.toString())
+        putString("name", name)
+        putString("mime", activity.contentResolver.getType(u) ?: intent.type ?: "application/octet-stream")
+        putDouble("size", size.toDouble())
+      })
+    }
+    val text = listOfNotNull(intent.getStringExtra(Intent.EXTRA_SUBJECT), intent.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString())
+      .filter { it.isNotBlank() }.distinct().joinToString("\n")
+    if (files.size() == 0 && text.isEmpty()) return
+    pending = Arguments.createMap().apply {
+      putArray("files", files)
+      putString("text", text)
+    }
+    // Handled: opening the app again later (recent apps) must not share it a second time.
+    intent.action = Intent.ACTION_MAIN
+  }
+
+  fun takePending(): com.facebook.react.bridge.WritableMap? = pending.also { pending = null }
 }
 
 class DeviceFilesPackage : ReactPackage {

@@ -17,12 +17,14 @@ class MainActivity : ReactActivity() {
     window.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)
     super.onCreate(savedInstanceState)
     handleCallIntent(intent)
+    ShareInbox.take(this, intent)
   }
 
   override fun onNewIntent(intent: Intent) {
     super.onNewIntent(intent)
     setIntent(intent)
     handleCallIntent(intent)
+    ShareInbox.take(this, intent)
   }
 
   /** Opened from the incoming call notification: show over the lock screen and switch the screen on. */

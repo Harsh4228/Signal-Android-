@@ -19,6 +19,13 @@ contextBridge.exposeInMainWorld('meetme', {
   setCapture: (allow: boolean): Promise<void> => ipcRenderer.invoke('capture:set', allow),
   /** "Save to PC" with the normal save dialog (only offered with the download right). Resolves with the path, or null. */
   saveFile: (name: string, data: Uint8Array): Promise<string | null> => ipcRenderer.invoke('file:save', name, data),
+  /** Files the person sent to CellMate with Windows "Send to" (read by the main process, only those files). */
+  takeShared: (): Promise<{ files: { name: string; mime: string; data: Uint8Array }[]; text: string } | null> => ipcRenderer.invoke('share:take'),
+  onShared: (fn: () => void): (() => void) => {
+    const listener = () => fn();
+    ipcRenderer.on('share:incoming', listener);
+    return () => ipcRenderer.removeListener('share:incoming', listener);
+  },
   /** Remember me: the sign-in details, OS-encrypted, kept when signing out. */
   remember: {
     get: (): Promise<string | null> => ipcRenderer.invoke('remember:get'),

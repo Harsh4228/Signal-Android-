@@ -5,5 +5,10 @@
 	<!-- Push notifications (content-free wake-ups through Firebase / APNs). -->
 	<key>aps-environment</key>
 	<string>development</string>
+	<!-- The folder shared with the Share Extension ("Share" from WhatsApp, Photos... -> CellMate). -->
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>group.com.gosite.cellmate</string>
+	</array>
 </dict>
 </plist>

@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Download, File, FileText, Forward, Image, Loader2, Lock, TriangleAlert, X } from 'lucide-react';
-import { formatBytes, type Attachment } from '@meetme/core';
+import { Download, File, FileText, Forward, Image, Loader2, Lock, Share2, TriangleAlert, X } from 'lucide-react';
+import { formatBytes, type Attachment, type ChatMessage } from '@meetme/core';
 import { client, useClient } from '../messenger';
 import { ChatAvatar, errorText } from './ui';
-import { saveToDevice } from '../deviceFiles';
+import { hasShareMenu, saveToDevice, sharedText, shareOut } from '../deviceFiles';
 import * as pdfjs from 'pdfjs-dist';
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 
@@ -33,7 +33,9 @@ export function FileActions({ a, onToast, compact }: { a: Attachment; onToast: (
   const c = useClient();
   const [forwarding, setForwarding] = useState(false);
   const chat = c.activeChat;
-  if (!a.data || (!c.can('forward', chat) && !c.can('download', chat))) return null;
+  if (!a.data || (!c.can('forward', chat) && !c.can('download', chat) && !c.can('shareOut', chat))) return null;
+  // Share outside CellMate works on a message: the viewer only has the file.
+  const asMessage = { id: '', peer: chat ?? '', text: '', ts: 0, outgoing: false, attachment: a } as ChatMessage;
 
   return (
     <>
@@ -45,6 +47,15 @@ export function FileActions({ a, onToast, compact }: { a: Attachment; onToast: (
             onClick={() => void saveToDevice(a, chat ?? '').then((p) => p && onToast(`Saved to ${p}`), (e) => onToast(errorText(e)))}
           >
             <Download size={16} />
+          </button>
+        )}
+        {c.canShareOut(asMessage, chat ?? '') && (
+          <button
+            className="icon"
+            title={hasShareMenu() ? 'Share to another app' : 'Save to share in another app'}
+            onClick={() => void shareOut(asMessage, chat ?? '').then((r) => r && onToast(sharedText(r)), (e) => onToast(errorText(e)))}
+          >
+            <Share2 size={16} />
           </button>
         )}
         {c.can('forward', chat) && (

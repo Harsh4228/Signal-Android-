@@ -79,6 +79,7 @@ import {
   type ClearKind,
   type ClearOrder,
   type ClearRequest,
+  type ShareLogRequest,
   type AuditEntry,
   type GroupInfo,
   type Policy,
@@ -990,6 +991,7 @@ export function createMeetMeServer(
   const attachmentFile = (id: string) => join(attachmentsDir, `${id}.bin`);
   const uploadLimit = new RateLimiter(120, 3600_000);
   const reportLimit = new RateLimiter(20, 3600_000);
+  const shareLogLimit = new RateLimiter(300, 3600_000);
   const backupLimit = new RateLimiter(60, 3600_000);
   const backupOpLimit = new RateLimiter(3000, 3600_000);
 
@@ -1466,6 +1468,19 @@ export function createMeetMeServer(
       }
       if (body.birthday !== undefined) await db.setBirthday(me, checkBirthday(body.birthday));
       await db.setPrivacy(me, p);
+      return send(204);
+    }
+    // Something left CellMate through the system share menu: recorded for the admins (never the content).
+    if (method === 'POST' && path === '/v1/share-log') {
+      if (!shareLogLimit.allow(me)) return send(204); // just stop logging a flood, never block the share
+      const body = (await readJson(req)) as Partial<ShareLogRequest>;
+      const chat = typeof body.chat === 'string' ? body.chat.slice(0, 80) : '';
+      const kind = ['text', 'photos', 'files', 'voice'].includes(body.kind as string) ? (body.kind as string) : 'text';
+      const mime = typeof body.mime === 'string' && /^[\w.+-]+\/[\w.+-]+$/.test(body.mime) ? body.mime.slice(0, 80) : '';
+      let where = chat;
+      if (chat.startsWith('#')) where = `group "${(await db.getGroup(chat.slice(1)))?.name ?? 'unknown'}"`;
+      else if (chat) where = `chat with ${shortId(chat)}`;
+      await audit(me, 'share.out', where, mime ? `${kind} (${mime})` : kind);
       return send(204);
     }
     // A second mobile and email: people add them themselves, even when the admin set the main ones.

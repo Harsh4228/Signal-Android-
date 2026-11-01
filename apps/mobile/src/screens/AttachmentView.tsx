@@ -14,14 +14,18 @@ import {
   UsersRound,
   X,
   type LucideIcon,
+  Share2,
 } from 'lucide-react-native';
-import { formatBytes, isGroupKey, toBase64, type Attachment } from '@meetme/core';
+import { formatBytes, isGroupKey, toBase64, type Attachment, type ChatMessage } from '@meetme/core';
 import { client, useClient } from '../messenger';
 import { colors, s } from '../theme';
 import { IconButton, Sheet, errorText } from '../ui';
-import { saveToDevice } from '../deviceFiles';
+import { saveToDevice, shareOut } from '../deviceFiles';
 
 const ICON: Record<Attachment['kind'], LucideIcon> = { image: ImageIcon, pdf: FileText, audio: Mic, file: File };
+
+/** Share outside CellMate works on a message: the viewer only has the file. */
+const asMessage = (a: Attachment) => ({ id: '', peer: client.activeChat ?? '', text: '', ts: 0, outgoing: false, attachment: a }) as ChatMessage;
 
 // ---------------------------------------------------------------------------------------------
 // Full-screen viewer. It is rendered INSIDE the main activity window (not a RN <Modal>, which on
@@ -96,6 +100,13 @@ export function MediaViewerHost({ onToast }: { onToast: (m: string) => void }) {
                 icon={Download}
                 label="Save to phone"
                 onPress={() => void saveToDevice(o.a, c.activeChat ?? '').then((where) => onToast(`Saved to ${where}`), (e) => onToast(errorText(e)))}
+              />
+            )}
+            {c.canShareOut(asMessage(o.a), c.activeChat ?? '') && (
+              <IconButton
+                icon={Share2}
+                label="Share to another app"
+                onPress={() => void shareOut(asMessage(o.a), c.activeChat ?? '').catch((e) => onToast(errorText(e)))}
               />
             )}
             {c.can('forward', c.activeChat) && <IconButton icon={Forward} label="Share to a chat" onPress={() => showForward(o.a)} />}

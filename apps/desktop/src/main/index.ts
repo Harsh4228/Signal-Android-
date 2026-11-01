@@ -203,6 +203,52 @@ ipcMain.handle('capture:set', async (e, allow: boolean) => {
 
 const MAX_SAVE_BYTES = 26 * 1024 * 1024;
 /** "Save to PC" (only with the download right): the person picks where, in the normal save dialog. */
+// ---------------------------------------------------------------- share in (Windows "Send to -> CellMate")
+
+/** The installer puts CellMate in Explorer's "Send to" menu; Windows starts it with the chosen files' paths. */
+const SHARE_FLAG = '--share';
+const MAX_SHARED_FILES = 20;
+const MIME: Record<string, string> = {
+  jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif', webp: 'image/webp', heic: 'image/heic', bmp: 'image/bmp',
+  mp4: 'video/mp4', mov: 'video/quicktime', webm: 'video/webm', mkv: 'video/x-matroska', avi: 'video/x-msvideo',
+  mp3: 'audio/mpeg', m4a: 'audio/mp4', aac: 'audio/aac', wav: 'audio/wav', ogg: 'audio/ogg', opus: 'audio/ogg',
+  pdf: 'application/pdf', txt: 'text/plain', csv: 'text/csv', zip: 'application/zip',
+  doc: 'application/msword', docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  xls: 'application/vnd.ms-excel', xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  ppt: 'application/vnd.ms-powerpoint', pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+};
+let sharedFiles: { name: string; mime: string; data: Uint8Array }[] = [];
+
+/** Reads the files named after --share (only those, only regular files, at most the attachment size each). */
+async function queueSharedFiles(argv: string[]): Promise<number> {
+  const at = argv.indexOf(SHARE_FLAG);
+  if (at < 0) return 0;
+  let added = 0;
+  for (const path of argv.slice(at + 1, at + 1 + MAX_SHARED_FILES)) {
+    try {
+      const st = await fs.stat(path);
+      if (!st.isFile() || st.size > MAX_SAVE_BYTES) continue;
+      const name = path.split(/[\\/]/).pop() || 'file';
+      const ext = name.includes('.') ? name.split('.').pop()!.toLowerCase() : '';
+      sharedFiles.push({ name, mime: MIME[ext] ?? 'application/octet-stream', data: new Uint8Array(await fs.readFile(path)) });
+      added++;
+    } catch {
+      /* gone or unreadable: skip it */
+    }
+  }
+  sharedFiles = sharedFiles.slice(-MAX_SHARED_FILES);
+  return added;
+}
+void queueSharedFiles(process.argv);
+
+ipcMain.handle('share:take', async (e) => {
+  assertTrusted(e);
+  if (!sharedFiles.length) return null;
+  const files = sharedFiles;
+  sharedFiles = [];
+  return { files, text: '' };
+});
+
 ipcMain.handle('file:save', async (e, name: string, data: Uint8Array) => {
   assertTrusted(e);
   if (!(data instanceof Uint8Array) || data.length > MAX_SAVE_BYTES) throw new Error('invalid file');
@@ -319,12 +365,14 @@ function createWindow() {
   else void win.loadFile(join(__dirname, '../renderer/index.html'));
 }
 
-app.on('second-instance', () => {
+app.on('second-instance', (_e, argv) => {
   const w = BrowserWindow.getAllWindows()[0];
   if (w) {
     if (w.isMinimized()) w.restore();
     w.focus();
   }
+  // Windows "Send to -> CellMate" while CellMate is open: the files come with the second start.
+  void queueSharedFiles(argv).then((n) => n && w?.webContents.send('share:incoming'));
 });
 
 app.whenReady().then(() => {

@@ -20,6 +20,8 @@ import { GroupCallBar, GroupCallScreen } from './screens/GroupCallScreen';
 import { BroadcastScreen } from './screens/BroadcastScreen';
 import { MediaViewerHost } from './screens/AttachmentView';
 import { PhotoCropHost } from './PhotoCrop';
+import { takeShared, type SharedIn } from './deviceFiles';
+import { ShareInScreen } from './screens/ShareIn';
 import { AdminScreen } from './screens/AdminScreen';
 import { LockScreen } from './screens/LockScreen';
 import { AppLockScreen } from './screens/AppLockScreen';
@@ -104,6 +106,16 @@ export default function App() {
       appState.remove();
     };
   }, []);
+
+  // "Share" -> CellMate from another app: picked up once signed in and unlocked (it waits in the phone till then).
+  const [shared, setShared] = useState<SharedIn | null>(null);
+  useEffect(() => {
+    if (!ready || !c.account || lock.locked) return;
+    const check = () => void takeShared().then((x) => x && setShared(x));
+    check();
+    const sub = AppState.addEventListener('change', (st) => st === 'active' && check());
+    return () => sub.remove();
+  }, [ready, c.account, lock.locked]);
 
   // Once signed in and connected, register this phone for content-free wake-up pushes.
   useEffect(() => {
@@ -230,6 +242,17 @@ export default function App() {
         {ready && c.account && !c.moved && !c.pending && tab && <BottomTabs current={tab} navigate={setRoute} />}
         <MediaViewerHost onToast={setToast} />
         <PhotoCropHost />
+        {shared && !lock.locked && (
+          <ShareInScreen
+            shared={shared}
+            onClose={() => setShared(null)}
+            onSent={(chat) => {
+              setShared(null);
+              setRoute({ name: 'chat', peer: chat });
+            }}
+            onToast={setToast}
+          />
+        )}
         {ready && c.account && !lock.locked && call.status === 'idle' && <NoticePopup />}
         {ready && c.account && lock.locked && <LockScreen />}
         {/* Above the lock screen, like WhatsApp: a call can be answered without unlocking the app first. */}

@@ -4373,3 +4373,9 @@ a.rich.phone {
 .crop-zoom { display: flex; align-items: center; gap: 8px; width: 300px; }
 .crop-zoom input[type='range'] { flex: 1; accent-color: var(--accent); }
 .crop-modal .row-end { width: 100%; }
+
+/* "Send to…" after sharing into CellMate: the shared files. */
+.share-files { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.share-files li { display: flex; align-items: center; gap: 8px; font-size: 13.5px; min-width: 0; }
+.share-files li span.grow { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.share-in textarea { width: 100%; box-sizing: border-box; resize: vertical; }

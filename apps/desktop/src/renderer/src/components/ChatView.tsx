@@ -40,6 +40,7 @@ import {
   Video,
   X,
   ArrowLeft,
+  Share2,
 } from 'lucide-react';
 import {
   MessengerClient,
@@ -51,7 +52,7 @@ import {
   type CallLog,
   type ChatMessage,
 } from '@meetme/core';
-import { copyText, saveToDevice } from '../deviceFiles';
+import { copyText, hasShareMenu, saveToDevice, sharedText, shareOut } from '../deviceFiles';
 import { MessageText, ViewOnceBubble, ViewOnceViewer } from './MessageText';
 
 /** How many messages a chat draws at first, and how many more each "Show earlier" adds. */
@@ -479,6 +480,8 @@ export function ChatView({ peer, onError }: { peer: string; onError: (m: string)
                     canForward={!m.poll && !m.event && !m.viewOnce && (!m.attachment || !!m.attachment.data) && c.can('forward', peer)}
                     canCopy={!!m.text && c.can('copy', peer)}
                     canSave={!!m.attachment?.data && !m.viewOnce && c.can('download', peer)}
+                    canShare={c.canShareOut(m, peer)}
+                    onShare={() => void shareOut(m, peer).then((r) => r && onError(sharedText(r)), (e) => onError(errorText(e)))}
                     onInfo={
                       m.outgoing
                         ? () =>
@@ -715,8 +718,10 @@ function MessageActions({
   canForward,
   canCopy,
   canSave,
+  canShare,
   onCopy,
   onSave,
+  onShare,
   onInfo,
   onMenu,
   onEdit,
@@ -736,8 +741,11 @@ function MessageActions({
   canForward: boolean;
   canCopy: boolean;
   canSave: boolean;
+  /** Share outside CellMate (WhatsApp, email…), with the admin's right. */
+  canShare: boolean;
   onCopy: () => void;
   onSave: () => void;
+  onShare: () => void;
   /** Message info (my messages): when it was delivered / read. */
   onInfo?: () => void;
   onMenu: () => void;
@@ -766,6 +774,11 @@ function MessageActions({
       {canSave && (
         <button className="icon" title="Save to PC" onClick={onSave}>
           <Download size={14} />
+        </button>
+      )}
+      {canShare && (
+        <button className="icon" title={hasShareMenu() ? 'Share to another app' : m.attachment ? 'Save to share in another app' : 'Copy to share in another app'} onClick={onShare}>
+          <Share2 size={14} />
         </button>
       )}
       {canForward && (

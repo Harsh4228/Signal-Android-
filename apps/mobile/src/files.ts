@@ -30,7 +30,7 @@ export async function pickFile(kind: PickKind): Promise<OutgoingFile | null> {
   };
 }
 
-async function readUri(uri: string): Promise<Uint8Array> {
+export async function readUri(uri: string): Promise<Uint8Array> {
   const blob = await (await fetch(uri)).blob();
   const dataUrl = await new Promise<string>((resolve, reject) => {
     const r = new FileReader();

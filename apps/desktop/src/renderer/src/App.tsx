@@ -12,6 +12,8 @@ import { NoticePopup } from './components/Notices';
 import { Logo } from './components/ui';
 import { applyCaptureRight } from './deviceFiles';
 import { enableWebPush } from './webPush';
+import { onSharedIn, takeSharedIn, type SharedIn } from './shareIn';
+import { ShareInModal } from './components/ShareIn';
 
 /**
  * Esc closes the topmost popup, like its ✕ (each popup's backdrop closes it when clicked). It runs after the
@@ -105,6 +107,16 @@ export function App() {
     if (call.status === 'idle' && call.endReason) setToast(call.endReason);
   }, [call.status, call.endReason]);
 
+  // Shared in from outside (Windows "Send to", or the web app on Android): once signed in and unlocked.
+  const [shared, setShared] = useState<SharedIn | null>(null);
+  useEffect(() => {
+    if (!ready || !c.account || lock.locked) return;
+    const check = () => void takeSharedIn().then((x) => x && setShared(x));
+    check();
+    if (new URLSearchParams(location.search).has('shared')) history.replaceState(null, '', location.pathname);
+    return onSharedIn(check);
+  }, [ready, c.account, lock.locked]);
+
   // Web app: once notifications were allowed, renew the push subscription with every start (it can change).
   useEffect(() => {
     if (c.account && c.status === 'online') void enableWebPush(false).catch(() => {});
@@ -169,6 +181,7 @@ export function App() {
           {toast}
         </div>
       )}
+      {shared && !lock.locked && <ShareInModal shared={shared} onClose={() => setShared(null)} onToast={setToast} />}
       {!lock.locked && call.status === 'idle' && <NoticePopup />}
       {lock.locked && <LockScreen />}
     </div>

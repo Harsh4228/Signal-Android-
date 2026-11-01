@@ -39,6 +39,7 @@ import {
   Video,
   X,
   Flag,
+  Share2,
 } from 'lucide-react-native';
 import { MessengerClient, callDetail, callMissed, callTitle, formatLastSeen, isGroupKey, type CallLog, type ChatMessage } from '@meetme/core';
 import {
@@ -56,7 +57,7 @@ import {
   VoiceRecorder,
 } from './ChatExtras';
 import { pickFile, type PickKind } from '../files';
-import { copyText, saveToDevice } from '../deviceFiles';
+import { copyText, saveToDevice, shareOut } from '../deviceFiles';
 import { AttachmentView } from './AttachmentView';
 import { MessageText, ViewOnceBubble, ViewOnceViewer } from './MessageText';
 import { EventView, NewEvent, NewPoll, PollView } from './PollEvent';
@@ -194,6 +195,9 @@ export function ChatScreen({
     }
     if (!m.poll && !m.event && !m.viewOnce && (!m.attachment || m.attachment.data) && c.can('forward', peer)) {
       list.push({ icon: Forward, label: 'Forward', onPress: () => setForwarding(m) });
+    }
+    if (c.canShareOut(m, peer)) {
+      list.push({ icon: Share2, label: 'Share to another app', onPress: () => void shareOut(m, peer).catch((e) => onError(errorText(e))) });
     }
     list.push({ icon: Star, label: m.starred ? 'Unstar' : 'Star', onPress: () => client.toggleStar(m) });
     if (m.outgoing && c.canEditDelete && m.text && !m.poll && !m.event) {

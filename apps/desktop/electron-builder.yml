@@ -18,6 +18,8 @@ win:
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
+  # Adds CellMate to Explorer's "Send to" menu (build/installer.nsh).
+  include: build/installer.nsh
 mac:
   # zip is what macOS auto-update installs (it only works once the app is code-signed).
   target: [dmg, zip]

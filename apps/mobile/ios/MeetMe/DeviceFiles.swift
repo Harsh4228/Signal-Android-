@@ -107,6 +107,68 @@ class DeviceFiles: NSObject {
   }
 
   /**
+   * Share a file out of CellMate with the iOS share sheet (WhatsApp, Mail...). The JavaScript checks the admin's
+   * "Share outside CellMate" right first. Resolves true if the person shared it, false if they cancelled.
+   */
+  @objc func shareFile(_ name: String, mime: String, base64: String, resolver resolve: @escaping RCTPromiseResolveBlock, rejecter reject: @escaping RCTPromiseRejectBlock) {
+    guard let data = Data(base64Encoded: base64, options: .ignoreUnknownCharacters) else {
+      return reject("share_failed", "Could not read the file", nil)
+    }
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent("share", isDirectory: true)
+    try? FileManager.default.removeItem(at: dir)
+    try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    let safe = String(name.map { "/:\\".contains($0) ? "_" : $0 }.prefix(120))
+    let file = dir.appendingPathComponent(safe.isEmpty ? "file" : safe)
+    do {
+      try data.write(to: file)
+    } catch {
+      return reject("share_failed", "Could not prepare the file", error)
+    }
+    DispatchQueue.main.async {
+      guard let top = DeviceFiles.topController() else { return reject("share_failed", "CellMate is not open", nil) }
+      let sheet = UIActivityViewController(activityItems: [file], applicationActivities: nil)
+      sheet.popoverPresentationController?.sourceView = top.view
+      sheet.popoverPresentationController?.sourceRect = CGRect(x: top.view.bounds.midX, y: top.view.bounds.midY, width: 0, height: 0)
+      sheet.completionWithItemsHandler = { _, completed, _, _ in resolve(completed) }
+      top.present(sheet, animated: true)
+    }
+  }
+
+  /**
+   * What was shared to CellMate with the Share Extension (from WhatsApp, Photos...) since the last call:
+   * { files: [{ uri, name, mime, size }], text }, or nil. The files are moved out of the shared folder first.
+   */
+  @objc func takeShared(_ resolve: @escaping RCTPromiseResolveBlock, rejecter reject: @escaping RCTPromiseRejectBlock) {
+    DispatchQueue.global(qos: .userInitiated).async {
+      let fm = FileManager.default
+      guard let base = fm.containerURL(forSecurityApplicationGroupIdentifier: "group.com.gosite.cellmate") else { return resolve(nil) }
+      let inbox = base.appendingPathComponent("ShareInbox", isDirectory: true)
+      let manifest = inbox.appendingPathComponent("manifest.json")
+      guard let data = try? Data(contentsOf: manifest),
+            let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return resolve(nil) }
+      defer { try? fm.removeItem(at: inbox) }
+      // Something shared a day ago and never opened: don't send it now by surprise.
+      if let ts = json["ts"] as? Double, Date().timeIntervalSince1970 * 1000 - ts > 86_400_000 { return resolve(nil) }
+      let dest = fm.temporaryDirectory.appendingPathComponent("shared-in", isDirectory: true)
+      try? fm.removeItem(at: dest)
+      try? fm.createDirectory(at: dest, withIntermediateDirectories: true)
+      var files: [[String: Any]] = []
+      for f in (json["files"] as? [[String: Any]]) ?? [] {
+        guard let stored = f["file"] as? String else { continue }
+        let to = dest.appendingPathComponent(stored)
+        guard (try? fm.moveItem(at: inbox.appendingPathComponent(stored), to: to)) != nil else { continue }
+        files.append([
+          "uri": to.absoluteString,
+          "name": f["name"] as? String ?? stored,
+          "mime": f["mime"] as? String ?? "application/octet-stream",
+          "size": f["size"] as? Double ?? -1,
+        ])
+      }
+      resolve(["files": files, "text": json["text"] as? String ?? ""])
+    }
+  }
+
+  /**
    * For the photo cropper: an upright copy of the picture, at most `max` px on its long side, saved in the temporary
    * folder. Resolves { uri, width, height }; cropPhoto then cuts the chosen square from it.
    */
