@@ -803,9 +803,9 @@ function CreateUser({
     if (!idTyped) setId(suggestUserId(v, takenIds));
   };
   const changeId = (v: string) => {
-    // Emptied: go back to the ID made from the name.
+    // Typing their own ID: keep it. Emptied: stays empty (they can type a new one); changing the name fills it again.
+    setId(v);
     setIdTyped(!!v.trim());
-    setId(v.trim() ? v : suggestUserId(name, takenIds));
   };
   const [picked, setPicked] = useState<string[]>(initialDepartment ? [initialDepartment] : []);
   const [busy, setBusy] = useState(false);
@@ -814,6 +814,7 @@ function CreateUser({
   async function create() {
     setError(null);
     const username = normalizeId(id);
+    if (!username) return setError('Enter a user ID (it is used to sign in)');
     if (!ID_RE.test(username)) return setError(ID_RULES);
     if (taken.has(username)) return setError(`The ID "${username}" is already used: choose another`);
     if (!name.trim()) return setError('Enter their full name');

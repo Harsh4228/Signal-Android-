@@ -614,10 +614,9 @@ function CreateUser({
     if (!idTyped) setId(suggestUserId(v, takenIds));
   };
   const changeId = (v: string) => {
+    // Typing their own ID: keep it. Emptied: stays empty (they can type a new one); changing the name fills it again.
     setId(v);
-    // Emptied: go back to the ID made from the name.
     setIdTyped(!!v.trim());
-    if (!v.trim()) setId(suggestUserId(name, takenIds));
   };
   const [photo, setPhoto] = useState<{ mime: string; data: string } | null>(null);
   const [picked, setPicked] = useState<string[]>(initialDepartment ? [initialDepartment] : []);
@@ -628,6 +627,7 @@ function CreateUser({
     e.preventDefault();
     setError(null);
     const username = normalizeId(id);
+    if (!username) return setError('Enter a user ID (it is used to sign in)');
     if (!ID_RE.test(username)) return setError(ID_RULES);
     if (taken.has(username)) return setError(`The ID "${username}" is already used: choose another`);
     if (!name.trim()) return setError('Enter their full name');
