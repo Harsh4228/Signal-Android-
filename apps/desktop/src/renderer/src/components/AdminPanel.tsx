@@ -6,6 +6,7 @@ import {
   Flag,
   Building2,
   Cake,
+  Eraser,
   IdCard,
   Camera,
   Check,
@@ -79,6 +80,7 @@ import {
 import { client, useClient } from '../messenger';
 import { Avatar, SortSelect, errorText, shortTime } from './ui';
 import { cropPhoto } from './PhotoCrop';
+import { ClearHistoryModal } from './ClearHistory';
 import { HelpDeskTab, RightsTab } from './AdminRights';
 import { CameraCapture, ProfileHero } from './Profile';
 import { CompanyTab } from './Company';
@@ -926,6 +928,7 @@ function UserDetail({
   onToast: Toast;
 }) {
   const [mode, setMode] = useState<'view' | 'profile' | 'departments'>('view');
+  const [clearing, setClearing] = useState(false);
   const done = (changed: boolean) => {
     setMode('view');
     if (changed) reload();
@@ -972,17 +975,33 @@ function UserDetail({
         <>
           <div className="section-head">
             <div className="section-title">Profile</div>
-            {!user.moved && (
-              <button onClick={() => setMode('profile')}>
-                <Pencil size={15} /> Edit profile
+            <div className="row" style={{ gap: 6 }}>
+              {!user.moved && (
+                <button onClick={() => setMode('profile')}>
+                  <Pencil size={15} /> Edit profile
+                </button>
+              )}
+              <button onClick={() => setClearing(true)} title="Clear this person's chat history on their devices">
+                <Eraser size={15} /> Clear history
               </button>
-            )}
+            </div>
           </div>
+          {clearing && (
+            <ClearHistoryModal
+              scope="user"
+              target={user.username}
+              label={user.name || shortId(user.username)}
+              onClose={() => setClearing(false)}
+              onToast={onToast}
+            />
+          )}
           <div className="detail-list">
             {detail(UserRound, 'Full name', user.name)}
             {detail(IdCard, 'Employee ID', user.employeeId ?? '')}
             {detail(Phone, 'Mobile', user.phone)}
             {detail(Mail, 'Email', user.email)}
+            {detail(Phone, 'Other mobile (added by them)', user.phone2 ?? '')}
+            {detail(Mail, 'Other email (added by them)', user.email2 ?? '')}
             {detail(Cake, 'Birth date', birthdayText(user.birthday))}
             {!user.name && !user.employeeId && !user.phone && !user.email && !user.birthday && <p className="muted small">No details yet.</p>}
           </div>
@@ -1256,6 +1275,7 @@ function GroupsTab({
 }) {
   const me = client.account?.username ?? '';
   const [editing, setEditing] = useState<GroupInfo | 'new' | null>(startNew ? 'new' : null);
+  const [clearing, setClearing] = useState<GroupInfo | null>(null);
   const [query, setQuery] = useState('');
   const [sort, setSort] = useState<GroupSort>('name');
 
@@ -1305,6 +1325,7 @@ function GroupsTab({
       <p className="muted small" style={{ margin: '10px 0' }}>
         Only admins create groups and choose who is in them. Group messages are end-to-end encrypted for every member.
       </p>
+      {clearing && <ClearHistoryModal scope="group" target={clearing.id} label={clearing.name} onClose={() => setClearing(null)} onToast={onToast} />}
       <ul className="emp-list">
         {groups === null && <li className="muted">Loading…</li>}
         {groups && !shown.length && <li className="muted">{groups.length ? 'No groups match.' : 'No groups yet.'}</li>}
@@ -1329,6 +1350,9 @@ function GroupsTab({
               )}
               <button className="icon" title="Edit" onClick={() => setEditing(g)}>
                 <Pencil size={16} />
+              </button>
+              <button className="icon" title="Clear history" onClick={() => setClearing(g)}>
+                <Eraser size={16} />
               </button>
               <button className="icon danger" title="Delete" onClick={() => void remove(g)}>
                 <Trash2 size={16} />

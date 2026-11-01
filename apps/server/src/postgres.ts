@@ -64,6 +64,8 @@ const SCHEMA = `
   ALTER TABLE users ADD COLUMN IF NOT EXISTS hide_last_seen SMALLINT NOT NULL DEFAULT 0;
   ALTER TABLE users ADD COLUMN IF NOT EXISTS birthday TEXT NOT NULL DEFAULT '';
   ALTER TABLE users ADD COLUMN IF NOT EXISTS employee_id TEXT NOT NULL DEFAULT '';
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS phone2 TEXT NOT NULL DEFAULT '';
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS email2 TEXT NOT NULL DEFAULT '';
   CREATE TABLE IF NOT EXISTS avatars (
     username TEXT PRIMARY KEY REFERENCES users(username) ON DELETE CASCADE,
     mime     TEXT NOT NULL,
@@ -278,6 +280,9 @@ export async function openPostgres(connectionString: string): Promise<{ db: Db; 
     },
     async setContactInfo(username, phone, email) {
       await pool.query('UPDATE users SET phone = $1, email = $2 WHERE username = $3', [phone, email, username]);
+    },
+    async setExtraContact(username, phone2, email2) {
+      await pool.query('UPDATE users SET phone2 = $1, email2 = $2 WHERE username = $3', [phone2, email2, username]);
     },
     activate: (username, a, opks) =>
       tx(async (c) => {

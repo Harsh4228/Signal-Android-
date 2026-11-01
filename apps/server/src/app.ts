@@ -65,6 +65,7 @@ import {
   type Community,
   MAX_ABOUT,
   MAX_EMPLOYEE_ID,
+  CLEAR_KINDS,
   MAX_REPORT_MESSAGES,
   REPORT_REASONS,
   DELETE_REQUEST,
@@ -75,6 +76,9 @@ import {
   type AdminStats,
   type AdminUser,
   type AvatarResponse,
+  type ClearKind,
+  type ClearOrder,
+  type ClearRequest,
   type AuditEntry,
   type GroupInfo,
   type Policy,
@@ -762,6 +766,24 @@ export function createMeetMeServer(
     return { fields, photo };
   }
 
+  // ---- history clears the admin ordered (JSON in meta, per company); apps carry them out on the devices ----
+  const MAX_CLEAR_ORDERS = 300;
+  async function getClearOrders(company: string): Promise<ClearOrder[]> {
+    try {
+      const v = JSON.parse((await db.getMeta(metaKey('clear_orders', company))) ?? '[]') as unknown;
+      return Array.isArray(v) ? (v as ClearOrder[]) : [];
+    } catch {
+      return [];
+    }
+  }
+  /** The clears that concern this person: of all their chats, or of a group they are in. */
+  async function clearOrdersFor(user: string): Promise<ClearOrder[]> {
+    const orders = await getClearOrders(companyOf(user));
+    if (!orders.length) return [];
+    const groups = new Set((await db.groupsOf(user)).map((g) => g.id));
+    return orders.filter((o) => (o.scope === 'user' ? o.target === user : groups.has(o.target)));
+  }
+
   /** Groups of a company: those its admins made. */
   const companyGroups = async (company: string) => (await db.listGroups()).filter((g) => companyOf(g.created_by) === company);
 
@@ -1311,6 +1333,8 @@ export function createMeetMeServer(
           about: u.about,
           birthday: u.birthday,
           employeeId: u.employee_id,
+          phone2: u.phone2,
+          email2: u.email2,
           editDelete: admins.includes(u.username) || resolveRight(rules, 'editDelete', { username: u.username, departments: u.departments }),
         }));
       return send(200, { users });
@@ -1330,6 +1354,8 @@ export function createMeetMeServer(
         about: u.about,
         birthday: u.birthday,
         employeeId: u.employee_id,
+        phone2: u.phone2,
+        email2: u.email2,
         editDelete:
           (await isAdminUser(u.username)) ||
           resolveRight(await getRules(companyOf(me)), 'editDelete', { username: u.username, departments: u.departments }),
@@ -1409,6 +1435,9 @@ export function createMeetMeServer(
         hideLastSeen: !!user.hide_last_seen,
         birthday: user.birthday,
         employeeId: user.employee_id,
+        phone2: user.phone2,
+        email2: user.email2,
+        clearOrders: await clearOrdersFor(user.username),
       };
       return send(200, me_);
     }
@@ -1437,6 +1466,13 @@ export function createMeetMeServer(
       }
       if (body.birthday !== undefined) await db.setBirthday(me, checkBirthday(body.birthday));
       await db.setPrivacy(me, p);
+      return send(204);
+    }
+    // A second mobile and email: people add them themselves, even when the admin set the main ones.
+    if (method === 'PUT' && path === '/v1/me/extra-contact') {
+      const body = (await readJson(req)) as { phone2?: unknown; email2?: unknown };
+      const { phone, email } = checkContactInfo(body.phone2, body.email2);
+      await db.setExtraContact(me, phone, email);
       return send(204);
     }
     if (method === 'PUT' && path === '/v1/me/contact') {
@@ -1994,6 +2030,8 @@ export function createMeetMeServer(
           name: u.display_name,
           birthday: u.birthday,
           employeeId: u.employee_id,
+          phone2: u.phone2,
+          email2: u.email2,
           inviteExpires: u.invite_hash && Number(u.invite_expires) > Date.now() ? Number(u.invite_expires) : null,
         }));
         return send(200, { users });
@@ -2293,6 +2331,42 @@ export function createMeetMeServer(
           await notify((await companyUsers(co)).map((u) => u.username), 'policy');
           return send(200, policy);
         }
+      }
+
+      // ---- clear chat history: of a person (all their chats) or of a group (on every member's device) ----
+      if (method === 'POST' && path === '/v1/admin/clear') {
+        const body = (await readJson(req)) as Partial<Record<keyof ClearRequest, unknown>>;
+        const days = body.olderThanDays;
+        if (typeof days !== 'number' || !Number.isInteger(days) || days < 0 || days > 3650) {
+          throw new HttpError(400, 'Choose how old the messages must be');
+        }
+        const known = CLEAR_KINDS.map(([k]) => k);
+        const kinds = Array.isArray(body.kinds) ? [...new Set(body.kinds.filter((k): k is ClearKind => known.includes(k as ClearKind)))] : [];
+        if (!kinds.length) throw new HttpError(400, 'Choose what to clear');
+        let target: string;
+        let label: string;
+        let users: string[];
+        if (body.scope === 'user') {
+          const u = typeof body.target === 'string' ? await colleague(me, userSeg(body.target)) : undefined;
+          if (!u) throw new HttpError(404, 'user not found');
+          target = u.username;
+          label = u.display_name || shortId(u.username);
+          users = [u.username];
+        } else if (body.scope === 'group') {
+          const g = typeof body.target === 'string' && GROUP_ID_RE.test(body.target) ? await db.getGroup(body.target) : undefined;
+          if (!g || companyOf(g.created_by) !== co) throw new HttpError(404, 'group not found');
+          target = g.id;
+          label = g.name;
+          users = g.members;
+        } else {
+          throw new HttpError(400, 'Clear a person or a group');
+        }
+        const order: ClearOrder = { id: randomBytes(8).toString('hex'), ts: Date.now(), by: me, scope: body.scope, target, olderThanDays: days, kinds };
+        await db.setMeta(metaKey('clear_orders', co), JSON.stringify([order, ...(await getClearOrders(co))].slice(0, MAX_CLEAR_ORDERS)));
+        const age = days ? `older than ${days} day${days === 1 ? '' : 's'}` : 'everything';
+        await audit(me, 'history.clear', label, `${body.scope === 'user' ? 'all their chats' : 'group'}: ${kinds.join(', ')}, ${age}`);
+        await notify(users, 'policy'); // their apps read "me" again and carry it out
+        return send(200, order);
       }
 
       // ---- groups: only admins create them and decide who is in them ----

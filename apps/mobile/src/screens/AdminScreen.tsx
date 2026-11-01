@@ -28,6 +28,7 @@ import {
   Trash2,
   UserPlus,
   UsersRound,
+  Eraser,
 } from 'lucide-react-native';
 import {
   AUDIT_LABELS,
@@ -74,6 +75,7 @@ import { colors, mono, s } from '../theme';
 import { Avatar, Banner, Button, Field, Header, IconButton, Sheet, SortChip, errorText, shortTime, useBack, type SheetAction } from '../ui';
 import type { Route } from '../App';
 import { HelpDeskTab } from './HelpDesk';
+import { ClearHistorySheet } from './ClearHistory';
 import { CommunitiesTab } from './AdminCommunities';
 import { ReportsTab } from './Safety';
 import { GroupRightsScreen, RightsTab } from './RightsScreen';
@@ -425,6 +427,7 @@ function UsersTab({
   const [invite, setInvite] = useState<InviteShare | null>(null);
   // The actions for one person, as a list (an Android alert shows only three buttons).
   const [sheet, setSheet] = useState<{ title: string; actions: SheetAction[] } | null>(null);
+  const [clearing, setClearing] = useState<{ scope: 'user' | 'group'; target: string; label: string } | null>(null);
   const iAmOwner = !!users?.find((x) => x.username === me)?.owner;
 
   const shown = useMemo(() => {
@@ -531,6 +534,7 @@ function UsersTab({
               ),
       });
     }
+    buttons.push({ icon: Eraser, text: 'Clear chat history', onPress: () => setClearing({ scope: 'user', target: u.username, label: who }) });
     if (!protectedOwner && u.username !== me) buttons.push({ ...remove, icon: Trash2 });
     setSheet({
       title: ` · @${shortId(u.username)}${u.employeeId ? ` · ID ${u.employeeId}` : ''}${u.owner ? ' · main admin' : ''}`,
@@ -649,6 +653,7 @@ function UsersTab({
       )}
     />
     {sheet && <Sheet title={sheet.title} actions={sheet.actions} onClose={() => setSheet(null)} />}
+    {clearing && <ClearHistorySheet {...clearing} onClose={() => setClearing(null)} onToast={onToast} />}
     </>
   );
 }
@@ -1046,6 +1051,7 @@ function GroupsTab({
   const [query, setQuery] = useState('');
   const [sort, setSort] = useState<GroupSort>('name');
   const [sheet, setSheet] = useState<{ title: string; actions: SheetAction[] } | null>(null);
+  const [clearing, setClearing] = useState<{ scope: 'user' | 'group'; target: string; label: string } | null>(null);
   const [rights, setRights] = useState<GroupInfo | null>(null);
 
   if (rights) return <GroupRightsScreen group={rights} onClose={() => setRights(null)} onToast={onToast} />;
@@ -1069,6 +1075,7 @@ function GroupsTab({
     if (g.members.includes(me)) buttons.push({ icon: MessageSquare, label: 'Open chat', onPress: () => openChat(groupKey(g.id)) });
     buttons.push({ icon: Pencil, label: 'Edit name, members & group admins', onPress: () => setEditing(g) });
     buttons.push({ icon: ShieldCheck, label: 'Group permissions', onPress: () => setRights(g) });
+    buttons.push({ icon: Eraser, label: 'Clear chat history', onPress: () => setClearing({ scope: 'group', target: g.id, label: g.name }) });
     buttons.push({
       icon: Trash2,
       label: 'Delete group',
@@ -1141,6 +1148,7 @@ function GroupsTab({
       )}
     />
     {sheet && <Sheet title={sheet.title} actions={sheet.actions} onClose={() => setSheet(null)} />}
+    {clearing && <ClearHistorySheet {...clearing} onClose={() => setClearing(null)} onToast={onToast} />}
     </>
   );
 }

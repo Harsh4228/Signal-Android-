@@ -88,6 +88,45 @@ function ContactSettings({ onToast, editable }: { onToast: (m: string) => void; 
   );
 }
 
+/** A second mobile and email: the person adds them themselves (even when the admin set the main ones). */
+function ExtraContact({ onToast }: { onToast: (m: string) => void }) {
+  const c = useClient();
+  const [phone2, setPhone2] = useState(c.phone2);
+  const [email2, setEmail2] = useState(c.email2);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    setPhone2(c.phone2);
+    setEmail2(c.email2);
+  }, [c.phone2, c.email2]);
+  const changed = phone2.trim() !== c.phone2 || email2.trim().toLowerCase() !== c.email2;
+  async function save(e: FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    try {
+      await client.setMyExtraContact({ phone2, email2 });
+      onToast('Saved');
+    } catch (err) {
+      onToast(errorText(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <form onSubmit={save} className="stack" style={{ gap: 6, marginTop: 10 }}>
+      <span className="muted small">Another mobile and email (optional, you add these yourself)</span>
+      <input value={phone2} maxLength={MAX_PHONE} onChange={(e) => setPhone2(e.target.value)} placeholder="Second mobile, e.g. +91 98765 43210" type="tel" />
+      <input value={email2} maxLength={MAX_EMAIL} onChange={(e) => setEmail2(e.target.value)} placeholder="Second email" type="email" />
+      {changed && (
+        <div>
+          <button className="primary" disabled={busy}>
+            Save
+          </button>
+        </div>
+      )}
+    </form>
+  );
+}
+
 export function Settings({ onClose, onToast }: { onClose: () => void; onToast: (m: string) => void }) {
   const c = useClient();
   const [busy, setBusy] = useState(false);
@@ -243,6 +282,7 @@ export function Settings({ onClose, onToast }: { onClose: () => void; onToast: (
 
         <div className="section-title">{canEditProfile ? 'Mobile number & email' : 'My profile'}</div>
         <ContactSettings onToast={onToast} editable={canEditProfile} />
+        <ExtraContact onToast={onToast} />
         <BirthdaySetting onToast={onToast} />
 
         {(webPushSupported() || needsHomeScreen()) && (

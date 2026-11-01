@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Ban, BadgeCheck, Building2, Cake, Check, Flag, ChevronRight, Eraser, IdCard, ImageMinus, ImagePlus, KeyRound, Mail, Phone, RotateCcw, Search, ShieldPlus, ShieldX, UserMinus, UserPlus, Video, X } from 'lucide-react';
 import { cropPhoto } from './PhotoCrop';
+import { ClearHistoryModal } from './ClearHistory';
 import { CatalogPanel } from './Catalog';
 import { birthdayText, formatLastSeen, groupIdOf, isGroupKey, type UserProfile } from '@meetme/core';
 import { calls, client, useClient } from '../messenger';
@@ -34,6 +35,7 @@ function GroupDetails({ chatKey, onClose, onError }: { chatKey: string; onClose:
     void client.updateMyGroup(groupIdOf(chatKey), changes).then(() => onError(done), (e) => onError(errorText(e)));
   const count = g?.members.length ?? 0;
   const photoInput = useRef<HTMLInputElement>(null);
+  const [clearing, setClearing] = useState(false);
   const hasPhoto = !!c.avatarOf(chatKey);
   const setPhoto = async (f: File | null) => {
     try {
@@ -86,6 +88,11 @@ function GroupDetails({ chatKey, onClose, onError }: { chatKey: string; onClose:
           {hasPhoto && (
             <button onClick={() => void setPhoto(null)}>
               <ImageMinus size={15} /> Remove photo
+            </button>
+          )}
+          {c.isAdmin && (
+            <button onClick={() => setClearing(true)} title="Clear this group's history on every member's device">
+              <Eraser size={15} /> Clear history
             </button>
           )}
           <input
@@ -164,6 +171,7 @@ function GroupDetails({ chatKey, onClose, onError }: { chatKey: string; onClose:
         </>
       )}
       {rights && g && <GroupRightsModal group={g} onClose={() => setRights(false)} onToast={onError} />}
+      {clearing && g && <ClearHistoryModal scope="group" target={g.id} label={g.name} onClose={() => setClearing(false)} onToast={onError} />}
       {adding && g && (
         <AddMembers
           members={g.members}
@@ -326,6 +334,24 @@ function PersonInfo({ peer, onClose, onError }: { peer: string; onClose: () => v
             <div className="grow">
               <div>{profile.email}</div>
               <div className="muted small">Email</div>
+            </div>
+          </a>
+        )}
+        {profile?.phone2 && (
+          <a className="detail-row phone" href={telLink(profile.phone2)} title="Call with your phone app">
+            <Phone size={17} />
+            <div className="grow">
+              <div>{profile.phone2}</div>
+              <div className="muted small">Other mobile</div>
+            </div>
+          </a>
+        )}
+        {profile?.email2 && (
+          <a className="detail-row email" href={`mailto:${profile.email2}`} title="Write an email">
+            <Mail size={17} />
+            <div className="grow">
+              <div>{profile.email2}</div>
+              <div className="muted small">Other email</div>
             </div>
           </a>
         )}

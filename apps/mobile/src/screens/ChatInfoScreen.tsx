@@ -12,6 +12,7 @@ import { MediaSection } from './MediaScreen';
 import { CatalogScreen } from './ChatExtras';
 import { GroupRightsScreen } from './RightsScreen';
 import { ReportSheet, confirmBlock } from './Safety';
+import { ClearHistorySheet } from './ClearHistory';
 
 /** Confirm, then clear the chat and its saved files. */
 function confirmClear(chatKey: string) {
@@ -56,6 +57,7 @@ function GroupInfoScreen({
       .then(() => onError(done), (e) => onError(errorText(e)));
   const count = g?.members.length ?? 0;
   const hasPhoto = !!c.avatarOf(chatKey);
+  const [clearing, setClearing] = useState(false);
   const choosePhoto = async () => {
     try {
       const f = await pickProfilePhoto({ title: 'Group photo' });
@@ -109,6 +111,7 @@ function GroupInfoScreen({
             Every member gets their own end-to-end encrypted copy of each message.
           </Text>
         </View>
+        {clearing && g && <ClearHistorySheet scope="group" target={g.id} label={g.name} onClose={() => setClearing(false)} onToast={onError} />}
         <MediaSection chatKey={chatKey} navigate={navigate} onError={onError} />
         {manage && g && (
           <View style={[s.card, { marginTop: 12, padding: 4 }]}>
@@ -120,6 +123,15 @@ function GroupInfoScreen({
               onPress={photoOptions}
               right={<ChevronRight size={18} color={colors.faint} />}
             />
+            {c.isAdmin && (
+              <Row
+                icon={Eraser}
+                title="Clear chat history"
+                subtitle="On every member's phone, by age and type"
+                onPress={() => setClearing(true)}
+                right={<ChevronRight size={18} color={colors.faint} />}
+              />
+            )}
             <Row
               icon={ShieldCheck}
               title="Group permissions"
@@ -366,6 +378,8 @@ function PersonInfoScreen({
           {!!profile?.departments.length && <DetailRow icon={Building2} value={profile.departments.join(', ')} label="Department" tint="dept" />}
           {!!profile?.phone && <DetailRow icon={Phone} value={profile.phone} label="Mobile · tap to call" link={telLink(profile.phone)} tint="phone" />}
           {!!profile?.email && <DetailRow icon={Mail} value={profile.email} label="Email · tap to write" link={`mailto:${profile.email}`} tint="email" />}
+          {!!profile?.phone2 && <DetailRow icon={Phone} value={profile.phone2} label="Other mobile · tap to call" link={telLink(profile.phone2)} tint="phone" />}
+          {!!profile?.email2 && <DetailRow icon={Mail} value={profile.email2} label="Other email · tap to write" link={`mailto:${profile.email2}`} tint="email" />}
           {!!birthdayText(profile?.birthday) && <DetailRow icon={Cake} value={birthdayText(profile?.birthday)} label="Birth date" tint="hours" />}
           {!profile?.employeeId && !profile?.departments.length && !profile?.phone && !profile?.email && !birthdayText(profile?.birthday) && (
             <DetailRow icon={Building2} value="No details yet" label="Your admin adds department, mobile, email and birth date" />

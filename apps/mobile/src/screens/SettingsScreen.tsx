@@ -113,6 +113,44 @@ function ContactSettings({ editable }: { editable: boolean }) {
   );
 }
 
+/** A second mobile and email: the person adds them themselves (even when the admin set the main ones). */
+function ExtraContact() {
+  const c = useClient();
+  const [phone2, setPhone2] = useState(c.phone2);
+  const [email2, setEmail2] = useState(c.email2);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  useEffect(() => {
+    setPhone2(c.phone2);
+    setEmail2(c.email2);
+  }, [c.phone2, c.email2]);
+  const changed = phone2.trim() !== c.phone2 || email2.trim().toLowerCase() !== c.email2;
+  async function save() {
+    setBusy(true);
+    try {
+      await client.setMyExtraContact({ phone2, email2 });
+      setMsg({ ok: true, text: 'Saved' });
+    } catch (e) {
+      setMsg({ ok: false, text: errorText(e) });
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <View style={[s.card, { padding: 16, gap: 10, marginTop: 10 }]}>
+      <Text style={[s.muted, { fontSize: 12 }]}>Another mobile and email (optional, you add these yourself)</Text>
+      <Field value={phone2} onChangeText={setPhone2} placeholder="Second mobile, e.g. +91 98765 43210" keyboardType="phone-pad" maxLength={MAX_PHONE} />
+      <Field value={email2} onChangeText={setEmail2} placeholder="Second email" keyboardType="email-address" maxLength={MAX_EMAIL} autoCapitalize="none" />
+      {msg && (
+        <Banner kind={msg.ok ? 'ok' : 'error'} icon={msg.ok ? CircleCheck : CircleAlert}>
+          {msg.text}
+        </Banner>
+      )}
+      {changed && <Button variant="primary" title="Save" busy={busy} onPress={save} />}
+    </View>
+  );
+}
+
 export function SettingsScreen({ navigate }: { navigate: (r: Route) => void }) {
   const c = useClient();
   const lock = useLock();
@@ -236,6 +274,7 @@ export function SettingsScreen({ navigate }: { navigate: (r: Route) => void }) {
 
         <Text style={s.section}>{canEditProfile ? 'Mobile number & email' : 'My profile'}</Text>
         <ContactSettings editable={canEditProfile} />
+        <ExtraContact />
 
         <Text style={s.section}>Privacy</Text>
         <View style={[s.card, { padding: 4 }]}>

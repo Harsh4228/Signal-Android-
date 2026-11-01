@@ -54,6 +54,9 @@ export interface UserRow {
   birthday: string;
   /** The company's own employee ID / code (any letters, digits, symbols; unique in the company); '' = none. */
   employee_id: string;
+  /** A second mobile and email the person added themselves ('' = none). */
+  phone2: string;
+  email2: string;
 }
 
 export type AvatarRow = { mime: string; data: string; ver: number };
@@ -149,6 +152,8 @@ export interface Db {
   ): Promise<void>;
   setDepartments(username: string, departments: string[]): Promise<void>;
   setContactInfo(username: string, phone: string, email: string): Promise<void>;
+  /** The second mobile / email the person adds themselves. */
+  setExtraContact(username: string, phone2: string, email2: string): Promise<void>;
   setDisplayName(username: string, name: string): Promise<void>;
   /** The person's own privacy choices: About line, hide last seen. Fields left out stay. */
   setPrivacy(username: string, p: { about?: string; hideLastSeen?: boolean }): Promise<void>;
@@ -333,6 +338,8 @@ export function openSqlite(file: string): Db {
   if (!cols.includes('hide_last_seen')) db.exec('ALTER TABLE users ADD COLUMN hide_last_seen INTEGER NOT NULL DEFAULT 0');
   if (!cols.includes('birthday')) db.exec("ALTER TABLE users ADD COLUMN birthday TEXT NOT NULL DEFAULT ''");
   if (!cols.includes('employee_id')) db.exec("ALTER TABLE users ADD COLUMN employee_id TEXT NOT NULL DEFAULT ''");
+  if (!cols.includes('phone2')) db.exec("ALTER TABLE users ADD COLUMN phone2 TEXT NOT NULL DEFAULT ''");
+  if (!cols.includes('email2')) db.exec("ALTER TABLE users ADD COLUMN email2 TEXT NOT NULL DEFAULT ''");
   const productCols = (db.prepare('PRAGMA table_info(products)').all() as { name: string }[]).map((c) => c.name);
   if (!productCols.includes('owner')) {
     db.exec("ALTER TABLE products ADD COLUMN owner TEXT NOT NULL DEFAULT ''");
@@ -386,6 +393,7 @@ export function openSqlite(file: string): Db {
     setDepartments: db.prepare('UPDATE users SET departments = ? WHERE username = ?'),
     setCanShare: db.prepare('UPDATE users SET can_share = ? WHERE username = ?'),
     setContactInfo: db.prepare('UPDATE users SET phone = ?, email = ? WHERE username = ?'),
+    setExtraContact: db.prepare('UPDATE users SET phone2 = ?, email2 = ? WHERE username = ?'),
     setDisplayName: db.prepare('UPDATE users SET display_name = ? WHERE username = ?'),
     setAbout: db.prepare('UPDATE users SET about = ? WHERE username = ?'),
     setBirthday: db.prepare('UPDATE users SET birthday = ? WHERE username = ?'),
@@ -530,6 +538,9 @@ export function openSqlite(file: string): Db {
     },
     async setContactInfo(username, phone, email) {
       q.setContactInfo.run(phone, email, username);
+    },
+    async setExtraContact(username, phone2, email2) {
+      q.setExtraContact.run(phone2, email2, username);
     },
     async setCanShare(username, canShare) {
       q.setCanShare.run(canShare ? 1 : 0, username);

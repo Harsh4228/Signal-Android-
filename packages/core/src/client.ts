@@ -6,6 +6,9 @@ import {
   MAX_ATTACHMENT_BYTES,
   MAX_AVATAR_BYTES,
   type AvatarResponse,
+  type ClearKind,
+  type ClearOrder,
+  type ClearRequest,
   MAX_EVENT_DESC,
   MAX_EVENT_PLACE,
   MAX_EVENT_TITLE,
@@ -668,6 +671,19 @@ export class ApiError extends Error {
 }
 
 const newId = () => bytesToHex(randomBytes(16));
+/** Which kind a message counts as when the admin clears history by kind. */
+export function clearKindOf(m: ChatMessage): ClearKind {
+  if (m.call) return 'calls';
+  if (m.attachment) {
+    const mime = m.attachment.mime ?? '';
+    if (m.attachment.kind === 'image' || mime.startsWith('video/')) return 'photos';
+    if (m.attachment.kind === 'audio' || mime.startsWith('audio/')) return 'voice';
+    return 'files';
+  }
+  if (m.system || m.poll || m.event || m.location || m.contact || m.product) return 'other';
+  return 'text';
+}
+
 /** The encrypted chat history file on this device (see history.ts). */
 const HISTORY_DOC = 'history';
 const PAD_BLOCK = 160; // hide exact message length, like Signal
@@ -992,6 +1008,29 @@ export class MessengerClient extends Emitter<Events> {
   /** Admin: a new QR invite for a user (the old one stops working). Also moves someone to a new phone. */
   newInvite(username: string): Promise<InviteResponse> {
     return this.http<InviteResponse>('POST', `/v1/admin/users/${encodeURIComponent(username)}/invite`);
+  }
+
+  /** My second mobile and email (I add these myself; '' removes them). Colleagues see them on my profile. */
+  async setMyExtraContact(p: { phone2: string; email2: string }): Promise<void> {
+    await this.http('PUT', '/v1/me/extra-contact', { phone2: p.phone2.trim(), email2: p.email2.trim() });
+    this.phone2 = p.phone2.trim();
+    this.email2 = p.email2.trim().toLowerCase();
+    this.emit('change');
+  }
+
+  /**
+   * Admin: clear chat history of a person (all their chats) or of a group (on every member's device): the chosen
+   * kinds, older than the chosen number of days (0 = everything). Their apps carry it out when they are online.
+   */
+  async adminClearHistory(req: ClearRequest): Promise<ClearOrder> {
+    const order = await this.http<ClearOrder>('POST', '/v1/admin/clear', req);
+    // On my own device too, if it concerns me (my own chats, or a group I'm in).
+    const me = this.account?.username;
+    if ((req.scope === 'user' && order.target === me) || (req.scope === 'group' && this.groups.some((g) => g.id === order.target))) {
+      this.clearOrders = [order, ...this.clearOrders];
+      this.applyClearOrders();
+    }
+    return order;
   }
 
   /** Admin: change a user's name / mobile / email (fields left out stay). Users can't change these themselves. */
@@ -1521,6 +1560,10 @@ export class MessengerClient extends Emitter<Events> {
     this.hideLastSeen = !!me.hideLastSeen;
     this.birthday = me.birthday ?? '';
     this.employeeId = me.employeeId ?? '';
+    this.phone2 = me.phone2 ?? '';
+    this.email2 = me.email2 ?? '';
+    this.clearOrders = Array.isArray(me.clearOrders) ? me.clearOrders : [];
+    this.applyClearOrders();
     this.setRights(me.rights);
     void this.loadCompanyProfile();
     this.emit('change');
@@ -3270,6 +3313,11 @@ export class MessengerClient extends Emitter<Events> {
   birthday = '';
   /** My employee ID, set by the admin ('' = none). */
   employeeId = '';
+  /** The second mobile / email I added myself ('' = none). */
+  phone2 = '';
+  email2 = '';
+  /** History clears my admin ordered for my chats (carried out on this device, again after a restore). */
+  private clearOrders: ClearOrder[] = [];
   /** My company's name, logo and information sections (null until loaded). */
   companyProfile: CompanyProfile | null = null;
   /** The company logo as a data: URL ('' = none). */
@@ -3582,6 +3630,37 @@ export class MessengerClient extends Emitter<Events> {
     this.lastBackupAt = await this.store.getSetting<number | null>('lastBackupAt', null);
     this.lastOpId = await this.store.getSetting<number>('lastOpId', 0);
     this.historyLoaded = true;
+    this.applyClearOrders();
+  }
+
+  /**
+   * Carries out the history clears the admin ordered: removes the messages of the chosen kinds sent before
+   * (order time - age), with their saved files. Safe to repeat, so it runs after every restore too and
+   * nothing cleared comes back from a backup.
+   */
+  private applyClearOrders(): void {
+    // Also before the saved history is read: it runs again right after that (and after every restore).
+    if (!this.clearOrders.length) return;
+    let removed = 0;
+    for (const o of this.clearOrders) {
+      const before = o.ts - o.olderThanDays * 86_400_000;
+      const kinds = new Set(o.kinds);
+      const keys = o.scope === 'group' ? [groupKey(o.target)] : [...this.chats.keys()];
+      for (const key of keys) {
+        const list = this.chats.get(key);
+        if (!list?.length) continue;
+        const keep = list.filter((m) => !(m.ts < before && kinds.has(clearKindOf(m))));
+        if (keep.length === list.length) continue;
+        for (const m of list) {
+          if (keep.includes(m)) continue;
+          if (m.attachment) this.forgetMedia(key, m.id);
+          if (m.starred) this.unstar(key, m.id);
+        }
+        removed += list.length - keep.length;
+        this.chats.set(key, keep);
+      }
+    }
+    if (removed) this.emit('change');
   }
 
   private applySnapshot(snap: HistorySnapshot): number {
@@ -3893,6 +3972,9 @@ export class MessengerClient extends Emitter<Events> {
     this.hideLastSeen = false;
     this.birthday = '';
     this.employeeId = '';
+    this.phone2 = '';
+    this.email2 = '';
+    this.clearOrders = [];
     this.emit('change');
   }
 
