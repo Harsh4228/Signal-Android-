@@ -105,13 +105,19 @@ class ShareViewController: UIViewController {
     }
   }
 
-  /** Opens CellMate (it picks the shared items up from ShareInbox as soon as it is in front). */
+  /**
+   * Opens CellMate (it picks the shared items up from ShareInbox as soon as it is in front). Extensions may not call
+   * UIApplication directly, so the call goes through the responder chain by name; if that ever stops working the
+   * person just opens CellMate themselves (see done).
+   */
   private func openCellMate() -> Bool {
     guard let url = URL(string: "cellmate://share") else { return false }
+    let selector = NSSelectorFromString("openURL:options:completionHandler:")
+    typealias OpenURL = @convention(c) (AnyObject, Selector, NSURL, NSDictionary, (@convention(block) (Bool) -> Void)?) -> Void
     var responder: UIResponder? = self
     while let r = responder {
-      if let app = r as? UIApplication {
-        app.open(url, options: [:], completionHandler: nil)
+      if r.responds(to: selector), let method = r.method(for: selector) {
+        unsafeBitCast(method, to: OpenURL.self)(r, selector, url as NSURL, NSDictionary(), nil)
         return true
       }
       responder = r.next
