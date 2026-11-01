@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react';
-import { Ban, BadgeCheck, Building2, Cake, Check, Flag, ChevronRight, Eraser, KeyRound, Mail, Phone, RotateCcw, Search, ShieldPlus, ShieldX, UserMinus, UserPlus, Video, X } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { Ban, BadgeCheck, Building2, Cake, Check, Flag, ChevronRight, Eraser, IdCard, ImageMinus, ImagePlus, KeyRound, Mail, Phone, RotateCcw, Search, ShieldPlus, ShieldX, UserMinus, UserPlus, Video, X } from 'lucide-react';
+import { cropPhoto } from './PhotoCrop';
 import { CatalogPanel } from './Catalog';
 import { birthdayText, formatLastSeen, groupIdOf, isGroupKey, type UserProfile } from '@meetme/core';
 import { calls, client, useClient } from '../messenger';
@@ -32,6 +33,18 @@ function GroupDetails({ chatKey, onClose, onError }: { chatKey: string; onClose:
   const change = (changes: { members?: string[]; admins?: string[] }, done: string) =>
     void client.updateMyGroup(groupIdOf(chatKey), changes).then(() => onError(done), (e) => onError(errorText(e)));
   const count = g?.members.length ?? 0;
+  const photoInput = useRef<HTMLInputElement>(null);
+  const hasPhoto = !!c.avatarOf(chatKey);
+  const setPhoto = async (f: File | null) => {
+    try {
+      const data = f && (await cropPhoto(f, 'Group photo'));
+      if (f && !data) return; // cancelled
+      await client.setGroupPhoto(groupIdOf(chatKey), data && { mime: 'image/jpeg', data });
+      onError(f ? 'Group photo saved' : 'Group photo removed');
+    } catch (e) {
+      onError(errorText(e));
+    }
+  };
   useEffect(() => {
     void client.refreshPresence(g?.members ?? []);
   }, [g?.members]);
@@ -67,6 +80,25 @@ function GroupDetails({ chatKey, onClose, onError }: { chatKey: string; onClose:
           <button onClick={() => setRights(true)}>
             <KeyRound size={15} /> Group permissions
           </button>
+          <button onClick={() => photoInput.current?.click()} title="Everyone at your company can see it">
+            <ImagePlus size={15} /> {hasPhoto ? 'Change photo' : 'Add photo'}
+          </button>
+          {hasPhoto && (
+            <button onClick={() => void setPhoto(null)}>
+              <ImageMinus size={15} /> Remove photo
+            </button>
+          )}
+          <input
+            ref={photoInput}
+            type="file"
+            accept="image/*"
+            hidden
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              e.target.value = '';
+              if (f) void setPhoto(f);
+            }}
+          />
         </div>
       )}
       <MediaSection chatKey={chatKey} onToast={onError} />
@@ -261,6 +293,15 @@ function PersonInfo({ peer, onClose, onError }: { peer: string; onClose: () => v
       {status && <StatusOf user={peer} onClose={() => setStatus(false)} onToast={onError} />}
 
       <div className="detail-list">
+        {profile?.employeeId && (
+          <div className="detail-row emp-id">
+            <IdCard size={17} />
+            <div className="grow">
+              <div className="emp-id-value">{profile.employeeId}</div>
+              <div className="muted small">Employee ID</div>
+            </div>
+          </div>
+        )}
         {profile && profile.departments.length > 0 && (
           <div className="detail-row dept">
             <Building2 size={17} />

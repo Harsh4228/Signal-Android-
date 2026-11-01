@@ -15,6 +15,7 @@ import android.os.Environment
 import android.provider.MediaStore
 import android.util.Base64
 import com.facebook.react.ReactPackage
+import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.NativeModule
 import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
@@ -131,6 +132,75 @@ class DeviceFilesModule(context: ReactApplicationContext) : ReactContextBaseJava
         promise.resolve(Base64.encodeToString(bytes, Base64.NO_WRAP))
       } catch (e: Exception) {
         promise.reject("photo_failed", e.message ?: "Could not read the photo", e)
+      }
+    }.start()
+  }
+
+  /**
+   * For the photo cropper: an upright copy of the picture (camera rotation applied), at most `max` px on its long
+   * side, saved in the app's cache. Resolves { uri, width, height }; cropPhoto then cuts the chosen square from it.
+   */
+  @ReactMethod
+  fun preparePhoto(uri: String, max: Int, promise: Promise) {
+    Thread {
+      try {
+        val u = Uri.parse(uri)
+        fun open(): InputStream =
+          if (u.scheme == null || u.scheme == "file") File(u.path ?: uri).inputStream()
+          else reactApplicationContext.contentResolver.openInputStream(u) ?: throw Exception("Could not read the photo")
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        open().use { BitmapFactory.decodeStream(it, null, bounds) }
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) throw Exception("That file is not a photo")
+        var sample = 1
+        while (maxOf(bounds.outWidth, bounds.outHeight) / (sample * 2) >= max) sample *= 2
+        val bitmap = open().use { BitmapFactory.decodeStream(it, null, BitmapFactory.Options().apply { inSampleSize = sample }) }
+          ?: throw Exception("That file is not a photo")
+        val degrees = try {
+          when (open().use { ExifInterface(it).getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL) }) {
+            ExifInterface.ORIENTATION_ROTATE_90 -> 90f
+            ExifInterface.ORIENTATION_ROTATE_180 -> 180f
+            ExifInterface.ORIENTATION_ROTATE_270 -> 270f
+            else -> 0f
+          }
+        } catch (e: Exception) { 0f }
+        val scale = minOf(1f, max.toFloat() / maxOf(bitmap.width, bitmap.height))
+        val m = Matrix().apply { postRotate(degrees); postScale(scale, scale) }
+        val out = Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, m, true)
+        val file = File(reactApplicationContext.cacheDir, "crop-${System.currentTimeMillis()}.jpg")
+        file.outputStream().use { out.compress(Bitmap.CompressFormat.JPEG, 92, it) }
+        promise.resolve(Arguments.createMap().apply {
+          putString("uri", Uri.fromFile(file).toString())
+          putInt("width", out.width)
+          putInt("height", out.height)
+        })
+      } catch (e: Exception) {
+        promise.reject("photo_failed", e.message ?: "Could not read the photo", e)
+      }
+    }.start()
+  }
+
+  /**
+   * Cuts the square (x, y, side in pixels of the copy preparePhoto made) out of it, at most `max` px, as a JPEG in
+   * base64, and deletes the cached copy.
+   */
+  @ReactMethod
+  fun cropPhoto(uri: String, x: Int, y: Int, side: Int, max: Int, promise: Promise) {
+    Thread {
+      val file = File(Uri.parse(uri).path ?: uri)
+      try {
+        val bitmap = BitmapFactory.decodeFile(file.path) ?: throw Exception("That file is not a photo")
+        val s = maxOf(1, minOf(side, bitmap.width, bitmap.height))
+        val left = x.coerceIn(0, bitmap.width - s)
+        val top = y.coerceIn(0, bitmap.height - s)
+        val scale = minOf(1f, max.toFloat() / s)
+        val m = Matrix().apply { postScale(scale, scale) }
+        val out = Bitmap.createBitmap(bitmap, left, top, s, s, m, true)
+        val bytes = ByteArrayOutputStream().also { out.compress(Bitmap.CompressFormat.JPEG, 88, it) }.toByteArray()
+        promise.resolve(Base64.encodeToString(bytes, Base64.NO_WRAP))
+      } catch (e: Exception) {
+        promise.reject("photo_failed", e.message ?: "Could not read the photo", e)
+      } finally {
+        if (file.parentFile == reactApplicationContext.cacheDir) file.delete()
       }
     }.start()
   }

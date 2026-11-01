@@ -36,6 +36,8 @@ export function Avatar({ name, size }: { name: string; size?: 'sm' | 'xl' }) {
 /** Avatar for a chat: a group icon, or the person with a green dot while they are online. */
 export function ChatAvatar({ chatKey, size }: { chatKey: string; size?: 'sm' | 'xl' }) {
   if (isGroupKey(chatKey)) {
+    const photo = client.avatarOf(chatKey);
+    if (photo) return <img className={`avatar photo ${size ?? ''}`} src={photo} alt="" draggable={false} />;
     return (
       <div className={`avatar group-avatar ${size ?? ''}`}>
         <UsersRound size={size === 'sm' ? 16 : 20} />

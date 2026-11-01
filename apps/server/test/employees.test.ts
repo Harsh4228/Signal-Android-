@@ -74,6 +74,7 @@ test('admin creates employee, employee logs in and must set own password', async
     email: '',
     name: '',
     birthday: '',
+    employeeId: '',
   });
 
   // Can't message someone who hasn't logged in yet.

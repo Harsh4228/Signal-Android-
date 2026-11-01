@@ -64,6 +64,7 @@ import {
   type ChannelInfo,
   type Community,
   MAX_ABOUT,
+  MAX_EMPLOYEE_ID,
   MAX_REPORT_MESSAGES,
   REPORT_REASONS,
   DELETE_REQUEST,
@@ -656,6 +657,24 @@ export function createMeetMeServer(
   }
 
   /** A birth date "YYYY-MM-DD" ('' = none), not in the future. */
+  /**
+   * The company's employee ID: any letters (capital or small), digits, symbols and spaces, at most
+   * MAX_EMPLOYEE_ID characters; '' = none. Unique in the company, ignoring capital / small letters.
+   */
+  async function checkEmployeeId(v: unknown, company: string, self?: string): Promise<string> {
+    if (v === undefined || v === null) return '';
+    if (typeof v !== 'string') throw new HttpError(400, 'Employee ID must be text');
+    const id = v.trim().replace(/\s+/g, ' ');
+    if (!id) return '';
+    if (id.length > MAX_EMPLOYEE_ID || /[\u0000-\u001f\u007f]/.test(id)) {
+      throw new HttpError(400, `Employee ID: at most ${MAX_EMPLOYEE_ID} characters`);
+    }
+    const key = id.toLowerCase();
+    const taken = (await companyUsers(company)).find((u) => u.username !== self && u.employee_id && u.employee_id.toLowerCase() === key);
+    if (taken) throw new HttpError(409, `Employee ID "${id}" is already used by ${taken.display_name || shortId(taken.username)}`);
+    return id;
+  }
+
   function checkBirthday(v: unknown): string {
     if (v === undefined || v === null || v === '') return '';
     if (typeof v !== 'string' || !BIRTHDAY_RE.test(v) || v > new Date().toISOString().slice(0, 10)) {
@@ -759,16 +778,34 @@ export function createMeetMeServer(
       return [];
     }
   }
-  /** A group as apps see it: with whether it is a channel and which community it is in. */
-  async function infoOf(g: GroupRow, cache?: { channels: Set<string>; communities: Community[] }): Promise<GroupInfo> {
+  /** Group photos of a company: group id -> version (the photo itself is in meta `group_photo:<id>`). */
+  async function groupPhotos(company: string): Promise<Record<string, number>> {
+    try {
+      const v = JSON.parse((await db.getMeta(metaKey('group_photos', company))) ?? '{}') as unknown;
+      return v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, number>) : {};
+    } catch {
+      return {};
+    }
+  }
+  /** A group as apps see it: with whether it is a channel, which community it is in and its photo version. */
+  async function infoOf(
+    g: GroupRow,
+    cache?: { channels: Set<string>; communities: Community[]; photos: Record<string, number> },
+  ): Promise<GroupInfo> {
     const co = companyOf(g.created_by);
     const channels = cache?.channels ?? (await channelIds(co));
     const communities = cache?.communities ?? (await getCommunities(co));
+    const photo = (cache?.photos ?? (await groupPhotos(co)))[g.id];
     const community = communities.find((c) => c.groups.includes(g.id))?.id;
-    return { ...toGroupInfo(g), ...(channels.has(g.id) ? { kind: 'channel' as const } : {}), ...(community ? { community } : {}) };
+    return {
+      ...toGroupInfo(g),
+      ...(channels.has(g.id) ? { kind: 'channel' as const } : {}),
+      ...(community ? { community } : {}),
+      ...(typeof photo === 'number' ? { photo } : {}),
+    };
   }
   async function infoCache(company: string) {
-    return { channels: await channelIds(company), communities: await getCommunities(company) };
+    return { channels: await channelIds(company), communities: await getCommunities(company), photos: await groupPhotos(company) };
   }
 
   /** Group admins: a list of members ([] = none). */
@@ -1273,6 +1310,7 @@ export function createMeetMeServer(
           email: u.email,
           about: u.about,
           birthday: u.birthday,
+          employeeId: u.employee_id,
           editDelete: admins.includes(u.username) || resolveRight(rules, 'editDelete', { username: u.username, departments: u.departments }),
         }));
       return send(200, { users });
@@ -1291,6 +1329,7 @@ export function createMeetMeServer(
         email: u.email,
         about: u.about,
         birthday: u.birthday,
+        employeeId: u.employee_id,
         editDelete:
           (await isAdminUser(u.username)) ||
           resolveRight(await getRules(companyOf(me)), 'editDelete', { username: u.username, departments: u.departments }),
@@ -1369,6 +1408,7 @@ export function createMeetMeServer(
         about: user.about,
         hideLastSeen: !!user.hide_last_seen,
         birthday: user.birthday,
+        employeeId: user.employee_id,
       };
       return send(200, me_);
     }
@@ -1532,6 +1572,37 @@ export function createMeetMeServer(
       if (!group || !(await mayManageGroup(me, group))) throw new HttpError(404, 'group not found');
       const updated = await updateGroupFrom(me, group, await readJson(req));
       return send(200, updated);
+    }
+
+    // Group photo: group admins (and company admins) set it; everyone in the company may see it.
+    // Like profile photos it is not end-to-end encrypted.
+    if ((m = path.match(/^\/v1\/groups\/([0-9a-f]{16})\/photo$/))) {
+      const group = await db.getGroup(m[1]!);
+      if (!group || companyOf(group.created_by) !== companyOf(me)) throw new HttpError(404, 'group not found');
+      const key = `group_photo:${group.id}`;
+      if (method === 'GET') {
+        const raw = await db.getMeta(key);
+        if (!raw) throw new HttpError(404, 'no photo');
+        return send(200, JSON.parse(raw) as AvatarResponse);
+      }
+      if (method === 'PUT' || method === 'DELETE') {
+        if (!(await mayManageGroup(me, group))) throw new HttpError(403, 'Only group admins can change the group photo');
+        const co = companyOf(group.created_by);
+        const photos = await groupPhotos(co);
+        if (method === 'DELETE') {
+          await db.setMeta(key, '');
+          delete photos[group.id];
+        } else {
+          const photo = checkPhoto(await readJson(req, Math.ceil((MAX_AVATAR_BYTES * 4) / 3) + 1024));
+          const ver = Date.now();
+          await db.setMeta(key, JSON.stringify({ ...photo, ver }));
+          photos[group.id] = ver;
+        }
+        await db.setMeta(metaKey('group_photos', co), JSON.stringify(photos));
+        await audit(me, 'group.photo', group.name, method === 'DELETE' ? 'removed the photo' : 'new photo');
+        await notify(group.members, 'groups');
+        return send(200, { photo: photos[group.id] ?? null });
+      }
     }
 
     // ---- block list (the app hides and refuses blocked people) and reports to the admins ----
@@ -1922,6 +1993,7 @@ export function createMeetMeServer(
           email: u.email,
           name: u.display_name,
           birthday: u.birthday,
+          employeeId: u.employee_id,
           inviteExpires: u.invite_hash && Number(u.invite_expires) > Date.now() ? Number(u.invite_expires) : null,
         }));
         return send(200, { users });
@@ -1937,6 +2009,7 @@ export function createMeetMeServer(
           name?: unknown;
           photo?: unknown;
           birthday?: unknown;
+          employeeId?: unknown;
         };
         // The admin types an ID; the account gets the company part (apps of the same version send just the ID).
         const raw = typeof body.username === 'string' ? normalizeId(body.username) : body.username;
@@ -1951,6 +2024,7 @@ export function createMeetMeServer(
         const { phone, email } = checkContactInfo(body.phone, body.email);
         const name = checkName(body.name);
         const birthday = checkBirthday(body.birthday);
+        const employeeId = await checkEmployeeId(body.employeeId, co);
         const photo = body.photo === undefined ? null : checkPhoto(body.photo);
         if (body.canShare !== undefined && typeof body.canShare !== 'boolean') {
           throw new HttpError(400, 'canShare must be true or false');
@@ -1958,10 +2032,10 @@ export function createMeetMeServer(
         const canShare = body.canShare === true;
         if (await db.getUser(username)) throw new HttpError(409, 'That ID already exists');
         const password = typeof body.password === 'string' ? body.password : randomBytes(24).toString('base64url');
-        await db.createPendingUser(username, await hashPassword(password), { departments, canShare, phone, email, name, birthday });
+        await db.createPendingUser(username, await hashPassword(password), { departments, canShare, phone, email, name, birthday, employeeId });
         if (photo) await db.setAvatar(username, { ...photo, ver: Date.now() });
         const invite = await newInvite(username);
-        const detail = [name, departments.length && `departments: ${departments.join(', ')}`, phone && `mobile ${phone}`, email && `email ${email}`, birthday && `born ${birthday}`];
+        const detail = [name, departments.length && `departments: ${departments.join(', ')}`, phone && `mobile ${phone}`, email && `email ${email}`, birthday && `born ${birthday}`, employeeId && `employee ID ${employeeId}`];
         await audit(me, 'user.create', username, detail.filter(Boolean).join(', '));
         return send(200, { ok: true, invite });
       }
@@ -2001,14 +2075,17 @@ export function createMeetMeServer(
           return send(200, invite);
         }
         if (method === 'PUT' && m[2] === '/profile') {
-          const body = (await readJson(req)) as { name?: unknown; phone?: unknown; email?: unknown; birthday?: unknown };
+          const body = (await readJson(req)) as { name?: unknown; phone?: unknown; email?: unknown; birthday?: unknown; employeeId?: unknown };
           const name = body.name === undefined ? target.display_name : checkName(body.name);
           const birthday = body.birthday === undefined ? target.birthday : checkBirthday(body.birthday);
+          const employeeId = body.employeeId === undefined ? target.employee_id : await checkEmployeeId(body.employeeId, co, target.username);
           const { phone, email } = checkContactInfo(body.phone ?? target.phone, body.email ?? target.email);
           await db.setDisplayName(target.username, name);
           await db.setContactInfo(target.username, phone, email);
           await db.setBirthday(target.username, birthday);
-          await audit(me, 'user.profile', target.username, [name, phone, email, birthday && `born ${birthday}`].filter(Boolean).join(', ') || 'cleared');
+          await db.setEmployeeId(target.username, employeeId);
+          const idChange = employeeId !== target.employee_id && `employee ID ${employeeId || 'removed'}`;
+          await audit(me, 'user.profile', target.username, [name, phone, email, birthday && `born ${birthday}`, idChange].filter(Boolean).join(', ') || 'cleared');
           return send(204);
         }
         if (m[2] === '/avatar' && (method === 'PUT' || method === 'DELETE')) {
@@ -2245,6 +2322,7 @@ export function createMeetMeServer(
         if (method === 'PUT') return send(200, await updateGroupFrom(me, group, await readJson(req)));
         if (method === 'DELETE') {
           await db.deleteGroup(group.id);
+          await db.setMeta(`group_photo:${group.id}`, '');
           await audit(me, 'group.delete', group.name);
           await notify(group.members, 'groups');
           return send(204);

@@ -52,6 +52,8 @@ export interface UserRow {
   hide_last_seen: number;
   /** Birth date "YYYY-MM-DD" ('' = not given); the admin or the person sets it. */
   birthday: string;
+  /** The company's own employee ID / code (any letters, digits, symbols; unique in the company); '' = none. */
+  employee_id: string;
 }
 
 export type AvatarRow = { mime: string; data: string; ver: number };
@@ -143,7 +145,7 @@ export interface Db {
   createPendingUser(
     username: string,
     passHash: string,
-    extra?: { departments?: string[]; canShare?: boolean; phone?: string; email?: string; name?: string; birthday?: string },
+    extra?: { departments?: string[]; canShare?: boolean; phone?: string; email?: string; name?: string; birthday?: string; employeeId?: string },
   ): Promise<void>;
   setDepartments(username: string, departments: string[]): Promise<void>;
   setContactInfo(username: string, phone: string, email: string): Promise<void>;
@@ -152,6 +154,8 @@ export interface Db {
   setPrivacy(username: string, p: { about?: string; hideLastSeen?: boolean }): Promise<void>;
   /** Birth date "YYYY-MM-DD", or '' to clear it. */
   setBirthday(username: string, birthday: string): Promise<void>;
+  /** The company's employee ID, or '' to clear it (the app checks it is unique in the company). */
+  setEmployeeId(username: string, employeeId: string): Promise<void>;
   /** A new one-time QR invite (replaces any old one), or null to clear it. */
   setInvite(username: string, invite: { hash: string; expires: number } | null): Promise<void>;
   setCanShare(username: string, canShare: boolean): Promise<void>;
@@ -328,6 +332,7 @@ export function openSqlite(file: string): Db {
   if (!cols.includes('about')) db.exec("ALTER TABLE users ADD COLUMN about TEXT NOT NULL DEFAULT ''");
   if (!cols.includes('hide_last_seen')) db.exec('ALTER TABLE users ADD COLUMN hide_last_seen INTEGER NOT NULL DEFAULT 0');
   if (!cols.includes('birthday')) db.exec("ALTER TABLE users ADD COLUMN birthday TEXT NOT NULL DEFAULT ''");
+  if (!cols.includes('employee_id')) db.exec("ALTER TABLE users ADD COLUMN employee_id TEXT NOT NULL DEFAULT ''");
   const productCols = (db.prepare('PRAGMA table_info(products)').all() as { name: string }[]).map((c) => c.name);
   if (!productCols.includes('owner')) {
     db.exec("ALTER TABLE products ADD COLUMN owner TEXT NOT NULL DEFAULT ''");
@@ -384,6 +389,7 @@ export function openSqlite(file: string): Db {
     setDisplayName: db.prepare('UPDATE users SET display_name = ? WHERE username = ?'),
     setAbout: db.prepare('UPDATE users SET about = ? WHERE username = ?'),
     setBirthday: db.prepare('UPDATE users SET birthday = ? WHERE username = ?'),
+    setEmployeeId: db.prepare('UPDATE users SET employee_id = ? WHERE username = ?'),
     setHideLastSeen: db.prepare('UPDATE users SET hide_last_seen = ? WHERE username = ?'),
     setInvite: db.prepare('UPDATE users SET invite_hash = ?, invite_expires = ? WHERE username = ?'),
     putAvatar: db.prepare(
@@ -490,7 +496,7 @@ export function openSqlite(file: string): Db {
       const r = q.getAvatar.get(username) as AvatarRow | undefined;
       return r && { ...r, ver: Number(r.ver) };
     },
-    async createPendingUser(username, passHash, { departments = [], canShare = false, phone = '', email = '', name = '', birthday = '' } = {}) {
+    async createPendingUser(username, passHash, { departments = [], canShare = false, phone = '', email = '', name = '', birthday = '', employeeId = '' } = {}) {
       tx(() => {
         q.insertUser.run(username, passHash, null, 1, '', 0, '', '', Date.now());
         if (departments.length) q.setDepartments.run(JSON.stringify(departments), username);
@@ -498,10 +504,14 @@ export function openSqlite(file: string): Db {
         if (phone || email) q.setContactInfo.run(phone, email, username);
         if (name) q.setDisplayName.run(name, username);
         if (birthday) q.setBirthday.run(birthday, username);
+        if (employeeId) q.setEmployeeId.run(employeeId, username);
       });
     },
     async setBirthday(username, birthday) {
       q.setBirthday.run(birthday, username);
+    },
+    async setEmployeeId(username, employeeId) {
+      q.setEmployeeId.run(employeeId, username);
     },
     async setDisplayName(username, name) {
       q.setDisplayName.run(name, username);

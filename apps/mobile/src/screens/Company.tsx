@@ -144,7 +144,8 @@ export function CompanyTab({ onToast }: { onToast: Toast }) {
   }
   async function logo() {
     try {
-      const f = await pickProfilePhoto();
+      // A logo is not round: take it as it is (the middle square).
+      const f = await pickProfilePhoto({ crop: false });
       if (f) await client.setCompanyLogo(f);
     } catch (e) {
       onToast(errorText(e));

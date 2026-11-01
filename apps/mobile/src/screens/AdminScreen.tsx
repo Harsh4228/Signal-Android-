@@ -36,7 +36,9 @@ import {
   MAX_GROUP_NAME,
   MAX_NAME,
   MAX_PHONE,
+  MAX_EMPLOYEE_ID,
   ID_RE,
+  suggestUserId,
   DEPARTMENT_SORTS,
   GROUP_SORTS,
   USER_SORTS,
@@ -187,6 +189,7 @@ function ProfileEditor({ user, onDone, onToast }: { user: AdminUser; onDone: (ch
   const [phone, setPhone] = useState(user.phone);
   const [email, setEmail] = useState(user.email);
   const [birthday, setBirthday] = useState(user.birthday ?? '');
+  const [employeeId, setEmployeeId] = useState(user.employeeId ?? '');
   /** undefined = keep, null = remove */
   const [photo, setPhoto] = useState<OutgoingFile | null | undefined>(undefined);
   const [busy, setBusy] = useState(false);
@@ -194,7 +197,7 @@ function ProfileEditor({ user, onDone, onToast }: { user: AdminUser; onDone: (ch
     if (birthday === 'invalid') return onToast('Birth date: enter day, month and year (e.g. 21 08 1994)');
     setBusy(true);
     try {
-      await client.setEmployeeProfile(user.username, { name, phone, email, birthday });
+      await client.setEmployeeProfile(user.username, { name, phone, email, birthday, employeeId });
       if (photo !== undefined) await client.setEmployeeAvatar(user.username, photo);
       onToast(`Saved ${name || user.username}'s profile`);
       onDone(true);
@@ -209,6 +212,14 @@ function ProfileEditor({ user, onDone, onToast }: { user: AdminUser; onDone: (ch
       <Text style={s.title}>Edit {user.name || user.username}</Text>
       <PhotoField photo={photo ?? null} hasCurrent={hasPhoto} user={user.username} onPick={setPhoto} onRemove={() => setPhoto(null)} onError={onToast} />
       <Field value={name} onChangeText={setName} placeholder="Full name" maxLength={MAX_NAME} autoCapitalize="words" />
+      <Field
+        value={employeeId}
+        onChangeText={setEmployeeId}
+        placeholder="Employee ID, e.g. EMP-0042"
+        maxLength={MAX_EMPLOYEE_ID}
+        autoCapitalize="none"
+        autoCorrect={false}
+      />
       <Field value={phone} onChangeText={setPhone} placeholder="Mobile" keyboardType="phone-pad" maxLength={MAX_PHONE} />
       <Field value={email} onChangeText={setEmail} placeholder="Email" keyboardType="email-address" maxLength={MAX_EMAIL} />
       <BirthdayField value={birthday} onChange={setBirthday} />
@@ -240,7 +251,7 @@ function PhotoField({
   const [camera, setCamera] = useState(false);
   async function choose() {
     try {
-      const f = await pickProfilePhoto();
+      const f = await pickProfilePhoto({ title: 'Profile photo' });
       if (f) onPick(f);
     } catch (e) {
       onError(errorText(e));
@@ -419,7 +430,12 @@ function UsersTab({
   const shown = useMemo(() => {
     const q = query.trim().toLowerCase();
     return sortUsers(
-      (users ?? []).filter((u) => (shortId(u.username).includes(q) || u.name.toLowerCase().includes(q)) && matches(u, filter) && inDept(u, dept)),
+      (users ?? []).filter(
+        (u) =>
+          (shortId(u.username).includes(q) || u.name.toLowerCase().includes(q) || (u.employeeId ?? '').toLowerCase().includes(q)) &&
+          matches(u, filter) &&
+          inDept(u, dept),
+      ),
       sort,
     );
   }, [users, query, filter, dept, sort]);
@@ -517,7 +533,7 @@ function UsersTab({
     }
     if (!protectedOwner && u.username !== me) buttons.push({ ...remove, icon: Trash2 });
     setSheet({
-      title: ` · @${shortId(u.username)}${u.owner ? ' · main admin' : ''}`,
+      title: ` · @${shortId(u.username)}${u.employeeId ? ` · ID ${u.employeeId}` : ''}${u.owner ? ' · main admin' : ''}`,
       actions: buttons.map((b) => ({ icon: b.icon ?? Pencil, label: b.text, onPress: () => b.onPress?.() })),
     });
   };
@@ -556,6 +572,7 @@ function UsersTab({
             />
           ) : adding ? (
             <CreateUser
+              takenIds={(users ?? []).map((u) => shortId(u.username))}
               departments={departments}
               initialDepartment={dept && dept !== NO_DEPT ? dept : ''}
               onCancel={() => setAdding(false)}
@@ -615,9 +632,9 @@ function UsersTab({
               {u.banned && <Pill text="Banned" danger />}
               {u.moved && <Pill text="Moved" />}
             </View>
-            {(!!u.phone || !!u.email) && (
+            {(!!u.employeeId || !!u.phone || !!u.email) && (
               <Text style={[s.muted, { fontSize: 11.5, marginTop: 1 }]} numberOfLines={1}>
-                {[u.phone, u.email].filter(Boolean).join(' · ')}
+                {[u.employeeId && `ID ${u.employeeId}`, u.phone, u.email].filter(Boolean).join(' · ')}
               </Text>
             )}
             <Text style={[s.muted, { fontSize: 12, marginTop: 2 }]} numberOfLines={1}>
@@ -754,12 +771,15 @@ function DepartmentEditor({
 }
 
 function CreateUser({
+  takenIds,
   departments,
   initialDepartment,
   onCancel,
   onCreated,
   onToast,
 }: {
+  /** IDs already used in the company: the suggested ID avoids them. */
+  takenIds: string[];
   departments: string[];
   initialDepartment: string;
   onCancel: () => void;
@@ -768,11 +788,25 @@ function CreateUser({
 }) {
   useBack(onCancel);
   const [id, setId] = useState('');
+  /** The admin typed their own ID: stop filling it in from the name. */
+  const [idTyped, setIdTyped] = useState(false);
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
   const [birthday, setBirthday] = useState('');
+  const [employeeId, setEmployeeId] = useState('');
   const [photo, setPhoto] = useState<OutgoingFile | null>(null);
+  const taken = new Set(takenIds.map(normalizeId));
+  const idTaken = !!id.trim() && taken.has(normalizeId(id));
+  const changeName = (v: string) => {
+    setName(v);
+    if (!idTyped) setId(suggestUserId(v, takenIds));
+  };
+  const changeId = (v: string) => {
+    // Emptied: go back to the ID made from the name.
+    setIdTyped(!!v.trim());
+    setId(v.trim() ? v : suggestUserId(name, takenIds));
+  };
   const [picked, setPicked] = useState<string[]>(initialDepartment ? [initialDepartment] : []);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -781,6 +815,7 @@ function CreateUser({
     setError(null);
     const username = normalizeId(id);
     if (!ID_RE.test(username)) return setError(ID_RULES);
+    if (taken.has(username)) return setError(`The ID "${username}" is already used: choose another`);
     if (!name.trim()) return setError('Enter their full name');
     if (birthday === 'invalid') return setError('Birth date: enter day, month and year (e.g. 21 08 1994)');
     setBusy(true);
@@ -793,6 +828,7 @@ function CreateUser({
         departments: picked,
         photo: photo ? { mime: photo.mime, data: toBase64(photo.data) } : undefined,
         birthday: birthday || undefined,
+        employeeId: employeeId.trim() || undefined,
       });
       onCreated({ invite, name: name.trim(), email: email.trim() || undefined, renewed: false });
     } catch (e) {
@@ -810,8 +846,23 @@ function CreateUser({
         name, photo, mobile or email.
       </Text>
       <PhotoField photo={photo} hasCurrent={false} onPick={setPhoto} onRemove={() => setPhoto(null)} onError={onToast} />
-      <Field value={name} onChangeText={setName} placeholder="Full name, e.g. Ravi Kumar" maxLength={MAX_NAME} autoCapitalize="words" autoFocus />
-      <Field value={id} onChangeText={setId} placeholder="User ID (for sign-in), e.g. Ravi Kumar" autoCapitalize="none" autoCorrect={false} />
+      <Field value={name} onChangeText={changeName} placeholder="Full name, e.g. Ravi Kumar" maxLength={MAX_NAME} autoCapitalize="words" autoFocus />
+      <Field value={id} onChangeText={changeId} placeholder="User ID (filled in from the name)" autoCapitalize="none" autoCorrect={false} />
+      {!!id.trim() && (
+        <Text style={[s.muted, { fontSize: 12, marginTop: -6 }, idTaken && { color: colors.danger }]}>
+          {idTaken
+            ? `"${normalizeId(id)}" is already used in your company: change it`
+            : `Signs in with ID "${normalizeId(id)}"${idTyped ? '' : ' (made from the name; you can change it)'}`}
+        </Text>
+      )}
+      <Field
+        value={employeeId}
+        onChangeText={setEmployeeId}
+        placeholder="Employee ID (optional), e.g. EMP-0042"
+        maxLength={MAX_EMPLOYEE_ID}
+        autoCapitalize="none"
+        autoCorrect={false}
+      />
       <Field value={phone} onChangeText={setPhone} placeholder="Mobile, e.g. +91 98765 43210" keyboardType="phone-pad" maxLength={MAX_PHONE} />
       <Field value={email} onChangeText={setEmail} placeholder="Email" keyboardType="email-address" maxLength={MAX_EMAIL} />
       <BirthdayField value={birthday} onChange={setBirthday} />

@@ -6,6 +6,7 @@ import {
   Flag,
   Building2,
   Cake,
+  IdCard,
   Camera,
   Check,
   ChevronDown,
@@ -45,6 +46,7 @@ import {
   sortDepartments,
   sortGroups,
   sortUsers,
+  suggestUserId,
   type DepartmentSort,
   type GroupSort,
   type UserSort,
@@ -52,6 +54,7 @@ import {
   MAX_DEPARTMENT,
   MAX_EMAIL,
   MAX_GROUP_NAME,
+  MAX_EMPLOYEE_ID,
   MAX_NAME,
   MAX_PHONE,
   ID_RE,
@@ -75,6 +78,7 @@ import {
 } from '@meetme/core';
 import { client, useClient } from '../messenger';
 import { Avatar, SortSelect, errorText, shortTime } from './ui';
+import { cropPhoto } from './PhotoCrop';
 import { HelpDeskTab, RightsTab } from './AdminRights';
 import { CameraCapture, ProfileHero } from './Profile';
 import { CompanyTab } from './Company';
@@ -267,7 +271,7 @@ function UsersTab({
   const shown = sortUsers(
     (users ?? []).filter(
       (u) =>
-        (shortId(u.username).includes(q) || u.name.toLowerCase().includes(q)) &&
+        (shortId(u.username).includes(q) || u.name.toLowerCase().includes(q) || (u.employeeId ?? '').toLowerCase().includes(q)) &&
         inDept(u) &&
         (filter === 'all' ||
           (filter === 'online' && u.online) ||
@@ -373,6 +377,7 @@ function UsersTab({
         <InviteView share={share} onDone={() => setShare(null)} onToast={onToast} />
       ) : adding ? (
         <CreateUser
+          takenIds={(users ?? []).map((u) => shortId(u.username))}
           departments={departments}
           initialDepartment={dept && dept !== NO_DEPT ? dept : ''}
           onManageDepartments={onManageDepartments}
@@ -432,6 +437,7 @@ function UsersTab({
             <div className="grow">
               <div className="name">
                 {u.name || shortId(u.username)} {u.name && <span className="muted small">@{shortId(u.username)}</span>}{' '}
+                {u.employeeId && <span className="tag emp-id">{u.employeeId}</span>}{' '}
                 {u.username === me && <span className="muted small">(you)</span>} {u.admin && <span className="tag admin">{u.owner ? 'Main admin' : 'Admin'}</span>}{' '}
                 {u.banned && <span className="tag banned">Banned</span>}{' '}
                 {u.moved && <span className="tag">Moved</span>}{' '}
@@ -578,12 +584,15 @@ function DepartmentEditor({
 }
 
 function CreateUser({
+  takenIds,
   departments,
   initialDepartment,
   onManageDepartments,
   onCancel,
   onCreated,
 }: {
+  /** IDs already used in the company: the suggested ID avoids them. */
+  takenIds: string[];
   departments: string[];
   initialDepartment: string;
   onManageDepartments: () => void;
@@ -591,10 +600,25 @@ function CreateUser({
   onCreated: (s: Share) => void;
 }) {
   const [id, setId] = useState('');
+  /** The admin typed their own ID: stop filling it in from the name. */
+  const [idTyped, setIdTyped] = useState(false);
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
   const [birthday, setBirthday] = useState('');
+  const [employeeId, setEmployeeId] = useState('');
+  const taken = new Set(takenIds.map(normalizeId));
+  const idTaken = !!id.trim() && taken.has(normalizeId(id));
+  const changeName = (v: string) => {
+    setName(v);
+    if (!idTyped) setId(suggestUserId(v, takenIds));
+  };
+  const changeId = (v: string) => {
+    setId(v);
+    // Emptied: go back to the ID made from the name.
+    setIdTyped(!!v.trim());
+    if (!v.trim()) setId(suggestUserId(name, takenIds));
+  };
   const [photo, setPhoto] = useState<{ mime: string; data: string } | null>(null);
   const [picked, setPicked] = useState<string[]>(initialDepartment ? [initialDepartment] : []);
   const [busy, setBusy] = useState(false);
@@ -605,6 +629,7 @@ function CreateUser({
     setError(null);
     const username = normalizeId(id);
     if (!ID_RE.test(username)) return setError(ID_RULES);
+    if (taken.has(username)) return setError(`The ID "${username}" is already used: choose another`);
     if (!name.trim()) return setError('Enter their full name');
     setBusy(true);
     try {
@@ -616,6 +641,7 @@ function CreateUser({
         departments: picked,
         photo: photo ?? undefined,
         birthday: birthday || undefined,
+        employeeId: employeeId.trim() || undefined,
       });
       onCreated({ invite, name: name.trim(), email: email.trim() || undefined, renewed: false });
     } catch (err) {
@@ -638,14 +664,37 @@ function CreateUser({
         <PhotoPicker value={photo} onChange={setPhoto} onError={setError} />
         <div className="grow stack" style={{ gap: 8 }}>
           <div className="row">
-            <input value={name} maxLength={MAX_NAME} onChange={(e) => setName(e.target.value)} placeholder="Full name, e.g. Ravi Kumar" autoFocus />
-            <input value={id} onChange={(e) => setId(e.target.value)} placeholder="User ID, e.g. Ravi Kumar" title="Used to sign in. Spaces and capitals are fine; it is not case-sensitive." />
+            <input value={name} maxLength={MAX_NAME} onChange={(e) => changeName(e.target.value)} placeholder="Full name, e.g. Ravi Kumar" autoFocus />
+            <input
+              value={id}
+              onChange={(e) => changeId(e.target.value)}
+              placeholder="User ID (filled in from the name)"
+              title="Used to sign in. Made from the name; you can change it. Spaces and capitals are fine; it is not case-sensitive."
+              aria-invalid={idTaken}
+              className={idTaken ? 'invalid' : undefined}
+            />
           </div>
+          {id.trim() && (
+            <div className={`small ${idTaken ? 'danger-text' : 'muted'}`} style={{ marginTop: -4 }}>
+              {idTaken
+                ? `"${normalizeId(id)}" is already used in your company: change it`
+                : `Signs in with ID "${normalizeId(id)}"${idTyped ? '' : ' (made from the name; you can change it)'}`}
+            </div>
+          )}
           <div className="row">
             <input value={phone} maxLength={MAX_PHONE} onChange={(e) => setPhone(e.target.value)} placeholder="Mobile, e.g. +91 98765 43210" type="tel" />
             <input value={email} maxLength={MAX_EMAIL} onChange={(e) => setEmail(e.target.value)} placeholder="Email" type="email" />
           </div>
-          <BirthdayInput value={birthday} onChange={setBirthday} />
+          <div className="row">
+            <input
+              value={employeeId}
+              maxLength={MAX_EMPLOYEE_ID}
+              onChange={(e) => setEmployeeId(e.target.value)}
+              placeholder="Employee ID, e.g. EMP-0042 (optional)"
+              title="Your company's own code for this person: capital or small letters, numbers and symbols. Must be unique in the company."
+            />
+            <BirthdayInput value={birthday} onChange={setBirthday} />
+          </div>
         </div>
       </div>
       <div className="row" style={{ marginTop: 10, alignItems: 'flex-start' }}>
@@ -689,7 +738,8 @@ function PhotoPicker({
   async function pick(f: Blob | undefined) {
     if (!f) return;
     try {
-      onChange({ mime: 'image/jpeg', data: toBase64(await shrinkPhoto(f)) });
+      const data = await cropPhoto(f, 'Profile photo');
+      if (data) onChange({ mime: 'image/jpeg', data: toBase64(data) });
     } catch (e) {
       onError(errorText(e));
     }
@@ -930,10 +980,11 @@ function UserDetail({
           </div>
           <div className="detail-list">
             {detail(UserRound, 'Full name', user.name)}
+            {detail(IdCard, 'Employee ID', user.employeeId ?? '')}
             {detail(Phone, 'Mobile', user.phone)}
             {detail(Mail, 'Email', user.email)}
             {detail(Cake, 'Birth date', birthdayText(user.birthday))}
-            {!user.name && !user.phone && !user.email && !user.birthday && <p className="muted small">No details yet.</p>}
+            {!user.name && !user.employeeId && !user.phone && !user.email && !user.birthday && <p className="muted small">No details yet.</p>}
           </div>
         </>
       )}
@@ -981,6 +1032,7 @@ function ProfileEditor({ user, onDone, onToast }: { user: AdminUser; onDone: (ch
   const [phone, setPhone] = useState(user.phone);
   const [email, setEmail] = useState(user.email);
   const [birthday, setBirthday] = useState(user.birthday ?? '');
+  const [employeeId, setEmployeeId] = useState(user.employeeId ?? '');
   /** undefined = keep, null = remove */
   const [photo, setPhoto] = useState<{ mime: string; data: string } | null | undefined>(undefined);
   const [busy, setBusy] = useState(false);
@@ -990,7 +1042,7 @@ function ProfileEditor({ user, onDone, onToast }: { user: AdminUser; onDone: (ch
     e.preventDefault();
     setBusy(true);
     try {
-      await client.setEmployeeProfile(user.username, { name, phone, email, birthday });
+      await client.setEmployeeProfile(user.username, { name, phone, email, birthday, employeeId });
       if (photo !== undefined) {
         await client.setEmployeeAvatar(user.username, photo && { mime: photo.mime, data: fromBase64(photo.data) });
       }
@@ -1016,6 +1068,16 @@ function ProfileEditor({ user, onDone, onToast }: { user: AdminUser; onDone: (ch
         <label className="field-label span-2">
           Full name
           <input value={name} maxLength={MAX_NAME} onChange={(e) => setName(e.target.value)} placeholder="e.g. Ravi Kumar" autoFocus />
+        </label>
+        <label className="field-label span-2">
+          Employee ID
+          <input
+            value={employeeId}
+            maxLength={MAX_EMPLOYEE_ID}
+            onChange={(e) => setEmployeeId(e.target.value)}
+            placeholder="e.g. EMP-0042, Mfg/2024#17"
+            title="Capital or small letters, numbers and symbols. Must be unique in the company."
+          />
         </label>
         <label className="field-label">
           Mobile

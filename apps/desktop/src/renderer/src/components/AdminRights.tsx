@@ -3,20 +3,23 @@ import { ArrowDown, ArrowUp, Building2, Check, ChevronLeft, ChevronRight, Clock,
 import {
   FEATURES,
   FEATURE_KEYS,
+  HELP_SORTS,
   MAX_EMAIL,
   MAX_HELP_FIELD,
   MAX_PHONE,
   shortId,
+  sortHelpContacts,
   type AdminUser,
   type Feature,
   type GroupInfo,
   type HelpContact,
   type HelpContactInput,
+  type HelpSort,
   type RightRule,
   type RightScope,
 } from '@meetme/core';
 import { client } from '../messenger';
-import { Avatar, errorText } from './ui';
+import { Avatar, SortSelect, errorText } from './ui';
 import { CompanyInfo } from './Company';
 
 type Toast = (m: string) => void;
@@ -404,7 +407,7 @@ function ContactCard({ c, onChat }: { c: HelpContact; onChat?: (u: string) => vo
           </a>
         )}
         {c.username && onChat && c.username !== client.account?.username && (
-          <button className="info-chip chat action" onClick={() => onChat(c.username)}>
+          <button className="info-chip chat-link action" onClick={() => onChat(c.username)}>
             <MessageSquare size={14} /> Chat in CellMate
           </button>
         )}
@@ -418,6 +421,7 @@ export function HelpDeskModal({ onClose, onToast }: { onClose: () => void; onToa
   const [contacts, setContacts] = useState<HelpContact[] | null>(null);
   const [query, setQuery] = useState('');
   const [company, setCompany] = useState(false);
+  const [sort, setSort] = useState<HelpSort>('title');
   useEffect(() => {
     client.getHelpDesk().then(setContacts, (e) => (onToast(errorText(e)), setContacts([])));
   }, [onToast]);
@@ -427,7 +431,10 @@ export function HelpDeskModal({ onClose, onToast }: { onClose: () => void; onToa
       (e) => onToast(errorText(e)),
     );
   const q = query.trim().toLowerCase();
-  const shown = (contacts ?? []).filter((c) => `${c.title} ${c.name} ${c.department} ${c.phone} ${c.email}`.toLowerCase().includes(q));
+  const shown = sortHelpContacts(
+    (contacts ?? []).filter((c) => `${c.title} ${c.name} ${c.department} ${c.phone} ${c.email}`.toLowerCase().includes(q)),
+    sort,
+  );
   return (
     <div className="modal-bg" onClick={onClose}>
       <div className="modal" style={{ width: 520 }} onClick={(e) => e.stopPropagation()}>
@@ -443,10 +450,15 @@ export function HelpDeskModal({ onClose, onToast }: { onClose: () => void; onToa
           </button>
         </header>
         <div className="admin-body">
-          {(contacts?.length ?? 0) > 5 && (
-            <div className="search" style={{ marginBottom: 10 }}>
-              <Search size={16} />
-              <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search: IT, HR, a name…" autoFocus />
+          {(contacts?.length ?? 0) > 1 && (
+            <div className="row" style={{ marginBottom: 10 }}>
+              {(contacts?.length ?? 0) > 5 && (
+                <div className="search grow">
+                  <Search size={16} />
+                  <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search: IT, HR, a name…" autoFocus />
+                </div>
+              )}
+              <SortSelect value={sort} options={HELP_SORTS} onChange={setSort} />
             </div>
           )}
           {/* The company's own information (address, hours, rules, files) is one click away from here too. */}

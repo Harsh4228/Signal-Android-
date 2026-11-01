@@ -3882,7 +3882,7 @@ a.detail-row > div > div:first-child {
   color: var(--c-email);
   background: var(--c-email-soft);
 }
-.info-chip.chat {
+.info-chip.chat-link {
   color: var(--accent);
   background: var(--accent-soft);
 }
@@ -3922,6 +3922,20 @@ a.detail-row.email > div > div:first-child {
 }
 .detail-row.birthday > svg {
   color: var(--c-hours);
+}
+.detail-row.emp-id > svg {
+  color: var(--accent);
+}
+/* Employee IDs keep exactly how the admin typed them (capitals, symbols): show them in a code-like font. */
+.emp-id-value,
+.tag.emp-id {
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  overflow-wrap: anywhere;
+}
+.tag.emp-id {
+  color: var(--text-2);
+  background: var(--surface-2);
+  font-weight: 500;
 }
 
 /* ---------- rich text and files in company information ---------- */
@@ -4348,3 +4362,14 @@ a.rich.phone {
   margin-top: 6px;
   box-shadow: var(--shadow-md);
 }
+
+/* Photo cropper: move and zoom the picture inside a round frame (like WhatsApp). */
+.crop-modal { width: auto; display: grid; gap: 12px; justify-items: center; }
+.crop-modal header { width: 100%; }
+.crop-view { position: relative; overflow: hidden; border-radius: 12px; background: #000; cursor: grab; touch-action: none; user-select: none; }
+.crop-view:active { cursor: grabbing; }
+.crop-view canvas { display: block; }
+.crop-ring { position: absolute; inset: 0; border-radius: 50%; box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.55); border: 2px solid rgba(255, 255, 255, 0.9); pointer-events: none; }
+.crop-zoom { display: flex; align-items: center; gap: 8px; width: 300px; }
+.crop-zoom input[type='range'] { flex: 1; accent-color: var(--accent); }
+.crop-modal .row-end { width: 100%; }

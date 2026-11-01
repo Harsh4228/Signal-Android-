@@ -106,6 +106,61 @@ class DeviceFiles: NSObject {
     }
   }
 
+  /**
+   * For the photo cropper: an upright copy of the picture, at most `max` px on its long side, saved in the temporary
+   * folder. Resolves { uri, width, height }; cropPhoto then cuts the chosen square from it.
+   */
+  @objc func preparePhoto(_ uri: String, max: NSNumber, resolver resolve: @escaping RCTPromiseResolveBlock, rejecter reject: @escaping RCTPromiseRejectBlock) {
+    DispatchQueue.global(qos: .userInitiated).async {
+      let url = URL(string: uri).flatMap { $0.scheme == nil ? nil : $0 } ?? URL(fileURLWithPath: uri)
+      let scoped = url.startAccessingSecurityScopedResource()
+      defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+      guard let data = try? Data(contentsOf: url), let image = UIImage(data: data), image.size.width > 0, image.size.height > 0 else {
+        return reject("photo_failed", "That file is not a photo", nil)
+      }
+      let k = Swift.min(1, CGFloat(max.doubleValue) / Swift.max(image.size.width, image.size.height))
+      let size = CGSize(width: (image.size.width * k).rounded(), height: (image.size.height * k).rounded())
+      let format = UIGraphicsImageRendererFormat()
+      format.scale = 1
+      // Drawing the UIImage applies the camera's orientation, so the copy is upright.
+      let jpeg = UIGraphicsImageRenderer(size: size, format: format).jpegData(withCompressionQuality: 0.92) { _ in
+        image.draw(in: CGRect(origin: .zero, size: size))
+      }
+      let name = "crop-\(Int(Date().timeIntervalSince1970 * 1000)).jpg"
+      let file = FileManager.default.temporaryDirectory.appendingPathComponent(name)
+      do {
+        try jpeg.write(to: file)
+      } catch {
+        return reject("photo_failed", "Could not read the photo", error)
+      }
+      resolve(["uri": file.absoluteString, "width": Int(size.width), "height": Int(size.height)])
+    }
+  }
+
+  /** Cuts the square (x, y, side in pixels of the preparePhoto copy) out of it, at most `max` px, as JPEG base64. */
+  @objc func cropPhoto(_ uri: String, x: NSNumber, y: NSNumber, side: NSNumber, max: NSNumber, resolver resolve: @escaping RCTPromiseResolveBlock, rejecter reject: @escaping RCTPromiseRejectBlock) {
+    DispatchQueue.global(qos: .userInitiated).async {
+      let url = URL(string: uri).flatMap { $0.scheme == nil ? nil : $0 } ?? URL(fileURLWithPath: uri)
+      defer {
+        if url.path.hasPrefix(FileManager.default.temporaryDirectory.path) { try? FileManager.default.removeItem(at: url) }
+      }
+      guard let data = try? Data(contentsOf: url), let image = UIImage(data: data) else {
+        return reject("photo_failed", "That file is not a photo", nil)
+      }
+      let s = Swift.max(1, Swift.min(CGFloat(side.doubleValue), image.size.width, image.size.height))
+      let left = Swift.min(Swift.max(0, CGFloat(x.doubleValue)), image.size.width - s)
+      let top = Swift.min(Swift.max(0, CGFloat(y.doubleValue)), image.size.height - s)
+      let out = Swift.min(CGFloat(max.doubleValue), s)
+      let k = out / s
+      let format = UIGraphicsImageRendererFormat()
+      format.scale = 1
+      let jpeg = UIGraphicsImageRenderer(size: CGSize(width: out, height: out), format: format).jpegData(withCompressionQuality: 0.88) { _ in
+        image.draw(in: CGRect(x: -left * k, y: -top * k, width: image.size.width * k, height: image.size.height * k))
+      }
+      resolve(jpeg.base64EncodedString())
+    }
+  }
+
   static var appWindow: UIWindow? { (UIApplication.shared.delegate as? AppDelegate)?.window }
 
   static func topController() -> UIViewController? {

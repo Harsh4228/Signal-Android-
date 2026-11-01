@@ -6,6 +6,7 @@ import { AppLockSettings } from './AppLockSettings';
 import { getTheme, setTheme, type ThemeChoice } from '../theme';
 import { enableWebPush, needsHomeScreen, webPushState, webPushSupported } from '../webPush';
 import { Avatar, PasswordInput, errorText } from './ui';
+import { cropPhoto } from './PhotoCrop';
 import { ProfileHero } from './Profile';
 import { requestDeletion, toggleBlock } from './Safety';
 
@@ -16,20 +17,6 @@ const SECURITY = [
   'Screenshots and screen recording of this window are blocked unless your admin allows them',
   'Saving files and copying messages work only if your admin allows them; drag and drop is disabled',
 ];
-
-/** Shrink a picked photo to a square-ish JPEG (max 400 px) so it loads fast everywhere. */
-async function shrinkPhoto(file: File): Promise<Uint8Array> {
-  const bitmap = await createImageBitmap(file);
-  const scale = Math.min(1, 400 / Math.max(bitmap.width, bitmap.height));
-  const canvas = document.createElement('canvas');
-  canvas.width = Math.round(bitmap.width * scale);
-  canvas.height = Math.round(bitmap.height * scale);
-  canvas.getContext('2d')!.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-  bitmap.close();
-  const blob = await new Promise<Blob | null>((r) => canvas.toBlob(r, 'image/jpeg', 0.85));
-  if (!blob) throw new Error('Could not read that picture');
-  return new Uint8Array(await blob.arrayBuffer());
-}
 
 /**
  * My mobile number and email; colleagues see them under my name. On a company server the admin set them and
@@ -114,9 +101,13 @@ export function Settings({ onClose, onToast }: { onClose: () => void; onToast: (
 
   async function changePhoto(file: File | undefined) {
     if (!file) return;
+    if (photoInput.current) photoInput.current.value = '';
+    // Move and zoom it in a round frame first, like WhatsApp.
+    const data = await cropPhoto(file, 'Profile photo').catch((e) => (onToast(errorText(e)), null));
+    if (!data) return;
     setPhotoBusy(true);
     try {
-      await client.setMyAvatar({ mime: 'image/jpeg', data: await shrinkPhoto(file) });
+      await client.setMyAvatar({ mime: 'image/jpeg', data });
       onToast('Profile photo updated');
     } catch (err) {
       onToast(errorText(err));
@@ -218,6 +209,11 @@ export function Settings({ onClose, onToast }: { onClose: () => void; onToast: (
               @{c.account ? shortId(c.account.username) : ''}
               {c.company ? ` · ${c.company.name} (${c.company.code})` : ` · ${c.account?.serverUrl ?? ''}`}
             </div>
+            {c.employeeId && (
+              <div className="muted small" title="Set by your admin">
+                Employee ID: <span className="emp-id-value">{c.employeeId}</span>
+              </div>
+            )}
           </div>
           <input
             ref={photoInput}

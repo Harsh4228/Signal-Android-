@@ -69,6 +69,17 @@ export function Avatar({ name, size = 44 }: { name: string; size?: number }) {
 /** Avatar for a chat: a group icon, or the person with a green dot while they are online. */
 export function ChatAvatar({ chatKey, size = 44 }: { chatKey: string; size?: number }) {
   if (isGroupKey(chatKey)) {
+    const photo = client.avatarOf(chatKey);
+    if (photo) {
+      return (
+        <Image
+          source={{ uri: photo }}
+          style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: colors.hover }}
+          resizeMode="cover"
+          accessibilityIgnoresInvertColors
+        />
+      );
+    }
     return (
       <View
         style={{

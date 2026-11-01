@@ -19,6 +19,7 @@ import { CallBar, CallScreen } from './screens/CallScreen';
 import { GroupCallBar, GroupCallScreen } from './screens/GroupCallScreen';
 import { BroadcastScreen } from './screens/BroadcastScreen';
 import { MediaViewerHost } from './screens/AttachmentView';
+import { PhotoCropHost } from './PhotoCrop';
 import { AdminScreen } from './screens/AdminScreen';
 import { LockScreen } from './screens/LockScreen';
 import { AppLockScreen } from './screens/AppLockScreen';
@@ -228,6 +229,7 @@ export default function App() {
         {/* WhatsApp's bottom bar on the main pages (not inside a chat or a sub-page). */}
         {ready && c.account && !c.moved && !c.pending && tab && <BottomTabs current={tab} navigate={setRoute} />}
         <MediaViewerHost onToast={setToast} />
+        <PhotoCropHost />
         {ready && c.account && !lock.locked && call.status === 'idle' && <NoticePopup />}
         {ready && c.account && lock.locked && <LockScreen />}
         {/* Above the lock screen, like WhatsApp: a call can be answered without unlocking the app first. */}

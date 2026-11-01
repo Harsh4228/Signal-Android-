@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Alert, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
-import { Ban, BadgeCheck, Building2, Cake, Check, ChevronDown, ChevronRight, KeyRound, CircleDashed, Eraser, Flag, Mail, MessageSquare, Phone, ShieldCheck, ShieldPlus, ShoppingBag, RotateCcw, ShieldX, UserMinus, UserPlus, Video } from 'lucide-react-native';
+import { pickProfilePhoto } from '../photos';
+import { Ban, BadgeCheck, Building2, Cake, IdCard, Check, ChevronDown, ChevronRight, ImagePlus, KeyRound,CircleDashed, Eraser, Flag, Mail, MessageSquare, Phone, ShieldCheck, ShieldPlus, ShoppingBag, RotateCcw, ShieldX, UserMinus, UserPlus, Video } from 'lucide-react-native';
 import { birthdayText, formatLastSeen, groupIdOf, isGroupKey, shortId, type UserProfile } from '@meetme/core';
 import { calls, client, useClient } from '../messenger';
 import { AvatarTap, DetailRow, ProfileHero, telLink } from './Profile';
@@ -54,6 +55,33 @@ function GroupInfoScreen({
       .updateMyGroup(groupIdOf(chatKey), changes)
       .then(() => onError(done), (e) => onError(errorText(e)));
   const count = g?.members.length ?? 0;
+  const hasPhoto = !!c.avatarOf(chatKey);
+  const choosePhoto = async () => {
+    try {
+      const f = await pickProfilePhoto({ title: 'Group photo' });
+      if (!f) return;
+      await client.setGroupPhoto(groupIdOf(chatKey), f);
+      onError('Group photo saved');
+    } catch (e) {
+      onError(errorText(e));
+    }
+  };
+  const photoOptions = () => {
+    if (!hasPhoto) return void choosePhoto();
+    Alert.alert('Group photo', 'Everyone at your company can see it. It is not end-to-end encrypted.', [
+      { text: 'Choose a new photo', onPress: () => void choosePhoto() },
+      {
+        text: 'Remove photo',
+        style: 'destructive',
+        onPress: () =>
+          void client.setGroupPhoto(groupIdOf(chatKey), null).then(
+            () => onError('Group photo removed'),
+            (e) => onError(errorText(e)),
+          ),
+      },
+      { text: 'Cancel', style: 'cancel' },
+    ]);
+  };
   useEffect(() => {
     void client.refreshPresence(g?.members ?? []);
   }, [g?.members]);
@@ -62,7 +90,9 @@ function GroupInfoScreen({
       <Header title="Group details" onBack={() => navigate({ name: 'chat', peer: chatKey })} />
       <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40 }}>
         <View style={{ alignItems: 'center', gap: 8, paddingVertical: 8 }}>
-          <ChatAvatar chatKey={chatKey} size={80} />
+          <Pressable disabled={!manage} onPress={photoOptions} accessibilityLabel="Change the group photo">
+            <ChatAvatar chatKey={chatKey} size={80} />
+          </Pressable>
           <Text style={[s.h1, { fontSize: 20 }]}>{c.chatTitle(chatKey)}</Text>
           <Text style={s.muted}>
             Group · {count} member{count === 1 ? '' : 's'}
@@ -83,6 +113,13 @@ function GroupInfoScreen({
         {manage && g && (
           <View style={[s.card, { marginTop: 12, padding: 4 }]}>
             <Row icon={UserPlus} title="Add members" onPress={() => setAdding(true)} right={<ChevronRight size={18} color={colors.faint} />} />
+            <Row
+              icon={ImagePlus}
+              title="Group photo"
+              subtitle={hasPhoto ? 'Change or remove it' : 'Add a photo everyone in the group sees'}
+              onPress={photoOptions}
+              right={<ChevronRight size={18} color={colors.faint} />}
+            />
             <Row
               icon={ShieldCheck}
               title="Group permissions"
@@ -325,11 +362,12 @@ function PersonInfoScreen({
         )}
 
         <View style={[s.card, { marginTop: 12, paddingHorizontal: 12, paddingVertical: 2 }]}>
+          {!!profile?.employeeId && <DetailRow icon={IdCard} value={profile.employeeId} label="Employee ID" />}
           {!!profile?.departments.length && <DetailRow icon={Building2} value={profile.departments.join(', ')} label="Department" tint="dept" />}
           {!!profile?.phone && <DetailRow icon={Phone} value={profile.phone} label="Mobile · tap to call" link={telLink(profile.phone)} tint="phone" />}
           {!!profile?.email && <DetailRow icon={Mail} value={profile.email} label="Email · tap to write" link={`mailto:${profile.email}`} tint="email" />}
           {!!birthdayText(profile?.birthday) && <DetailRow icon={Cake} value={birthdayText(profile?.birthday)} label="Birth date" tint="hours" />}
-          {!profile?.departments.length && !profile?.phone && !profile?.email && !birthdayText(profile?.birthday) && (
+          {!profile?.employeeId && !profile?.departments.length && !profile?.phone && !profile?.email && !birthdayText(profile?.birthday) && (
             <DetailRow icon={Building2} value="No details yet" label="Your admin adds department, mobile, email and birth date" />
           )}
         </View>

@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 import { Alert, Linking, Pressable, ScrollView, Switch, Text, View } from 'react-native';
 import { Ban, Building2, Camera, ChevronRight, CircleAlert, CircleCheck, CloudUpload, FileText, Lock, LogOut, ShieldCheck, Trash2 } from 'lucide-react-native';
-import { AVATAR_MIMES, birthdayText, MAX_ABOUT, MAX_EMAIL, MAX_PHONE, MIN_PASSWORD_LENGTH, shortId } from '@meetme/core';
-import { pickFile } from '../files';
+import { birthdayText, MAX_ABOUT, MAX_EMAIL, MAX_PHONE, MIN_PASSWORD_LENGTH, shortId } from '@meetme/core';
+import { pickProfilePhoto } from '../photos';
 import { appLock, client, useClient, useLock } from '../messenger';
 import { resetPush } from '../push';
 import { chooseTheme, colors, s, themeChoice, type ThemeChoice } from '../theme';
@@ -24,11 +24,9 @@ const SECURITY = [
 /** Pick a photo and make it my profile photo (JPEG / PNG / WebP up to 2 MB). */
 async function choosePhoto() {
   try {
-    const f = await pickFile('photo');
+    // Move and zoom it in a round frame first, like WhatsApp.
+    const f = await pickProfilePhoto({ title: 'Profile photo' });
     if (!f) return;
-    if (!(AVATAR_MIMES as readonly string[]).includes(f.mime)) {
-      throw new Error('Please choose a JPEG or PNG photo (on iPhone: share it as "Most Compatible").');
-    }
     await client.setMyAvatar({ mime: f.mime, data: f.data });
   } catch (e) {
     Alert.alert('Profile photo', errorText(e));
@@ -223,6 +221,11 @@ export function SettingsScreen({ navigate }: { navigate: (r: Route) => void }) {
               @{c.account ? shortId(c.account.username) : ''}
               {c.company ? ` · ${c.company.name} (${c.company.code})` : ` · ${c.account?.serverUrl ?? ''}`}
             </Text>
+            {!!c.employeeId && (
+              <Text style={s.muted} numberOfLines={1}>
+                Employee ID: {c.employeeId}
+              </Text>
+            )}
             {canEditPhoto && (
               <Text style={{ color: colors.accent, fontSize: 13, marginTop: 2 }}>
                 {c.account && c.avatarOf(c.account.username) ? 'Tap photo to change' : 'Tap to add a profile photo'}

@@ -794,6 +794,11 @@ export class MessengerClient extends Emitter<Events> {
   async init(): Promise<boolean> {
     this.account = await this.store.getAccount();
     this.contacts = await this.store.getContacts();
+    // Older versions saved a group as a contact after a group call, so the group showed twice: drop those.
+    if (this.contacts.some(isGroupKey)) {
+      this.contacts = this.contacts.filter((c) => !isGroupKey(c));
+      await this.store.saveContacts(this.contacts);
+    }
     this.timers = await this.store.getSetting<Record<string, number>>('timers', {});
     this.notices = await this.store.getSetting<Notice[]>('notices', []);
     this.statuses = await this.store.getSetting<StatusUpdate[]>('statuses', []);
@@ -974,7 +979,13 @@ export class MessengerClient extends Emitter<Events> {
    * QR invite (show it with inviteCode()); the person scans it and only chooses their password.
    */
   async inviteEmployee(input: EmployeeInput): Promise<InviteResponse> {
-    const body = { ...input, username: normalizeId(input.username), name: input.name.trim(), birthday: input.birthday || undefined };
+    const body = {
+      ...input,
+      username: normalizeId(input.username),
+      name: input.name.trim(),
+      birthday: input.birthday || undefined,
+      employeeId: input.employeeId?.trim() || undefined,
+    };
     return (await this.http<{ invite: InviteResponse }>('POST', '/v1/admin/users', body)).invite;
   }
 
@@ -984,7 +995,7 @@ export class MessengerClient extends Emitter<Events> {
   }
 
   /** Admin: change a user's name / mobile / email (fields left out stay). Users can't change these themselves. */
-  async setEmployeeProfile(username: string, p: { name?: string; phone?: string; email?: string; birthday?: string }): Promise<void> {
+  async setEmployeeProfile(username: string, p: { name?: string; phone?: string; email?: string; birthday?: string; employeeId?: string }): Promise<void> {
     await this.http('PUT', `/v1/admin/users/${encodeURIComponent(username)}/profile`, p);
     this.profiles.delete(username);
     this.emit('change');
@@ -1509,6 +1520,7 @@ export class MessengerClient extends Emitter<Events> {
     this.about = me.about ?? '';
     this.hideLastSeen = !!me.hideLastSeen;
     this.birthday = me.birthday ?? '';
+    this.employeeId = me.employeeId ?? '';
     this.setRights(me.rights);
     void this.loadCompanyProfile();
     this.emit('change');
@@ -2703,13 +2715,14 @@ export class MessengerClient extends Emitter<Events> {
 
   /** Everything for the chat list: my groups first, then 1:1 contacts. */
   chatKeys(): string[] {
-    return [...this.groups.map((g) => groupKey(g.id)), ...this.contacts];
+    return [...new Set([...this.groups.map((g) => groupKey(g.id)), ...this.contacts.filter((c) => !isGroupKey(c))])];
   }
 
   async loadGroups(): Promise<void> {
     this.lastGroupReload = Date.now();
     const { groups } = await this.http<{ groups: GroupInfo[] }>('GET', '/v1/groups');
     this.groups = groups;
+    for (const g of groups) this.noteAvatar(groupKey(g.id), g.photo ?? null, `/v1/groups/${g.id}/photo`);
     this.emit('change');
   }
 
@@ -2877,22 +2890,46 @@ export class MessengerClient extends Emitter<Events> {
     this.emit('change');
   }
 
-  /** Server says user's photo is at version `ver` (null = none): fetch it once if we don't have that version. */
-  private noteAvatar(user: string, ver: number | null) {
+  /**
+   * Group admins (and company admins): the group photo (JPEG / PNG / WebP up to 2 MB), or null to remove it.
+   * Everyone at the company can see it - like profile photos it is not end-to-end encrypted.
+   * Shown through avatarOf(groupKey(id)).
+   */
+  async setGroupPhoto(id: string, photo: { mime: string; data: Uint8Array } | null): Promise<void> {
+    if (photo && !(AVATAR_MIMES as readonly string[]).includes(photo.mime)) throw new Error('Photo must be JPEG, PNG or WebP');
+    if (photo && photo.data.length > MAX_AVATAR_BYTES) throw new Error('Photo too large (max 2 MB)');
+    const key = groupKey(id);
+    if (photo) {
+      const data = toBase64(photo.data);
+      const { photo: ver } = await this.http<{ photo: number | null }>('PUT', `/v1/groups/${id}/photo`, { mime: photo.mime, data });
+      if (ver) this.avatars.set(key, { ver, url: `data:${photo.mime};base64,${data}` });
+    } else {
+      await this.http('DELETE', `/v1/groups/${id}/photo`);
+      this.avatars.delete(key);
+    }
+    this.emit('change');
+    await this.loadGroups().catch(() => {});
+  }
+
+  /**
+   * Server says the photo of `key` (a user, or a group key) is at version `ver` (null = none):
+   * fetch it once if we don't have that version.
+   */
+  private noteAvatar(key: string, ver: number | null, url = `/v1/avatars/${encodeURIComponent(key)}`) {
     if (ver === null) {
-      if (this.avatars.delete(user)) this.emit('change');
+      if (this.avatars.delete(key)) this.emit('change');
       return;
     }
-    if (this.avatars.get(user)?.ver === ver || this.avatarLoading.get(user) === ver) return;
-    this.avatarLoading.set(user, ver);
-    this.http<AvatarResponse>('GET', `/v1/avatars/${encodeURIComponent(user)}`)
+    if (this.avatars.get(key)?.ver === ver || this.avatarLoading.get(key) === ver) return;
+    this.avatarLoading.set(key, ver);
+    this.http<AvatarResponse>('GET', url)
       .then((a) => {
         if (!(AVATAR_MIMES as readonly string[]).includes(a.mime)) return;
-        this.avatars.set(user, { ver: a.ver, url: `data:${a.mime};base64,${a.data}` });
+        this.avatars.set(key, { ver: a.ver, url: `data:${a.mime};base64,${a.data}` });
         this.emit('change');
       })
       .catch(() => {})
-      .finally(() => this.avatarLoading.delete(user));
+      .finally(() => this.avatarLoading.delete(key));
   }
 
   /** Mobile calls this when the OS reports a screenshot (iOS can detect but not block it). */
@@ -3015,7 +3052,8 @@ export class MessengerClient extends Emitter<Events> {
   }
 
   private addContactLocal(username: string) {
-    if (this.contacts.includes(username)) return;
+    // Groups are chats of their own (this.groups), never contacts: adding one would list the group twice.
+    if (isGroupKey(username) || this.contacts.includes(username)) return;
     this.contacts = [...this.contacts, username];
     void this.store.saveContacts(this.contacts);
     this.emit('change');
@@ -3230,6 +3268,8 @@ export class MessengerClient extends Emitter<Events> {
   hideLastSeen = false;
   /** My birth date "YYYY-MM-DD" ('' = not given). */
   birthday = '';
+  /** My employee ID, set by the admin ('' = none). */
+  employeeId = '';
   /** My company's name, logo and information sections (null until loaded). */
   companyProfile: CompanyProfile | null = null;
   /** The company logo as a data: URL ('' = none). */
@@ -3852,6 +3892,7 @@ export class MessengerClient extends Emitter<Events> {
     this.about = '';
     this.hideLastSeen = false;
     this.birthday = '';
+    this.employeeId = '';
     this.emit('change');
   }
 

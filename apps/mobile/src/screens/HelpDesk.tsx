@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Linking, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { ArrowDown, ArrowUp, Building2, ChevronRight, Clock, Headset, LifeBuoy, Mail, MessageSquare, Pencil, Phone, Plus, Search, Trash2 } from 'lucide-react-native';
-import { MAX_EMAIL, MAX_HELP_FIELD, MAX_PHONE, shortId, type AdminUser, type HelpContact, type HelpContactInput } from '@meetme/core';
+import { HELP_SORTS, MAX_EMAIL, MAX_HELP_FIELD, MAX_PHONE, shortId, sortHelpContacts, type AdminUser, type HelpContact, type HelpContactInput, type HelpSort } from '@meetme/core';
 import { client } from '../messenger';
 import { colors, s } from '../theme';
-import { Avatar, Banner, Button, Field, Header, IconButton, InfoChip, Row, errorText, useBack } from '../ui';
+import { Avatar, Banner, Button, Field, Header, IconButton, InfoChip, Row, SortChip, errorText, useBack } from '../ui';
 
 type Toast = (m: string) => void;
 type Draft = HelpContactInput & { id?: string };
@@ -50,11 +50,15 @@ export function HelpDeskScreen({ onClose, onChat, onCompany }: { onClose: () => 
   const [contacts, setContacts] = useState<HelpContact[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
+  const [sort, setSort] = useState<HelpSort>('title');
   useEffect(() => {
     client.getHelpDesk().then(setContacts, (e) => setError(errorText(e)));
   }, []);
   const q = query.trim().toLowerCase();
-  const shown = (contacts ?? []).filter((c) => `${c.title} ${c.name} ${c.department} ${c.phone} ${c.email}`.toLowerCase().includes(q));
+  const shown = sortHelpContacts(
+    (contacts ?? []).filter((c) => `${c.title} ${c.name} ${c.department} ${c.phone} ${c.email}`.toLowerCase().includes(q)),
+    sort,
+  );
   return (
     <View style={s.fill}>
       <Header title="Help desk" onBack={onClose} />
@@ -76,6 +80,11 @@ export function HelpDeskScreen({ onClose, onChat, onCompany }: { onClose: () => 
           <View style={styles.search}>
             <Search size={17} color={colors.faint} />
             <Field value={query} onChangeText={setQuery} placeholder="Search: IT, HR, a name…" style={{ flex: 1, borderWidth: 0, paddingHorizontal: 0 }} />
+          </View>
+        )}
+        {(contacts?.length ?? 0) > 1 && (
+          <View style={[s.row, { justifyContent: 'flex-end' }]}>
+            <SortChip value={sort} options={HELP_SORTS} onChange={setSort} />
           </View>
         )}
         {contacts === null && !error && <Text style={s.muted}>Loading…</Text>}
