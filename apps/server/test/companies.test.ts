@@ -185,8 +185,8 @@ test('a company asked for in the app waits for the owner; suspend cuts it off; t
   await gita.requestCompany(url, { companyCode: 'gamma', companyName: 'Gamma Traders', id: 'gita', password: 'gita-password-1' });
   assert.equal(gita.account!.username, 'gita-gamma');
   gita.connect();
-  await waitFor(() => gita.pending, 'waiting for approval');
-  assert.equal(gita.status, 'offline');
+  // The app marks itself pending and then goes offline a moment later: wait for both (CI was sometimes in between).
+  await waitFor(() => gita.pending && gita.status === 'offline', 'waiting for approval, offline');
   await assert.rejects((await fresh()).login(url, 'gita-gamma', 'gita-password-1'), /waiting for approval/);
   await assert.rejects(
     (await fresh()).requestCompany(url, { companyCode: 'gamma', companyName: 'Copy', id: 'x_y', password: 'password-123' }),
