@@ -43,8 +43,10 @@ class DeviceFilesModule(context: ReactApplicationContext) : ReactContextBaseJava
   /** Light / dark choice; it takes effect when the app starts again (see restart). */
   @ReactMethod
   fun setTheme(theme: String, promise: Promise) {
-    prefs.edit().putString("theme", if (theme == "light" || theme == "dark") theme else "system").apply()
-    promise.resolve(null)
+    // commit(), not apply(): restart() ends the process right after this, and apply() writes the file later in the
+    // background - the choice was lost and the app came back with the old colours.
+    val saved = prefs.edit().putString("theme", if (theme == "light" || theme == "dark") theme else "system").commit()
+    if (saved) promise.resolve(null) else promise.reject("theme_failed", "Could not save the choice")
   }
 
   /** Start CellMate again (to apply the new colours). */

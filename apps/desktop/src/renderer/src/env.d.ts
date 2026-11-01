@@ -5,6 +5,9 @@ declare global {
   interface Window {
     meetme: {
       platform: string;
+      /** Desktop app only: the saved light / dark choice, and saving a new one. */
+      theme?: string;
+      saveTheme?: (theme: string) => Promise<void>;
       store: SecureStorage;
       /** Desktop app only: remembered sign-in details (JSON), OS-encrypted. */
       remember?: { get(): Promise<string | null>; set(value: string | null): Promise<void> };

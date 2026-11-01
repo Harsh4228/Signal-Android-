@@ -7,6 +7,9 @@ import { contextBridge, ipcRenderer } from 'electron';
  */
 contextBridge.exposeInMainWorld('meetme', {
   platform: process.platform,
+  /** Light / dark choice, kept by the app (the window's own storage is in memory only). */
+  theme: ipcRenderer.sendSync('theme:get') as string,
+  saveTheme: (theme: string): Promise<void> => ipcRenderer.invoke('theme:set', theme),
   /** Open a shared location in Google Maps in the system browser (only exact maps links are accepted). */
   openMaps: (url: string): Promise<void> => ipcRenderer.invoke('maps:open', url),
   /** Start background update checks against <server>/updates/ (installed builds only). */

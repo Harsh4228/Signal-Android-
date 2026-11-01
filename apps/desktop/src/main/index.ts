@@ -12,7 +12,7 @@ import {
 } from 'electron';
 import { autoUpdater } from 'electron-updater';
 import { createHash } from 'node:crypto';
-import { promises as fs } from 'node:fs';
+import { promises as fs, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 /**
@@ -247,6 +247,24 @@ ipcMain.handle('share:take', async (e) => {
   const files = sharedFiles;
   sharedFiles = [];
   return { files, text: '' };
+});
+
+// ---------------------------------------------------------------- light / dark choice
+
+// The window's storage is in memory only (nothing is left behind), so the theme lives in a small file of its own:
+// otherwise the choice was forgotten every time CellMate closed. Read synchronously so the first frame is right.
+const themeFile = () => join(app.getPath('userData'), 'theme.json');
+ipcMain.on('theme:get', (e) => {
+  try {
+    const t = (JSON.parse(readFileSync(themeFile(), 'utf8')) as { theme?: string }).theme;
+    e.returnValue = t === 'light' || t === 'dark' ? t : 'system';
+  } catch {
+    e.returnValue = 'system';
+  }
+});
+ipcMain.handle('theme:set', (e, theme: string) => {
+  assertTrusted(e);
+  writeFileSync(themeFile(), JSON.stringify({ theme: theme === 'light' || theme === 'dark' ? theme : 'system' }));
 });
 
 ipcMain.handle('file:save', async (e, name: string, data: Uint8Array) => {
