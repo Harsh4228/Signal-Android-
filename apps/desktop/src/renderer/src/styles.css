@@ -4379,3 +4379,10 @@ a.rich.phone {
 .share-files li { display: flex; align-items: center; gap: 8px; font-size: 13.5px; min-width: 0; }
 .share-files li span.grow { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .share-in textarea { width: 100%; box-sizing: border-box; resize: vertical; }
+
+/* Camera in a chat (take a photo and send it, like WhatsApp). */
+.chat-camera { width: min(720px, 94vw); }
+.chat-camera-frame { position: relative; background: #000; border-radius: 10px; overflow: hidden; display: flex; align-items: center; justify-content: center; aspect-ratio: 4 / 3; max-height: 66vh; }
+.chat-camera-frame video, .chat-camera-frame img { width: 100%; height: 100%; object-fit: contain; display: block; }
+.chat-camera-frame video.mirror { transform: scaleX(-1); }
+.chat-camera-frame > span { position: absolute; color: #ccc; }

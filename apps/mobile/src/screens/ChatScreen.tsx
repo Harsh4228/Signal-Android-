@@ -40,6 +40,7 @@ import {
   X,
   Flag,
   Share2,
+  Camera as CameraIcon,
 } from 'lucide-react-native';
 import { MessengerClient, callDetail, callMissed, callTitle, formatLastSeen, isGroupKey, type CallLog, type ChatMessage } from '@meetme/core';
 import {
@@ -59,6 +60,7 @@ import {
 import { pickFile, type PickKind } from '../files';
 import { copyText, saveToDevice, shareOut } from '../deviceFiles';
 import { AttachmentView } from './AttachmentView';
+import { ChatCamera } from './ChatCamera';
 import { MessageText, ViewOnceBubble, ViewOnceViewer } from './MessageText';
 import { EventView, NewEvent, NewPoll, PollView } from './PollEvent';
 import { calls, client, groupCalls, useClient, useGroupCall } from '../messenger';
@@ -89,6 +91,8 @@ export function ChatScreen({
   const [text, setText] = useState('');
   const [verified, setVerified] = useState(false);
   const [attachOpen, setAttachOpen] = useState(false);
+  /** The camera is open: take a photo and send it into this chat (like WhatsApp). */
+  const [shooting, setShooting] = useState(false);
   const [selected, setSelected] = useState<ChatMessage | null>(null);
   const [editing, setEditing] = useState<ChatMessage | null>(null);
   const [creating, setCreating] = useState<'poll' | 'event' | 'location' | 'contact' | 'catalog' | null>(null);
@@ -524,6 +528,9 @@ export function ChatScreen({
                 keyboardType={Platform.OS === 'android' ? 'visible-password' : 'default'}
                 importantForAutofill="no"
               />
+              {!text && !editing && c.can('sendFiles', peer) && (
+                <IconButton icon={CameraIcon} label="Camera" disabled={!online} color={colors.muted} onPress={() => setShooting(true)} />
+              )}
             </View>
             {!text.trim() && !editing && c.can('sendFiles', peer) ? (
               <Pressable
@@ -555,6 +562,7 @@ export function ChatScreen({
           actions={[
             ...(c.can('sendFiles', peer)
               ? [
+                  { icon: CameraIcon, label: 'Camera', onPress: () => setShooting(true) },
                   { icon: Image, label: 'Photo', onPress: () => void sendPicked('photo') },
                   { icon: Eye, label: 'Photo, view once', onPress: () => void sendPicked('photo', true) },
                   { icon: FileText, label: 'PDF document', onPress: () => void sendPicked('pdf') },
@@ -567,6 +575,20 @@ export function ChatScreen({
             { icon: UserRound, label: 'Contact', onPress: () => setCreating('contact') },
             { icon: ShoppingBag, label: 'Catalog', onPress: () => setCreating('catalog') },
           ]}
+        />
+      )}
+      {shooting && (
+        <ChatCamera
+          initialCaption={text}
+          allowViewOnce
+          onClose={() => setShooting(false)}
+          onError={onError}
+          onSend={(file, caption, viewOnce) => {
+            if (caption && caption === text.trim()) setText('');
+            const r = replyTo;
+            setReplyTo(null);
+            client.sendFile(peer, file, caption, { replyTo: r ?? undefined, viewOnce }).catch((e) => onError(errorText(e)));
+          }}
         />
       )}
       {creating === 'poll' && <NewPoll chat={peer} onClose={() => setCreating(null)} onError={onError} />}

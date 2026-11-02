@@ -41,6 +41,7 @@ import {
   X,
   ArrowLeft,
   Share2,
+  Camera as CameraIcon,
 } from 'lucide-react';
 import {
   MessengerClient,
@@ -52,6 +53,7 @@ import {
   type CallLog,
   type ChatMessage,
 } from '@meetme/core';
+import { ChatCamera } from './ChatCamera';
 import { copyText, hasShareMenu, saveToDevice, sharedText, shareOut } from '../deviceFiles';
 import { MessageText, ViewOnceBubble, ViewOnceViewer } from './MessageText';
 
@@ -243,6 +245,8 @@ export function ChatView({ peer, onError }: { peer: string; onError: (m: string)
 
   const fileInput = useRef<HTMLInputElement>(null);
   const [menu, setMenu] = useState(false);
+  /** The camera is open: take a photo and send it into this chat (like WhatsApp). */
+  const [shooting, setShooting] = useState(false);
   const [creating, setCreating] = useState<'poll' | 'event' | 'location' | 'contact' | 'catalog' | null>(null);
 
   /** The next picked file goes as view once. */
@@ -646,6 +650,9 @@ export function ChatView({ peer, onError }: { peer: string; onError: (m: string)
                     <div className="attach-menu" onMouseLeave={() => setMenu(false)}>
                       {c.can('sendFiles', peer) && (
                         <>
+                          <button type="button" onClick={() => (setMenu(false), setShooting(true))}>
+                            <CameraIcon size={17} /> Camera
+                          </button>
                           <button type="button" onClick={() => pick('image/*')}>
                             <Image size={17} /> Photo
                           </button>
@@ -676,6 +683,20 @@ export function ChatView({ peer, onError }: { peer: string; onError: (m: string)
                         <ShoppingBag size={17} /> Catalog
                       </button>
                     </div>
+                  )}
+                  {shooting && (
+                    <ChatCamera
+                      initialCaption={text}
+                      allowViewOnce
+                      onClose={() => setShooting(false)}
+                      onError={onError}
+                      onSend={(file, caption, viewOnce) => {
+                        if (caption && caption === text.trim()) setText('');
+                        const r = replyTo;
+                        setReplyTo(null);
+                        client.sendFile(peer, file, caption, { replyTo: r ?? undefined, viewOnce }).catch((e) => onError(errorText(e)));
+                      }}
+                    />
                   )}
                 </div>
               )}

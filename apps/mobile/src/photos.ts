@@ -1,6 +1,7 @@
 import { NativeModules } from 'react-native';
 import { errorCodes, isErrorWithCode, pick, types } from '@react-native-documents/picker';
 import { fromBase64, type OutgoingFile } from '@meetme/core';
+import { readUri } from './files';
 
 /** An upright copy of a picture made for the cropper (pixels, file in the app's cache). */
 export type PreparedPhoto = { uri: string; width: number; height: number };
@@ -44,6 +45,17 @@ export async function croppedPhotoFrom(uri: string, title: string): Promise<Outg
   if (!square) return null;
   const b64 = await Native.cropPhoto(photo.uri, Math.round(square.x), Math.round(square.y), Math.round(square.side), PROFILE_PX);
   return { name: 'photo.jpg', mime: 'image/jpeg', data: fromBase64(b64) };
+}
+
+/** Photos taken in a chat are sent at most this size: sharp on any screen, small enough to send fast. */
+const CHAT_PHOTO_PX = 2048;
+
+/** A photo just taken with the camera, ready to send in a chat: upright, at most 2048 px, JPEG. */
+export async function photoForChat(uri: string): Promise<OutgoingFile> {
+  const name = `photo-${new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '')}.jpg`;
+  if (!Native?.preparePhoto) return { name, mime: 'image/jpeg', data: await readUri(uri) };
+  const p = await Native.preparePhoto(uri, CHAT_PHOTO_PX);
+  return { name, mime: 'image/jpeg', data: await readUri(p.uri) };
 }
 
 /**
