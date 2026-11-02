@@ -64,18 +64,21 @@ jobs:
         run: |
           KC="$RUNNER_TEMP/signing.keychain-db"
           KC_PW=$(uuidgen)
-          printf '%s' "$IOS_DIST_P12" | base64 --decode > "$RUNNER_TEMP/dist.p12"
+          # Secrets set from Windows can end with a line break: strip it (base64 and the password must be exact).
+          clean() { printf '%s' "$1" | tr -d '\r\n '; }
+          P12_PW=$(printf '%s' "$IOS_DIST_P12_PASSWORD" | tr -d '\r\n')
+          clean "$IOS_DIST_P12" | base64 --decode > "$RUNNER_TEMP/dist.p12"
           security create-keychain -p "$KC_PW" "$KC"
           security set-keychain-settings -lut 3600 "$KC"
           security unlock-keychain -p "$KC_PW" "$KC"
-          security import "$RUNNER_TEMP/dist.p12" -k "$KC" -P "$IOS_DIST_P12_PASSWORD" -A -t cert -f pkcs12
+          security import "$RUNNER_TEMP/dist.p12" -k "$KC" -P "$P12_PW" -A -t cert -f pkcs12
           security set-key-partition-list -S apple-tool:,apple: -k "$KC_PW" "$KC" > /dev/null
           security list-keychains -d user -s "$KC" $(security list-keychains -d user | tr -d '"')
           rm -f "$RUNNER_TEMP/dist.p12"
           for dir in "$HOME/Library/MobileDevice/Provisioning Profiles" "$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles"; do
             mkdir -p "$dir"
-            printf '%s' "$IOS_PROFILE_APP" | base64 --decode > "$dir/cellmate-app.mobileprovision"
-            printf '%s' "$IOS_PROFILE_SHARE" | base64 --decode > "$dir/cellmate-share.mobileprovision"
+            clean "$IOS_PROFILE_APP" | base64 --decode > "$dir/cellmate-app.mobileprovision"
+            clean "$IOS_PROFILE_SHARE" | base64 --decode > "$dir/cellmate-share.mobileprovision"
           done
           # Release builds sign by hand with those files (Debug keeps automatic signing).
           python3 ../../../.github/scripts/ios_manual_signing.py MeetMe.xcodeproj/project.pbxproj
