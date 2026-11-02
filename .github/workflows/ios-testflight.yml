@@ -1,10 +1,15 @@
 # Signed iPhone build uploaded to App Store Connect -> TestFlight (testers install it from the TestFlight app).
-# Signing is automatic: Xcode creates the certificate and profile with the App Store Connect API key.
+# Signing uses FIXED files (one distribution certificate + one App Store profile per target), so a build never
+# creates certificates on the Apple account (automatic signing made a new one per build until the limit was hit,
+# and could not make the Share Extension's profile). Without them it falls back to automatic signing.
 #
 # Needs these repository secrets (Settings > Secrets and variables > Actions):
-#   ASC_KEY_ID      App Store Connect API key id
+#   ASC_KEY_ID      App Store Connect API key id          (upload to App Store Connect)
 #   ASC_ISSUER_ID   its issuer id
 #   ASC_KEY_P8      the contents of the AuthKey_<id>.p8 file
+#   IOS_DIST_P12, IOS_DIST_P12_PASSWORD   Apple Distribution certificate + key (base64 .p12), valid to Nov 2027
+#   IOS_PROFILE_APP, IOS_PROFILE_SHARE    App Store profiles (base64) for com.gosite.cellmate and .share
+#   (set them with E:\cellmet\apple-keys\set-ios-secrets.ps1; renew all four before they expire)
 # and the app created once in App Store Connect (Apps > + > New App, bundle id com.gosite.cellmate).
 # Runs by hand (Actions tab > iOS TestFlight > Run workflow) and on version tags.
 name: iOS TestFlight
@@ -23,6 +28,10 @@ jobs:
       ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
       ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
       GOOGLE_SERVICE_INFO_PLIST: ${{ secrets.GOOGLE_SERVICE_INFO_PLIST }}
+      IOS_DIST_P12: ${{ secrets.IOS_DIST_P12 }}
+      IOS_DIST_P12_PASSWORD: ${{ secrets.IOS_DIST_P12_PASSWORD }}
+      IOS_PROFILE_APP: ${{ secrets.IOS_PROFILE_APP }}
+      IOS_PROFILE_SHARE: ${{ secrets.IOS_PROFILE_SHARE }}
     steps:
       - name: Skip when the Apple key is not set up yet
         if: env.ASC_KEY_P8 == ''
@@ -49,30 +58,65 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/keys"
           printf '%s' "$ASC_KEY_P8" > "$RUNNER_TEMP/keys/AuthKey_$ASC_KEY_ID.p8"
+      - name: Signing files (certificate in a temporary keychain, profiles installed)
+        if: env.ASC_KEY_P8 != '' && env.IOS_DIST_P12 != ''
+        working-directory: apps/mobile/ios
+        run: |
+          KC="$RUNNER_TEMP/signing.keychain-db"
+          KC_PW=$(uuidgen)
+          printf '%s' "$IOS_DIST_P12" | base64 --decode > "$RUNNER_TEMP/dist.p12"
+          security create-keychain -p "$KC_PW" "$KC"
+          security set-keychain-settings -lut 3600 "$KC"
+          security unlock-keychain -p "$KC_PW" "$KC"
+          security import "$RUNNER_TEMP/dist.p12" -k "$KC" -P "$IOS_DIST_P12_PASSWORD" -A -t cert -f pkcs12
+          security set-key-partition-list -S apple-tool:,apple: -k "$KC_PW" "$KC" > /dev/null
+          security list-keychains -d user -s "$KC" $(security list-keychains -d user | tr -d '"')
+          rm -f "$RUNNER_TEMP/dist.p12"
+          for dir in "$HOME/Library/MobileDevice/Provisioning Profiles" "$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles"; do
+            mkdir -p "$dir"
+            printf '%s' "$IOS_PROFILE_APP" | base64 --decode > "$dir/cellmate-app.mobileprovision"
+            printf '%s' "$IOS_PROFILE_SHARE" | base64 --decode > "$dir/cellmate-share.mobileprovision"
+          done
+          # Release builds sign by hand with those files (Debug keeps automatic signing).
+          python3 ../../../.github/scripts/ios_manual_signing.py MeetMe.xcodeproj/project.pbxproj
+          # The App Store profile has production push; the file says development (for local builds).
+          sed -i '' 's#<string>development</string>#<string>production</string>#' MeetMe/MeetMe.entitlements
       - name: Archive (signed)
         if: env.ASC_KEY_P8 != ''
         working-directory: apps/mobile/ios
         run: |
           VERSION=$(node -p "require('../../desktop/package.json').version")
+          if [ -n "$IOS_DIST_P12" ]; then
+            SIGN=()
+          else
+            SIGN=(-allowProvisioningUpdates -authenticationKeyPath "$RUNNER_TEMP/keys/AuthKey_$ASC_KEY_ID.p8" -authenticationKeyID "$ASC_KEY_ID" -authenticationKeyIssuerID "$ASC_ISSUER_ID")
+          fi
           xcodebuild -workspace MeetMe.xcworkspace -scheme MeetMe -configuration Release \
             -destination 'generic/platform=iOS' -archivePath "$RUNNER_TEMP/CellMate.xcarchive" \
             MARKETING_VERSION="$VERSION" CURRENT_PROJECT_VERSION="${{ github.run_number }}" \
-            -allowProvisioningUpdates \
-            -authenticationKeyPath "$RUNNER_TEMP/keys/AuthKey_$ASC_KEY_ID.p8" \
-            -authenticationKeyID "$ASC_KEY_ID" -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
-            archive
+            "${SIGN[@]}" archive
       - name: Upload to App Store Connect (TestFlight)
         if: env.ASC_KEY_P8 != ''
         working-directory: apps/mobile/ios
         run: |
-          cat > "$RUNNER_TEMP/export.plist" <<'PLIST'
+          if [ -n "$IOS_DIST_P12" ]; then
+            SIGNING='<key>signingStyle</key><string>manual</string>
+            <key>signingCertificate</key><string>Apple Distribution</string>
+            <key>provisioningProfiles</key><dict>
+              <key>com.gosite.cellmate</key><string>CellMate AppStore</string>
+              <key>com.gosite.cellmate.share</key><string>CellMate Share AppStore</string>
+            </dict>'
+          else
+            SIGNING='<key>signingStyle</key><string>automatic</string>'
+          fi
+          cat > "$RUNNER_TEMP/export.plist" <<PLIST
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0"><dict>
             <key>method</key><string>app-store-connect</string>
             <key>destination</key><string>upload</string>
             <key>teamID</key><string>93H5575G4H</string>
-            <key>signingStyle</key><string>automatic</string>
+            $SIGNING
             <key>uploadSymbols</key><false/>
           </dict></plist>
           PLIST
@@ -83,4 +127,6 @@ jobs:
             -authenticationKeyID "$ASC_KEY_ID" -authenticationKeyIssuerID "$ASC_ISSUER_ID"
       - name: Remove the key
         if: always()
-        run: rm -rf "$RUNNER_TEMP/keys"
+        run: |
+          rm -rf "$RUNNER_TEMP/keys"
+          security delete-keychain "$RUNNER_TEMP/signing.keychain-db" 2>/dev/null || true
