@@ -2,11 +2,15 @@
 #
 #   powershell -ExecutionPolicy Bypass -File scripts\build-apk.ps1            # arm64 phones (almost all)
 #   powershell -ExecutionPolicy Bypass -File scripts\build-apk.ps1 -AllPhones # also old 32-bit phones + emulators
+#   powershell -ExecutionPolicy Bypass -File scripts\build-apk.ps1 -Bundle    # Google Play: CellMate-<version>.aab
+#                                                                             (every phone type; Play sends each
+#                                                                             phone only what it needs)
 #
 # The build runs in a copy at C:\dev\meetme: inside OneDrive the paths are too long and OneDrive syncing
 # breaks the C++ build. The signing passwords are read from the key folder's README.txt (never from git).
 param(
   [switch]$AllPhones,
+  [switch]$Bundle,
   [string]$Keys = "$env:USERPROFILE\meetme-release-keys",
   [string]$Work = 'C:\dev\meetme'
 )
@@ -45,22 +49,29 @@ $env:MEETME_UPLOAD_STORE_FILE = $jks
 $env:MEETME_UPLOAD_STORE_PASSWORD = KeyValue 'ANDROID_KEYSTORE_PASSWORD'
 $env:MEETME_UPLOAD_KEY_ALIAS = KeyValue 'ANDROID_KEY_ALIAS'
 $env:MEETME_UPLOAD_KEY_PASSWORD = KeyValue 'ANDROID_KEY_PASSWORD'
-$arch = if ($AllPhones) { 'armeabi-v7a,arm64-v8a,x86,x86_64' } else { 'arm64-v8a' }
+$arch = if ($AllPhones -or $Bundle) { 'armeabi-v7a,arm64-v8a,x86,x86_64' } else { 'arm64-v8a' }
+$task = if ($Bundle) { 'bundleRelease' } else { 'assembleRelease' }
 
 Push-Location "$Work\apps\mobile\android"
 try {
   # 2 workers: a full-speed build can use more memory than the PC has.
-  .\gradlew.bat --no-daemon --max-workers=2 "-PreactNativeArchitectures=$arch" assembleRelease -x lint
+  .\gradlew.bat --no-daemon --max-workers=2 "-PreactNativeArchitectures=$arch" $task -x lint
   if ($LASTEXITCODE -ne 0) { throw 'Build failed: read the error above' }
 } finally {
   Pop-Location
   Remove-Item Env:MEETME_UPLOAD_STORE_PASSWORD, Env:MEETME_UPLOAD_KEY_PASSWORD -ErrorAction SilentlyContinue
 }
 
-Write-Host '3/3 Copying the APK to the Desktop'
 $version = (Select-String -Path "$Work\apps\mobile\android\app\build.gradle" -Pattern 'versionName\s+"([^"]+)"').Matches[0].Groups[1].Value
 $desktop = [Environment]::GetFolderPath('Desktop')
-$out = Join-Path $desktop "CellMate-$version.apk"
-Copy-Item "$Work\apps\mobile\android\app\build\outputs\apk\release\app-release.apk" $out -Force
+if ($Bundle) {
+  Write-Host '3/3 Copying the App Bundle (for Google Play) to the Desktop'
+  $out = Join-Path $desktop "CellMate-$version.aab"
+  Copy-Item "$Work\apps\mobile\android\app\build\outputs\bundle\release\app-release.aab" $out -Force
+} else {
+  Write-Host '3/3 Copying the APK to the Desktop'
+  $out = Join-Path $desktop "CellMate-$version.apk"
+  Copy-Item "$Work\apps\mobile\android\app\build\outputs\apk\release\app-release.apk" $out -Force
+}
 Write-Host ''
 Write-Host "Done: $out"

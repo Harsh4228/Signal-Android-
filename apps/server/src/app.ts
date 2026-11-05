@@ -158,6 +158,8 @@ const WEB_FILES: Record<string, [file: string, type: string]> = {
   // Download page: Windows installer, Android APK, App Store link, web app (files come from /updates/).
   '/download': ['download.html', 'text/html; charset=utf-8'],
   '/downloads': ['download.html', 'text/html; charset=utf-8'],
+  // Google Play asks for a public page explaining how to delete an account.
+  '/delete-account': ['delete-account.html', 'text/html; charset=utf-8'],
   '/download.css': ['download.css', 'text/css; charset=utf-8'],
   '/download.js': ['download.js', 'text/javascript; charset=utf-8'],
 };
