@@ -78,8 +78,13 @@ else { Run 'Build the APK' { powershell -ExecutionPolicy Bypass -File "$repo\scr
 if ($SkipDesktop) { Write-Host "`n== Windows installer: skipped (-SkipDesktop)" }
 else { Run 'Build the Windows installer' { npm run dist:win -w @meetme/desktop } }
 
+# ---- 6. downloads: the new installer and APK on the server (download page + Windows auto-update)
+if ($SkipApk -and $SkipDesktop) { Write-Host "`n== Downloads: nothing new to upload" }
+else { Run 'Upload the downloads' { powershell -ExecutionPolicy Bypass -File "$repo\scripts\publish-downloads.ps1" -Version $Version } }
+
 Write-Host ''
 Write-Host "Release $tag done." -ForegroundColor Green
 if (-not $SkipApk) { Write-Host "  APK:       $([Environment]::GetFolderPath('Desktop'))\CellMate-$Version.apk" }
 if (-not $SkipDesktop) { Write-Host "  Installer: $repo\apps\desktop\dist\" }
+Write-Host '  Download page: https://chat.gosite.lol/download'
 Write-Host '  GitHub Actions is also building it: GitHub -> Actions -> Artifacts'

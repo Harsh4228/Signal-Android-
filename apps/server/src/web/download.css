@@ -1,0 +1,14 @@
+/* Download page: one card per app; the one for this device comes first and stands out. */
+.apps { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin: 20px 0 16px; }
+@media (max-width: 640px) { .apps { grid-template-columns: minmax(0, 1fr); } }
+.app { display: flex; flex-direction: column; gap: 10px; border: 1px solid var(--line); border-radius: 14px; padding: 16px; min-width: 0; }
+.app.mine { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; order: -1; }
+.app-head { display: flex; align-items: center; gap: 12px; }
+.app-head h2 { margin: 0; font-size: 18px; }
+.app-head .version { margin: 0; font-variant-numeric: tabular-nums; }
+.app-icon { width: 34px; height: 34px; flex: none; fill: none; stroke: var(--text); stroke-width: 1.4; stroke-linejoin: round; stroke-linecap: round; }
+.note { margin: 0; color: var(--muted); font-size: 14px; flex: 1; }
+.button { display: inline-block; text-align: center; background: var(--accent); color: #fff; text-decoration: none; font-weight: 600; border-radius: 10px; padding: 10px 14px; }
+.button:focus-visible { outline: 3px solid var(--text); outline-offset: 2px; }
+.button.off { background: var(--line); color: var(--muted); pointer-events: none; }
+.mine-tag { font-size: 12px; font-weight: 600; color: var(--accent); }

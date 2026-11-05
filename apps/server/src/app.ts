@@ -155,6 +155,10 @@ const WEB_FILES: Record<string, [file: string, type: string]> = {
   '/terms': ['terms.html', 'text/html; charset=utf-8'],
   '/support': ['support.html', 'text/html; charset=utf-8'],
   '/legal.css': ['legal.css', 'text/css; charset=utf-8'],
+  // Download page: Windows installer, Android APK, App Store link, web app (files come from /updates/).
+  '/download': ['download.html', 'text/html; charset=utf-8'],
+  '/download.css': ['download.css', 'text/css; charset=utf-8'],
+  '/download.js': ['download.js', 'text/javascript; charset=utf-8'],
 };
 const WEB_CSP =
   "default-src 'none'; script-src 'self'; style-src 'self'; img-src data:; connect-src 'self'; form-action 'none'; frame-ancestors 'none'; base-uri 'none'";
