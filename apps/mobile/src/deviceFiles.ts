@@ -9,11 +9,20 @@ const Native = NativeModules.DeviceFiles as
       saveToDownloads(name: string, mime: string, base64: string): Promise<string>;
       shareFile?(name: string, mime: string, base64: string): Promise<boolean>;
       takeShared?(): Promise<SharedIn | null>;
+      setShareTargets?(json: string): Promise<void>;
     }
   | undefined;
 
 /** What another app shared to CellMate ("Share" -> CellMate in WhatsApp, the gallery, Files...). */
-export type SharedIn = { files: { uri: string; name: string; mime: string; size: number }[]; text: string };
+export type SharedIn = {
+  files: { uri: string; name: string; mime: string; size: number }[];
+  text: string;
+  /** iPhone: the chats already chosen in the share sheet - send right away, no picker. */
+  targets?: string[];
+};
+
+/** One entry of the chat list the iPhone share sheet shows (names only, no messages). */
+export type ShareTarget = { key: string; title: string; sub: string; group: boolean; files: boolean; chat: boolean };
 
 /** Copy message text (only with the "Copy messages" right). */
 export async function copyText(text: string, chat: string): Promise<void> {
@@ -56,5 +65,15 @@ export async function shareOut(m: ChatMessage, chat: string): Promise<boolean> {
 /** What was shared to CellMate since the last call (taken only once), or null. */
 export async function takeShared(): Promise<SharedIn | null> {
   const r = await Native?.takeShared?.().catch(() => null);
-  return r && (r.files?.length || r.text) ? { files: r.files ?? [], text: r.text ?? '' } : null;
+  return r && (r.files?.length || r.text) ? { files: r.files ?? [], text: r.text ?? '', targets: r.targets?.length ? r.targets : undefined } : null;
+}
+
+/**
+ * iPhone: give the share sheet (Share -> CellMate in another app) the list to choose from: my chats, then everyone
+ * else in the company. Only names, departments and whether files may be sent; kept in the folder the app shares with
+ * its Share Extension. Android shares straight into the app, so it needs none.
+ */
+export async function setShareTargets(targets: ShareTarget[]): Promise<void> {
+  if (Platform.OS !== 'ios' || !Native?.setShareTargets) return;
+  await Native.setShareTargets(JSON.stringify(targets)).catch(() => {});
 }

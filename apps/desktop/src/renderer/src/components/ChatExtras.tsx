@@ -29,6 +29,7 @@ import {
 } from '@meetme/core';
 import { client, useClient } from '../messenger';
 import { useObjectUrl } from './AttachmentView';
+import { SendPicker } from './SendPicker';
 import { Avatar, ChatAvatar, errorText, shortTime } from './ui';
 
 const who = (u: string) => (u === client.account?.username ? 'You' : u);
@@ -402,38 +403,21 @@ export function ContactPicker({ chat, onClose, onError }: { chat: string; onClos
 
 /** Forward a message to one or more chats. */
 export function ForwardPicker({ m, onClose, onToast }: { m: ChatMessage; onClose: () => void; onToast: (e: string) => void }) {
-  const c = useClient();
-  const [picked, setPicked] = useState<string[]>([]);
-  const [busy, setBusy] = useState(false);
-  const keys = c.chatKeys().filter((k) => c.canSendTo(k));
-
-  async function send() {
-    setBusy(true);
+  async function send(picked: string[]) {
     const results = await Promise.allSettled(picked.map((k) => client.forwardMessage(k, m)));
     const failed = results.filter((r) => r.status === 'rejected').length;
     onToast(failed ? `Forwarded to ${picked.length - failed}; ${failed} failed` : `Forwarded to ${picked.length} chat${picked.length === 1 ? '' : 's'}`);
     onClose();
   }
-
   return (
-    <Modal title="Forward to…" icon={<Forward size={18} />} onClose={onClose}>
-      <ul className="emp-list forward-list pick-list">
-        {!keys.length && <li className="muted">No chats yet.</li>}
-        {keys.map((k) => (
-          <li key={k} onClick={() => setPicked((p) => (p.includes(k) ? p.filter((x) => x !== k) : [...p, k]))}>
-            <input type="checkbox" checked={picked.includes(k)} readOnly />
-            <ChatAvatar chatKey={k} />
-            <div className="grow name">{c.chatTitle(k)}</div>
-          </li>
-        ))}
-      </ul>
-      <div className="row-end">
-        <button onClick={onClose}>Cancel</button>
-        <button className="primary" disabled={!picked.length || busy} onClick={send}>
-          <Forward size={16} /> Forward{picked.length > 1 ? ` (${picked.length})` : ''}
-        </button>
-      </div>
-    </Modal>
+    <SendPicker
+      title="Forward to…"
+      icon={<Forward size={16} />}
+      files={!!m.attachment}
+      submit={(n) => `Forward${n > 1 ? ` (${n})` : ''}`}
+      onSend={send}
+      onClose={onClose}
+    />
   );
 }
 

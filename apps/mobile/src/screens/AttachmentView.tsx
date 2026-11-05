@@ -21,6 +21,7 @@ import { client, useClient } from '../messenger';
 import { colors, s } from '../theme';
 import { IconButton, Sheet, errorText } from '../ui';
 import { saveToDevice, shareOut } from '../deviceFiles';
+import { SendPicker } from './SendPicker';
 
 const ICON: Record<Attachment['kind'], LucideIcon> = { image: ImageIcon, pdf: FileText, audio: Mic, file: File };
 
@@ -119,13 +120,17 @@ export function MediaViewerHost({ onToast }: { onToast: (m: string) => void }) {
         </View>
       )}
       {forwardFor && (
-        <Sheet
+        <SendPicker
           title={`Share ${forwardFor.name} to…`}
+          icon={Forward}
+          files
+          submit={(n) => `Share${n > 1 ? ` with ${n} chats` : ''}`}
           onClose={() => showForward(null)}
-          actions={c.chatKeys().map((key) => {
+          onSend={async (keys) => {
             const a = forwardFor!;
-            return { icon: isGroupKey(key) ? UsersRound : MessageSquare, label: c.chatTitle(key), onPress: () => void forward(key, a) };
-          })}
+            showForward(null);
+            for (const key of keys) await forward(key, a);
+          }}
         />
       )}
     </>

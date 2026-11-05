@@ -4386,3 +4386,63 @@ a.rich.phone {
 .chat-camera-frame video, .chat-camera-frame img { width: 100%; height: 100%; object-fit: contain; display: block; }
 .chat-camera-frame video.mirror { transform: scaleX(-1); }
 .chat-camera-frame > span { position: absolute; color: #ccc; }
+
+/*
+ * Every window keeps its title and close (X) button in view: the header stays at the top while the rest scrolls
+ * (before, in a long window it scrolled away with the content).
+ */
+.modal header {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  background: var(--surface);
+  gap: 8px;
+}
+/* A long title shortens with "…" so the close button always stays on screen. */
+.modal header .title {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.modal header .title-icon {
+  flex-shrink: 0;
+}
+.modal header .title .ellipsis,
+.modal header .title > span:last-child:not(.title-icon) {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.modal header > button.icon {
+  flex-shrink: 0;
+}
+@media (max-width: 760px) {
+  /* Full-screen windows on phones: the header itself covers the notch area, its buttons sit below it. */
+  .modal,
+  .modal.wide,
+  .modal.admin {
+    padding-top: 0 !important;
+  }
+  .modal header {
+    padding-top: env(safe-area-inset-top);
+    min-height: calc(56px + env(safe-area-inset-top));
+  }
+  .send-picker .send-picker-list {
+    max-height: none;
+  }
+}
+
+/* "Send to…": my chats, then everyone else in the company. */
+.send-picker .list-divider {
+  cursor: default;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  padding-top: 12px;
+}
+.send-picker .list-divider:hover {
+  background: none;
+}

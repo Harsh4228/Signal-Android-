@@ -10,6 +10,7 @@ RCT_EXTERN_METHOD(saveToDownloads:(NSString *)name mime:(NSString *)mime base64:
 RCT_EXTERN_METHOD(shrinkPhoto:(NSString *)uri max:(nonnull NSNumber *)max resolver:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
 RCT_EXTERN_METHOD(shareFile:(NSString *)name mime:(NSString *)mime base64:(NSString *)base64 resolver:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
 RCT_EXTERN_METHOD(takeShared:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
+RCT_EXTERN_METHOD(setShareTargets:(NSString *)json resolver:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
 RCT_EXTERN_METHOD(preparePhoto:(NSString *)uri max:(nonnull NSNumber *)max resolver:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
 RCT_EXTERN_METHOD(cropPhoto:(NSString *)uri x:(nonnull NSNumber *)x y:(nonnull NSNumber *)y side:(nonnull NSNumber *)side max:(nonnull NSNumber *)max resolver:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
 @end

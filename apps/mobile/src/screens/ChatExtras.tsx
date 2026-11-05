@@ -40,6 +40,7 @@ import {
   type SharedLocation,
 } from '@meetme/core';
 import { client, useClient } from '../messenger';
+import { SendPicker } from './SendPicker';
 import { colors, s } from '../theme';
 import { Avatar, Button, ChatAvatar, IconButton, errorText, shortTime } from '../ui';
 import { play, startRecording, stopPlaying, stopRecording } from '../voice';
@@ -375,37 +376,21 @@ export function ContactPicker({ chat, onClose, onError }: { chat: string; onClos
 }
 
 export function ForwardPicker({ m, onClose, onToast }: { m: ChatMessage; onClose: () => void; onToast: (e: string) => void }) {
-  const c = useClient();
-  const [picked, setPicked] = useState<string[]>([]);
-  const [busy, setBusy] = useState(false);
-  const keys = c.chatKeys().filter((k) => c.canSendTo(k));
-  async function send() {
-    setBusy(true);
+  async function send(picked: string[]) {
     const results = await Promise.allSettled(picked.map((k) => client.forwardMessage(k, m)));
     const failed = results.filter((r) => r.status === 'rejected').length;
     onToast(failed ? `Forwarded to ${picked.length - failed}; ${failed} failed` : `Forwarded to ${picked.length} chat${picked.length === 1 ? '' : 's'}`);
     onClose();
   }
   return (
-    <Overlay title="Forward to…" icon={Forward} onClose={onClose}>
-      <FlatList
-        data={keys}
-        keyExtractor={(k) => k}
-        renderItem={({ item }) => (
-          <Pressable
-            style={({ pressed }) => [s.row, { gap: 12, padding: 12 }, pressed && { backgroundColor: colors.hover }]}
-            onPress={() => setPicked((p) => (p.includes(item) ? p.filter((x) => x !== item) : [...p, item]))}
-          >
-            <View style={[styles.box, picked.includes(item) && { backgroundColor: colors.accent, borderColor: colors.accent }]} />
-            <ChatAvatar chatKey={item} size={40} />
-            <Text style={[s.textStrong, { flex: 1 }]}>{c.chatTitle(item)}</Text>
-          </Pressable>
-        )}
-      />
-      <View style={{ padding: 12 }}>
-        <Button variant="primary" icon={Forward} title={`Forward${picked.length > 1 ? ` (${picked.length})` : ''}`} busy={busy} disabled={!picked.length} onPress={send} />
-      </View>
-    </Overlay>
+    <SendPicker
+      title="Forward to…"
+      icon={Forward}
+      files={!!m.attachment}
+      submit={(n) => `Forward${n > 1 ? ` (${n})` : ''}`}
+      onSend={send}
+      onClose={onClose}
+    />
   );
 }
 

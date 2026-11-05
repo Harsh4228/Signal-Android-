@@ -3,6 +3,7 @@ import { Download, File, FileText, Forward, Image, Loader2, Lock, Share2, Triang
 import { formatBytes, type Attachment, type ChatMessage } from '@meetme/core';
 import { client, useClient } from '../messenger';
 import { ChatAvatar, errorText } from './ui';
+import { SendPicker } from './SendPicker';
 import { hasShareMenu, saveToDevice, sharedText, shareOut } from '../deviceFiles';
 import * as pdfjs from 'pdfjs-dist';
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
@@ -70,48 +71,29 @@ export function FileActions({ a, onToast, compact }: { a: Attachment; onToast: (
 }
 
 function ForwardPicker({ a, onClose, onToast }: { a: Attachment; onClose: () => void; onToast: (m: string) => void }) {
-  const c = useClient();
-  const [busy, setBusy] = useState<string | null>(null);
-
-  async function send(key: string) {
-    setBusy(key);
-    try {
-      await client.forwardAttachment(key, a, client.activeChat ?? undefined);
-      onToast(`Shared ${a.name} with ${c.chatTitle(key)}`);
-      onClose();
-    } catch (e) {
-      onToast(errorText(e));
-      setBusy(null);
+  async function send(picked: string[]) {
+    let failed = 0;
+    for (const key of picked) {
+      try {
+        await client.forwardAttachment(key, a, client.activeChat ?? undefined);
+      } catch (e) {
+        failed++;
+        if (picked.length === 1) onToast(errorText(e));
+      }
     }
+    if (!failed) onToast(`Shared ${a.name} with ${picked.length === 1 ? client.chatTitle(picked[0]!) : `${picked.length} chats`}`);
+    else if (picked.length > 1) onToast(`Shared with ${picked.length - failed}; ${failed} failed`);
+    onClose();
   }
-
   return (
-    <div className="modal-bg" onClick={(e) => (e.stopPropagation(), onClose())}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <header>
-          <div className="title">
-            <span className="title-icon">
-              <Forward size={18} />
-            </span>
-            Share {a.name}
-          </div>
-          <button className="icon" onClick={onClose} title="Close">
-            <X size={18} />
-          </button>
-        </header>
-        <p className="intro">Pick a chat. The file is encrypted again for that chat.</p>
-        <ul className="emp-list forward-list">
-          {!c.chatKeys().length && <li className="muted">No chats yet.</li>}
-          {c.chatKeys().map((key) => (
-            <li key={key} className="clickable" onClick={() => !busy && void send(key)}>
-              <ChatAvatar chatKey={key} />
-              <div className="grow name">{c.chatTitle(key)}</div>
-              {busy === key && <Loader2 size={16} className="spin" />}
-            </li>
-          ))}
-        </ul>
-      </div>
-    </div>
+    <SendPicker
+      title={`Share ${a.name}`}
+      icon={<Forward size={16} />}
+      files
+      submit={(n) => `Share${n > 1 ? ` with ${n} chats` : ''}`}
+      onSend={send}
+      onClose={onClose}
+    />
   );
 }
 

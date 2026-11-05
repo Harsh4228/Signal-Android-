@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react';
 import { ActivityIndicator, Image, Linking, Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Cake, Camera as CameraIcon, CircleDashed, Info, MessageSquare, Phone, RefreshCw, UserRound, Video, X } from 'lucide-react-native';
 import { Camera, CameraType, type CameraApi } from 'react-native-camera-kit';
 import { BIRTHDAY_RE, type OutgoingFile } from '@meetme/core';
@@ -76,11 +77,12 @@ export function PhotoPopup({ user, navigate, onClose, onToast }: { user: string;
 
 /** The whole photo on black, as large as the screen allows (not cut to a circle). */
 export function FullPhoto({ uri, title, onClose }: { uri: string; title: string; onClose: () => void }) {
+  const insets = useSafeAreaInsets();
   return (
     <Modal animationType="fade" onRequestClose={onClose} statusBarTranslucent>
       <View style={{ flex: 1, backgroundColor: '#000' }}>
         <Image source={{ uri }} style={{ flex: 1 }} resizeMode="contain" />
-        <View style={[s.row, styles.fullHead]}>
+        <View style={[s.row, styles.fullHead, { top: insets.top + 8 }]}>
           <IconButton icon={X} label="Close" color="#fff" onPress={onClose} />
           <Text style={{ color: '#fff', fontSize: 17, fontWeight: '600', flex: 1 }} numberOfLines={1}>
             {title}
@@ -186,6 +188,7 @@ export function BirthdayField({ value, onChange }: { value: string; onChange: (v
 /** Take a profile photo with the camera (front camera first, like a selfie). */
 export function CameraCapture({ onPhoto, onClose, onError }: { onPhoto: (p: OutgoingFile) => void; onClose: () => void; onError: Toast }) {
   const camera = useRef<CameraApi>(null);
+  const insets = useSafeAreaInsets();
   const [front, setFront] = useState(true);
   const [busy, setBusy] = useState(false);
   const snap = async () => {
@@ -205,10 +208,10 @@ export function CameraCapture({ onPhoto, onClose, onError }: { onPhoto: (p: Outg
         <Camera ref={camera} style={StyleSheet.absoluteFill} cameraType={front ? CameraType.Front : CameraType.Back} />
         {/* The part that becomes the photo: the middle square. */}
         <View pointerEvents="none" style={styles.square} />
-        <View style={[s.row, styles.fullHead]}>
+        <View style={[s.row, styles.fullHead, { top: insets.top + 8 }]}>
           <IconButton icon={X} label="Cancel" color="#fff" onPress={onClose} />
         </View>
-        <View style={styles.shutterRow}>
+        <View style={[styles.shutterRow, { bottom: insets.bottom + 32 }]}>
           <IconButton icon={RefreshCw} label="Switch camera" color="#fff" onPress={() => setFront(!front)} />
           <Pressable style={styles.shutter} onPress={() => void snap()} disabled={busy} accessibilityLabel="Take photo">
             {busy ? <ActivityIndicator color="#000" /> : <CameraIcon size={28} color="#000" />}

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Image, Modal, PanResponder, Pressable, StyleSheet, Text, View, useWindowDimensions, type GestureResponderEvent } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Circle, Path } from 'react-native-svg';
 import { ZoomIn, ZoomOut } from 'lucide-react-native';
 import { setCropper, type CropSquare, type PreparedPhoto } from './photos';
@@ -21,7 +22,7 @@ export function PhotoCropHost() {
     req.done(r);
   };
   return (
-    <Modal visible animationType="fade" onRequestClose={() => finish(null)} statusBarTranslucent>
+    <Modal visible animationType="fade" onRequestClose={() => finish(null)} statusBarTranslucent navigationBarTranslucent>
       <Cropper photo={req.photo} title={req.title} onDone={finish} />
     </Modal>
   );
@@ -30,6 +31,7 @@ export function PhotoCropHost() {
 /** Like WhatsApp: drag to move, pinch (or the buttons) to zoom; the round frame shows what becomes the photo. */
 function Cropper({ photo, title, onDone }: { photo: PreparedPhoto; title: string; onDone: (r: CropSquare | null) => void }) {
   const win = useWindowDimensions();
+  const insets = useSafeAreaInsets();
   const view = Math.min(win.width - 32, win.height - 260, 420);
   const { width: w, height: h } = photo;
   // At zoom 1 the picture just covers the frame (its short side = the frame).
@@ -96,7 +98,7 @@ function Cropper({ photo, title, onDone }: { photo: PreparedPhoto; title: string
   const r = view / 2;
   const done = () => onDone({ x: -pos.x / scale, y: -pos.y / scale, side: view / scale });
   return (
-    <View style={styles.screen}>
+    <View style={[styles.screen, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
       <Text style={styles.title}>{title}</Text>
       <View style={{ width: view, height: view, overflow: 'hidden', backgroundColor: '#000' }} {...pan.panHandlers}>
         <Image source={{ uri: photo.uri }} style={{ position: 'absolute', left: pos.x, top: pos.y, width: w * scale, height: h * scale }} fadeDuration={0} />

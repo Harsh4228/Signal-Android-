@@ -20,8 +20,9 @@ import { GroupCallBar, GroupCallScreen } from './screens/GroupCallScreen';
 import { BroadcastScreen } from './screens/BroadcastScreen';
 import { MediaViewerHost } from './screens/AttachmentView';
 import { PhotoCropHost } from './PhotoCrop';
-import { takeShared, type SharedIn } from './deviceFiles';
-import { ShareInScreen } from './screens/ShareIn';
+import { isGroupKey, type UserProfile } from '@meetme/core';
+import { setShareTargets, takeShared, type SharedIn } from './deviceFiles';
+import { ShareInScreen, sendSharedNow } from './screens/ShareIn';
 import { AdminScreen } from './screens/AdminScreen';
 import { LockScreen } from './screens/LockScreen';
 import { AppLockScreen } from './screens/AppLockScreen';
@@ -111,11 +112,51 @@ export default function App() {
   const [shared, setShared] = useState<SharedIn | null>(null);
   useEffect(() => {
     if (!ready || !c.account || lock.locked) return;
-    const check = () => void takeShared().then((x) => x && setShared(x));
+    const check = () =>
+      void takeShared().then((x) => {
+        if (!x) return;
+        // iPhone: chats already chosen in the share sheet - send now (the picker is only for Android / no choice).
+        if (x.targets?.length) {
+          void sendSharedNow(x, setToast).then((chat) => chat && setRoute({ name: 'chat', peer: chat }));
+        } else setShared(x);
+      });
     check();
     const sub = AppState.addEventListener('change', (st) => st === 'active' && check());
     return () => sub.remove();
   }, [ready, c.account, lock.locked]);
+
+  // iPhone share sheet: keep its chat list current (names only), at most every 30 seconds.
+  useEffect(() => {
+    if (Platform.OS !== 'ios' || !ready || !c.account) return;
+    let people: UserProfile[] = [];
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const write = () => {
+      timer = null;
+      const chats = new Set(client.chatKeys());
+      void setShareTargets(
+        client.sendTargets(people, '', false).map((k) => ({
+          key: k,
+          title: client.chatTitle(k),
+          sub: isGroupKey(k) ? 'Group' : (client.profileOf(k)?.departments.join(', ') ?? ''),
+          group: isGroupKey(k),
+          files: client.can('sendFiles', k),
+          chat: chats.has(k),
+        })),
+      );
+    };
+    const soon = () => {
+      if (!timer) timer = setTimeout(write, 30_000);
+    };
+    client.listDirectory().then(
+      (p) => ((people = p), write()),
+      () => write(),
+    );
+    const off = client.on('change', soon);
+    return () => {
+      off();
+      if (timer) clearTimeout(timer);
+    };
+  }, [ready, c.account]);
 
   // Once signed in and connected, register this phone for content-free wake-up pushes.
   useEffect(() => {
@@ -232,6 +273,12 @@ export default function App() {
     <SafeAreaProvider>
       <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
       <SafeAreaView style={[s.fill, { backgroundColor: colors.surface }]} edges={['top', 'bottom']}>
+        {/*
+          Everything sits in this inner box. Full-screen panels (Send to…, file viewer, lock screen, calls…) are
+          absolutely positioned, and an absolute child ignores its parent's padding: inside the SafeAreaView itself
+          they reached under the notch / status bar, where their close and back buttons could not be tapped.
+        */}
+        <View style={s.fill}>
         {/* Android draws edge-to-edge, so the window no longer shrinks for the keyboard: lift the screen ourselves. */}
         {call.status !== 'idle' && callHidden && !lock.locked && <CallBar onPress={() => setCallHidden(false)} />}
         {groupCall.status !== 'idle' && groupHidden && !lock.locked && <GroupCallBar onPress={() => setGroupHidden(false)} />}
@@ -278,6 +325,7 @@ export default function App() {
             <Text style={{ color: '#fff', fontSize: 14, flexShrink: 1 }}>{toast}</Text>
           </View>
         )}
+        </View>
       </SafeAreaView>
     </SafeAreaProvider>
   );

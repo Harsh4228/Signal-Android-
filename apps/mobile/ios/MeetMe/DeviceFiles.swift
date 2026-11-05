@@ -164,7 +164,23 @@ class DeviceFiles: NSObject {
           "size": f["size"] as? Double ?? -1,
         ])
       }
-      resolve(["files": files, "text": json["text"] as? String ?? ""])
+      var out: [String: Any] = ["files": files, "text": json["text"] as? String ?? ""]
+      // Chats already chosen in the share sheet: the app sends right away.
+      if let targets = json["targets"] as? [String], !targets.isEmpty { out["targets"] = targets }
+      resolve(out)
+    }
+  }
+
+  /**
+   * The list the Share Extension shows (my chats, then the rest of the company): names, departments and whether files
+   * may be sent - no messages. Kept in the folder shared with the extension.
+   */
+  @objc func setShareTargets(_ json: String, resolver resolve: @escaping RCTPromiseResolveBlock, rejecter reject: @escaping RCTPromiseRejectBlock) {
+    DispatchQueue.global(qos: .utility).async {
+      guard let base = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: "group.com.gosite.cellmate") else { return resolve(nil) }
+      let file = base.appendingPathComponent("ShareTargets.json")
+      try? Data(json.utf8).write(to: file, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+      resolve(nil)
     }
   }
 

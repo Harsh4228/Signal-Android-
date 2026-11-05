@@ -2740,6 +2740,31 @@ export class MessengerClient extends Emitter<Events> {
   }
 
   /** Whether I can write in this chat (false in a group where the admin chose other senders). */
+  /**
+   * Where something can be sent or forwarded: my chats first (newest first, archived after), then everyone else in
+   * the company directory (`people`, from listDirectory), so a colleague I never chatted with can be found too.
+   * Matches the search on name, ID, department and employee ID. With `files`, only where I may send files.
+   */
+  sendTargets(people: UserProfile[], query: string, files: boolean): string[] {
+    const q = query.trim().toLowerCase();
+    const me = this.account?.username;
+    const ok = (k: string) => k !== me && this.canSendTo(k) && (!files || this.can('sendFiles', k)) && !this.blocked.includes(k);
+    const match = (k: string) => {
+      if (!q) return true;
+      const p = isGroupKey(k) ? undefined : this.profileOf(k);
+      return `${this.chatTitle(k)} ${isGroupKey(k) ? '' : shortId(k)} ${p?.departments.join(' ') ?? ''} ${p?.employeeId ?? ''}`.toLowerCase().includes(q);
+    };
+    const chats = [...new Set([...this.orderedChats(), ...this.orderedChats({ archived: true })])].filter((k) => ok(k) && match(k));
+    const seen = new Set(chats);
+    const others = people.map((p) => p.username).filter((u) => !seen.has(u) && ok(u) && match(u));
+    return [...chats, ...others];
+  }
+
+  /** Before sending to someone from the directory I never chatted with: start that chat. */
+  async ensureChat(key: string): Promise<void> {
+    if (!isGroupKey(key) && !this.contacts.includes(key)) await this.addContact(key);
+  }
+
   canSendTo(key: string): boolean {
     return !isGroupKey(key) || (!!this.account && this.maySendInGroup(key, this.account.username));
   }

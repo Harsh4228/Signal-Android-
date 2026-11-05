@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Alert, Modal, Pressable, ScrollView, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Check, Eraser } from 'lucide-react-native';
 import { CLEAR_AGES, CLEAR_KINDS, type ClearKind } from '@meetme/core';
 import { client } from '../messenger';
@@ -23,6 +24,7 @@ export function ClearHistorySheet({
   onClose: () => void;
   onToast: (m: string) => void;
 }) {
+  const insets = useSafeAreaInsets();
   const [days, setDays] = useState(30);
   const [kinds, setKinds] = useState<Set<ClearKind>>(new Set(CLEAR_KINDS.map(([k]) => k)));
   const [busy, setBusy] = useState(false);
@@ -75,8 +77,8 @@ export function ClearHistorySheet({
   );
 
   return (
-    <Modal visible animationType="slide" onRequestClose={onClose}>
-      <View style={[s.fill, { backgroundColor: colors.bg }]}>
+    <Modal visible animationType="slide" onRequestClose={onClose} statusBarTranslucent navigationBarTranslucent>
+      <View style={[s.fill, { backgroundColor: colors.bg, paddingTop: insets.top, paddingBottom: insets.bottom }]}>
         <Header title="Clear history" subtitle={label} onBack={onClose} />
         <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40, gap: 12 }}>
           <Text style={[s.muted, { fontSize: 13, lineHeight: 19 }]}>

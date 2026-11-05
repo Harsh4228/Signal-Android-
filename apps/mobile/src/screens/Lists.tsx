@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Building2, Check, Search, Trash2, X } from 'lucide-react-native';
 import { isGroupKey, type ChatList, type UserProfile } from '@meetme/core';
 import { client, useClient } from '../messenger';
@@ -11,6 +12,7 @@ import { Button, ChatAvatar, IconButton, errorText } from '../ui';
  * departments (everyone in them, also people who join later). It becomes a chip above the chats.
  */
 export function ChatListEditor({ list, onClose, onToast }: { list?: ChatList; onClose: (saved?: ChatList) => void; onToast: (m: string) => void }) {
+  const insets = useSafeAreaInsets();
   const c = useClient();
   const [name, setName] = useState(list?.name ?? '');
   const [chats, setChats] = useState<string[]>(list?.chats ?? []);
@@ -59,8 +61,8 @@ export function ChatListEditor({ list, onClose, onToast }: { list?: ChatList; on
   );
 
   return (
-    <Modal animationType="slide" onRequestClose={() => onClose()}>
-      <View style={[s.fill, { backgroundColor: colors.surface }]}>
+    <Modal animationType="slide" onRequestClose={() => onClose()} statusBarTranslucent navigationBarTranslucent>
+      <View style={[s.fill, { backgroundColor: colors.surface, paddingTop: insets.top, paddingBottom: insets.bottom }]}>
         <View style={[s.row, { padding: 8, gap: 4 }]}>
           <IconButton icon={X} label="Close" onPress={() => onClose()} />
           <Text style={[s.title, { flex: 1 }]}>{list ? 'Edit list' : 'New list'}</Text>

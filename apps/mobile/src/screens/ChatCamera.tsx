@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, BackHandler, Image, Modal, PermissionsAndroid, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Camera, CameraType, type CameraApi } from 'react-native-camera-kit';
 import { Eye, RefreshCw, SendHorizontal, X, Zap, ZapOff } from 'lucide-react-native';
 import type { OutgoingFile } from '@meetme/core';
@@ -27,6 +28,8 @@ export function ChatCamera({
   onError: (m: string) => void;
 }) {
   const camera = useRef<CameraApi>(null);
+  const insets = useSafeAreaInsets();
+  const top = { top: insets.top + 8 };
   const [allowed, setAllowed] = useState(Platform.OS !== 'android');
   const [front, setFront] = useState(false);
   const [flash, setFlash] = useState<Flash>('auto');
@@ -84,12 +87,12 @@ export function ChatCamera({
   }
 
   return (
-    <Modal animationType="slide" onRequestClose={() => (shot ? setShot(null) : onClose())} statusBarTranslucent>
+    <Modal animationType="slide" onRequestClose={() => (shot ? setShot(null) : onClose())} statusBarTranslucent navigationBarTranslucent>
       <View style={styles.screen}>
         {shot ? (
           <>
             <Image source={{ uri: shot }} style={StyleSheet.absoluteFill} resizeMode="contain" />
-            <View style={styles.top}>
+            <View style={[styles.top, top]}>
               <IconButton icon={X} label="Take again" color="#fff" onPress={() => setShot(null)} />
               <View style={{ flex: 1 }} />
               {allowViewOnce && (
@@ -99,7 +102,7 @@ export function ChatCamera({
                 </Pressable>
               )}
             </View>
-            <View style={styles.bottom}>
+            <View style={[styles.bottom, { bottom: insets.bottom + 16 }]}>
               <TextInput
                 style={styles.caption}
                 value={caption}
@@ -120,7 +123,7 @@ export function ChatCamera({
             {allowed && (
               <Camera ref={camera} style={StyleSheet.absoluteFill} cameraType={front ? CameraType.Front : CameraType.Back} flashMode={flash} zoomMode="on" focusMode="on" />
             )}
-            <View style={styles.top}>
+            <View style={[styles.top, top]}>
               <IconButton icon={X} label="Close" color="#fff" onPress={onClose} />
               <View style={{ flex: 1 }} />
               {!front && (
@@ -130,7 +133,7 @@ export function ChatCamera({
                 </Pressable>
               )}
             </View>
-            <View style={styles.shutterRow}>
+            <View style={[styles.shutterRow, { bottom: insets.bottom + 32 }]}>
               <View style={{ width: 48 }} />
               <Pressable style={styles.shutter} onPress={() => void snap()} disabled={busy || !allowed} accessibilityLabel="Take photo">
                 {busy ? <ActivityIndicator color="#000" /> : <View style={styles.shutterInner} />}
