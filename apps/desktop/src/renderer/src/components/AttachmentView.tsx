@@ -6,10 +6,14 @@ import { client, useClient } from '../messenger';
 import { ChatAvatar, errorText } from './ui';
 import { SendPicker } from './SendPicker';
 import { hasShareMenu, saveToDevice, sharedText, shareOut } from '../deviceFiles';
-import * as pdfjs from 'pdfjs-dist';
-import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 
-pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
+/** pdf.js (large) loads the first time a PDF is opened, not with the app: the app starts faster. */
+let pdfjsLoad: Promise<typeof import('pdfjs-dist')> | null = null;
+const loadPdfjs = () =>
+  (pdfjsLoad ??= Promise.all([import('pdfjs-dist'), import('pdfjs-dist/build/pdf.worker.min.mjs?url')]).then(([lib, worker]) => {
+    lib.GlobalWorkerOptions.workerSrc = worker.default;
+    return lib;
+  }));
 
 /** In-memory object URL (blob:) - the bytes never touch the disk. */
 export function useObjectUrl(a: Attachment): string | null {
@@ -215,8 +219,11 @@ export function PdfPages({ data }: { data: Uint8Array }) {
     let cancelled = false;
     // pdf.js takes ownership of the buffer, so give it a copy.
     // No scripts/forms: PDF JavaScript never runs, and the page CSP forbids eval anyway.
-    const task = pdfjs.getDocument({ data: data.slice(), enableXfa: false });
+    let task: ReturnType<Awaited<ReturnType<typeof loadPdfjs>>['getDocument']> | null = null;
     (async () => {
+      const pdfjs = await loadPdfjs();
+      if (cancelled) return;
+      task = pdfjs.getDocument({ data: data.slice(), enableXfa: false });
       const doc = await task.promise;
       for (let i = 1; i <= doc.numPages && !cancelled; i++) {
         const page = await doc.getPage(i);
@@ -231,7 +238,7 @@ export function PdfPages({ data }: { data: Uint8Array }) {
     })().catch((e) => !cancelled && setError(String(e?.message ?? e)));
     return () => {
       cancelled = true;
-      void task.destroy();
+      void task?.destroy();
       if (ref.current) ref.current.innerHTML = '';
     };
   }, [data]);

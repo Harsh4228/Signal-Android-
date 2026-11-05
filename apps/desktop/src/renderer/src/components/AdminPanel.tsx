@@ -79,7 +79,7 @@ import {
 } from '@meetme/core';
 import { client, useClient } from '../messenger';
 import { Avatar, SortSelect, errorText, shortTime } from './ui';
-import { cropPhoto } from './PhotoCrop';
+import { cropPhoto, shrinkPhoto } from './PhotoCrop';
 import { ClearHistoryModal } from './ClearHistory';
 import { HelpDeskTab, RightsTab } from './AdminRights';
 import { CameraCapture, ProfileHero } from './Profile';
@@ -773,19 +773,6 @@ function BirthdayInput({ value, onChange }: { value: string; onChange: (v: strin
   );
 }
 
-/** Shrink a picked photo to a JPEG of at most 400 px. */
-export async function shrinkPhoto(file: Blob): Promise<Uint8Array> {
-  const bitmap = await createImageBitmap(file);
-  const scale = Math.min(1, 400 / Math.max(bitmap.width, bitmap.height));
-  const canvas = document.createElement('canvas');
-  canvas.width = Math.round(bitmap.width * scale);
-  canvas.height = Math.round(bitmap.height * scale);
-  canvas.getContext('2d')!.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-  bitmap.close();
-  const blob = await new Promise<Blob | null>((r) => canvas.toBlob(r, 'image/jpeg', 0.85));
-  if (!blob) throw new Error('Could not read that picture');
-  return new Uint8Array(await blob.arrayBuffer());
-}
 
 /**
  * The QR invite to show the new user, plus ways to send it: email (opens the mail app with the instructions),

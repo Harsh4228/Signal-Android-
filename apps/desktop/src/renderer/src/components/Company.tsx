@@ -4,7 +4,7 @@ import { MAX_COMPANY_ITEMS, MAX_COMPANY_ITEM_TEXT, MAX_COMPANY_ITEM_TITLE, MAX_C
 import { client, useClient } from '../messenger';
 import { Logo, RichText, errorText, fileSize } from './ui';
 import { HelpDeskModal } from './AdminRights';
-import { shrinkPhoto } from './AdminPanel';
+import { shrinkPhoto } from './PhotoCrop';
 
 type Toast = (m: string) => void;
 

@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState } from 'react';
+import { Suspense, lazy, useEffect, useRef, useState } from 'react';
 import { Archive, ArchiveRestore, BellOff, ChevronLeft, Phone, Pin, PinOff, Ban, Bell, CircleDashed, EllipsisVertical, Headset, Lock, Megaphone, MessageSquareText, RadioTower, ListPlus, ListX, Pencil, Plus, ShoppingBag, Star, StarOff, Eraser, Trash2, UsersRound, X, MessageSquarePlus, Search, Settings as SettingsIcon, ShieldCheck, type LucideIcon } from 'lucide-react';
 import { MessengerClient, isGroupKey, type ChatList } from '@meetme/core';
 import { appLock, client, useClient, useLock } from '../messenger';
 import { Broadcast } from './Broadcast';
-import { AdminPanel } from './AdminPanel';
+/** The admin panel (large) loads when an admin opens it, not with the app. */
+const AdminPanel = lazy(() => import('./AdminPanel').then((m) => ({ default: m.AdminPanel })));
 import { NoticesPanel } from './Notices';
 import { StatusPanel } from './Status';
 import { StarredPanel } from './ChatExtras';
@@ -214,12 +215,14 @@ export function Sidebar({ onSettings, onError }: { onSettings: () => void; onErr
       {/* Pages from the navigation sit beside the rail (above the bottom bar on phones), so it stays usable. */}
       <div className="nav-pages">
         {panel === 'admin' && (
-          <AdminPanel
-            onClose={() => (setPanel(null), setAdminStart({}))}
-            onToast={onError}
-            initialTab={adminStart.tab}
-            newGroup={adminStart.newGroup}
-          />
+          <Suspense fallback={<div className="nav-page-loading muted">Opening Admin…</div>}>
+            <AdminPanel
+              onClose={() => (setPanel(null), setAdminStart({}))}
+              onToast={onError}
+              initialTab={adminStart.tab}
+              newGroup={adminStart.newGroup}
+            />
+          </Suspense>
         )}
         {panel === 'notices' && <NoticesPanel onClose={() => setPanel(null)} onToast={onError} />}
         {panel === 'status' && <StatusPanel onClose={() => setPanel(null)} onToast={onError} />}

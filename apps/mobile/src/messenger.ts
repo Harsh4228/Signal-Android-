@@ -151,9 +151,29 @@ export function useSpeaker(): boolean {
   return speakerOn;
 }
 
+/**
+ * Screens redraw at most once per frame however many changes come in (a photo, a profile, who is online...).
+ * Before, every single change redrew every screen right away: dozens of full redraws in the first seconds.
+ */
+const subscribers = new Set<() => void>();
+let redrawQueued = false;
+client.on('change', () => {
+  if (redrawQueued) return;
+  redrawQueued = true;
+  requestAnimationFrame(() => {
+    redrawQueued = false;
+    subscribers.forEach((bump) => bump());
+  });
+});
+
 export function useClient(): MessengerClient {
   const [, bump] = useReducer((n: number) => n + 1, 0);
-  useEffect(() => client.on('change', bump), []);
+  useEffect(() => {
+    subscribers.add(bump);
+    return () => {
+      subscribers.delete(bump);
+    };
+  }, []);
   return client;
 }
 

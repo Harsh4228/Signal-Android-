@@ -767,6 +767,16 @@ export class MessengerClient extends Emitter<Events> {
   /** Profile photos as data: URLs, by user, with the version they belong to. */
   private avatars = new Map<string, { ver: number; url: string }>();
   private avatarLoading = new Map<string, number>();
+  /**
+   * Profile and group photos kept on this device (encrypted documents, like the chat history) with their versions:
+   * a photo is downloaded again only when its owner changes it (before, every start downloaded all of them).
+   */
+  private avatarIndex: Record<string, number> = {};
+  private avatarIndexTimer: ReturnType<typeof setTimeout> | null = null;
+  private avatarsReady: Promise<void> = Promise.resolve();
+  /** The company directory is being loaded in one request: single profile requests wait for it. */
+  private directoryLoading = false;
+  private profilesTimer: ReturnType<typeof setTimeout> | null = null;
   /** chat key -> who is typing there -> until when (ms) */
   private typing = new Map<string, Map<string, number>>();
   private lastTypingSent = new Map<string, number>();
@@ -834,6 +844,11 @@ export class MessengerClient extends Emitter<Events> {
     this.privacy = { readReceipts: true, ...(await this.store.getSetting<Partial<{ readReceipts: boolean }>>('privacy', {})) };
     this.blocked = await this.store.getSetting<string[]>('blocked', []);
     await this.media.load();
+    // Photos, names and departments from last time: shown at once, refreshed in the background.
+    this.avatarsReady = this.loadSavedAvatars();
+    const savedProfiles = await this.store.getSetting<Record<string, UserProfile>>('profiles', {});
+    const almostFresh = Date.now() - 240_000; // refreshed by the one directory request after connecting
+    for (const [u, profile] of Object.entries(savedProfiles)) if (!this.profiles.has(u)) this.profiles.set(u, { profile, at: almostFresh, loading: false });
     if (this.account) await this.loadHistory();
     this.sweepTimer ??= setInterval(() => this.sweepExpired(), 1000);
     return !!this.account;
@@ -1077,7 +1092,7 @@ export class MessengerClient extends Emitter<Events> {
     const path = `/v1/admin/users/${encodeURIComponent(username)}/avatar`;
     if (photo) await this.http('PUT', path, { mime: photo.mime, data: toBase64(photo.data) });
     else await this.http('DELETE', path);
-    this.avatars.delete(username);
+    this.putAvatar(username, null);
     this.emit('change');
   }
 
@@ -1185,8 +1200,32 @@ export class MessengerClient extends Emitter<Events> {
    */
   profileOf(username: string): UserProfile | undefined {
     const p = this.profiles.get(username);
-    if (!p || (Date.now() - p.at > 300_000 && !p.loading)) void this.loadProfile(username);
+    // While the whole directory is loading (one request), don't ask for people one by one.
+    if (!this.directoryLoading && (!p || (Date.now() - p.at > 300_000 && !p.loading))) void this.loadProfile(username);
     return p?.profile;
+  }
+
+  /** After connecting: everyone's name, department and contact details in one request (not one per person). */
+  private async refreshDirectory(): Promise<void> {
+    if (this.directoryLoading || !this.account) return;
+    this.directoryLoading = true;
+    try {
+      await this.listDirectory();
+    } catch {
+      /* older server or offline: single profiles load as before */
+    } finally {
+      this.directoryLoading = false;
+    }
+  }
+
+  /** Keep names and departments on this device, so the next start shows them at once. */
+  private saveProfilesSoon(): void {
+    this.profilesTimer ??= setTimeout(() => {
+      this.profilesTimer = null;
+      const out: Record<string, UserProfile> = {};
+      for (const [u, p] of this.profiles) if (p.profile) out[u] = p.profile;
+      void this.store.setSetting('profiles', out).catch(() => {});
+    }, 2000);
   }
 
   private async loadProfile(username: string): Promise<void> {
@@ -1196,6 +1235,7 @@ export class MessengerClient extends Emitter<Events> {
     try {
       const profile = await this.http<UserProfile>('GET', `/v1/users/${encodeURIComponent(username)}`);
       this.profiles.set(username, { profile, at: Date.now(), loading: false });
+      this.saveProfilesSoon();
       this.emit('change');
     } catch {
       this.profiles.set(username, { profile: old?.profile, at: Date.now(), loading: false });
@@ -1494,6 +1534,7 @@ export class MessengerClient extends Emitter<Events> {
         this.setupSealedSender().catch((e) => console.warn('sealed sender unavailable', e));
         this.followServerMove().catch((e) => console.warn('server address check failed', e));
         this.loadGroups().catch((e) => console.warn('groups unavailable', e));
+        void this.refreshDirectory();
         void this.sendNoticeOks();
         this.stopPresence();
         this.presenceTimer = setInterval(() => void this.refreshPresence(), 30_000);
@@ -2977,13 +3018,13 @@ export class MessengerClient extends Emitter<Events> {
     if (photo.data.length > MAX_AVATAR_BYTES) throw new Error('Photo too large (max 2 MB)');
     const data = toBase64(photo.data);
     const { ver } = await this.http<{ ver: number }>('PUT', '/v1/avatar', { mime: photo.mime, data });
-    this.avatars.set(this.account!.username, { ver, url: `data:${photo.mime};base64,${data}` });
+    this.putAvatar(this.account!.username, { ver, url: `data:${photo.mime};base64,${data}` });
     this.emit('change');
   }
 
   async removeMyAvatar(): Promise<void> {
     await this.http('DELETE', '/v1/avatar');
-    this.avatars.delete(this.account!.username);
+    this.putAvatar(this.account!.username, null);
     this.emit('change');
   }
 
@@ -2999,34 +3040,74 @@ export class MessengerClient extends Emitter<Events> {
     if (photo) {
       const data = toBase64(photo.data);
       const { photo: ver } = await this.http<{ photo: number | null }>('PUT', `/v1/groups/${id}/photo`, { mime: photo.mime, data });
-      if (ver) this.avatars.set(key, { ver, url: `data:${photo.mime};base64,${data}` });
+      if (ver) this.putAvatar(key, { ver, url: `data:${photo.mime};base64,${data}` });
     } else {
       await this.http('DELETE', `/v1/groups/${id}/photo`);
-      this.avatars.delete(key);
+      this.putAvatar(key, null);
     }
     this.emit('change');
     await this.loadGroups().catch(() => {});
   }
 
+  /** Show and keep a photo on this device, or forget it (null). */
+  private putAvatar(key: string, a: { ver: number; url: string } | null): void {
+    if (a) {
+      this.avatars.set(key, a);
+      this.avatarIndex[key] = a.ver;
+      void this.media.saveDoc(`avatar:${key}`, utf8(a.url)).catch(() => {});
+    } else {
+      this.avatars.delete(key);
+      if (key in this.avatarIndex) {
+        delete this.avatarIndex[key];
+        void this.media.removeDoc(`avatar:${key}`).catch(() => {});
+      }
+    }
+    this.avatarIndexTimer ??= setTimeout(() => {
+      this.avatarIndexTimer = null;
+      void this.store.setSetting('avatarIndex', this.avatarIndex).catch(() => {});
+    }, 1000);
+  }
+
+  /** At start: the photos kept last time, shown at once (one redraw for all of them). */
+  private async loadSavedAvatars(): Promise<void> {
+    this.avatarIndex = await this.store.getSetting<Record<string, number>>('avatarIndex', {});
+    let found = 0;
+    await Promise.all(
+      Object.entries(this.avatarIndex).map(async ([key, ver]) => {
+        if (this.avatars.has(key)) return;
+        const doc = await this.media.readDoc(`avatar:${key}`).catch(() => null);
+        if (doc) {
+          this.avatars.set(key, { ver, url: fromUtf8(doc) });
+          found++;
+        } else delete this.avatarIndex[key];
+      }),
+    );
+    if (found) this.emit('change');
+  }
+
   /**
    * Server says the photo of `key` (a user, or a group key) is at version `ver` (null = none):
-   * fetch it once if we don't have that version.
+   * fetch it once if we don't have that version (kept on this device, so normally never again).
    */
   private noteAvatar(key: string, ver: number | null, url = `/v1/avatars/${encodeURIComponent(key)}`) {
-    if (ver === null) {
-      if (this.avatars.delete(key)) this.emit('change');
-      return;
-    }
-    if (this.avatars.get(key)?.ver === ver || this.avatarLoading.get(key) === ver) return;
-    this.avatarLoading.set(key, ver);
-    this.http<AvatarResponse>('GET', url)
-      .then((a) => {
-        if (!(AVATAR_MIMES as readonly string[]).includes(a.mime)) return;
-        this.avatars.set(key, { ver: a.ver, url: `data:${a.mime};base64,${a.data}` });
-        this.emit('change');
-      })
-      .catch(() => {})
-      .finally(() => this.avatarLoading.delete(key));
+    void this.avatarsReady.then(() => {
+      if (ver === null) {
+        const had = this.avatars.has(key);
+        this.putAvatar(key, null);
+        if (had) this.emit('change');
+        return;
+      }
+      if (this.avatars.get(key)?.ver === ver || this.avatarLoading.get(key) === ver) return;
+      this.avatarLoading.set(key, ver);
+      this.http<AvatarResponse>('GET', url)
+        .then((a) => {
+          if (!(AVATAR_MIMES as readonly string[]).includes(a.mime)) return;
+          this.putAvatar(key, { ver: a.ver, url: `data:${a.mime};base64,${a.data}` });
+          this.emit('change');
+        })
+        .catch(() => {})
+        .finally(() => this.avatarLoading.delete(key));
+    });
   }
 
   /** Mobile calls this when the OS reports a screenshot (iOS can detect but not block it). */
@@ -3130,6 +3211,7 @@ export class MessengerClient extends Emitter<Events> {
     const { users } = await this.http<{ users: UserProfile[] }>('GET', '/v1/directory');
     const now = Date.now();
     for (const profile of users) this.profiles.set(profile.username, { profile, at: now, loading: false });
+    this.saveProfilesSoon();
     this.emit('change');
     return users.sort((a, b) => (a.name || shortId(a.username)).localeCompare(b.name || shortId(b.username)));
   }
@@ -4021,6 +4103,10 @@ export class MessengerClient extends Emitter<Events> {
     this.profiles.clear();
     this.avatars.clear();
     this.avatarLoading.clear();
+    this.avatarIndex = {};
+    if (this.avatarIndexTimer) clearTimeout(this.avatarIndexTimer);
+    this.avatarIndexTimer = null;
+    this.directoryLoading = false;
     this.typing.clear();
     this.lastTypingSent.clear();
     if (this.historyTimer) clearTimeout(this.historyTimer);

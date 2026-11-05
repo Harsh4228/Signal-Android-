@@ -4476,3 +4476,6 @@ a.rich.phone {
 .zoom-controls button.icon:disabled { opacity: 0.4; }
 .zoom-level { min-width: 44px; text-align: center; font-size: 12.5px; font-variant-numeric: tabular-nums; }
 @media (prefers-reduced-motion: reduce) { .zoom-image { transition: none; } }
+
+/* While a rarely used panel (Admin) loads the first time. */
+.nav-page-loading { padding: 24px; }
