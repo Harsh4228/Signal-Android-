@@ -42,7 +42,7 @@ import {
   Share2,
   Camera as CameraIcon,
 } from 'lucide-react-native';
-import { MessengerClient, callDetail, callMissed, callTitle, formatLastSeen, isGroupKey, type CallLog, type ChatMessage } from '@meetme/core';
+import { MAX_ATTACHMENT_BYTES, MAX_FILES_AT_ONCE, MessengerClient, callDetail, callMissed, callTitle, formatLastSeen, isGroupKey, type CallLog, type ChatMessage } from '@meetme/core';
 import {
   AudioView,
   CatalogScreen,
@@ -57,7 +57,7 @@ import {
   ReactionRow,
   VoiceRecorder,
 } from './ChatExtras';
-import { pickFile, type PickKind } from '../files';
+import { pickFile, pickFiles, type PickKind } from '../files';
 import { copyText, saveToDevice, shareOut } from '../deviceFiles';
 import { AttachmentView } from './AttachmentView';
 import { ChatCamera } from './ChatCamera';
@@ -146,13 +146,19 @@ export function ChatScreen({
 
   async function sendPicked(kind: PickKind, viewOnce = false) {
     try {
-      const file = await pickFile(kind);
-      if (!file) return;
+      // View once: a single photo. Otherwise up to 10 at once, each its own message (caption on the first).
+      const picked = viewOnce ? await pickFile(kind).then((f) => ({ files: f ? [f] : [], tooBig: [] as string[], extra: 0 })) : await pickFiles(kind);
+      const { files, tooBig, extra } = picked;
+      if (tooBig.length) onError(`Too large (max ${MAX_ATTACHMENT_BYTES / 1024 / 1024} MB), not sent: ${tooBig.join(', ')}`);
+      if (extra) onError(`Only ${MAX_FILES_AT_ONCE} at a time: the first ${MAX_FILES_AT_ONCE} were sent`);
+      if (!files.length) return;
       const caption = text;
       setText('');
       const r = replyTo;
       setReplyTo(null);
-      await client.sendFile(peer, file, caption, { replyTo: r ?? undefined, viewOnce });
+      for (let i = 0; i < files.length; i++) {
+        await client.sendFile(peer, files[i]!, i === 0 ? caption : '', { replyTo: i === 0 ? (r ?? undefined) : undefined, viewOnce });
+      }
     } catch (e) {
       onError(errorText(e));
     }
@@ -564,10 +570,10 @@ export function ChatScreen({
             ...(c.can('sendFiles', peer)
               ? [
                   { icon: CameraIcon, label: 'Camera', onPress: () => setShooting(true) },
-                  { icon: Image, label: 'Photo', onPress: () => void sendPicked('photo') },
+                  { icon: Image, label: 'Photos & videos', onPress: () => void sendPicked('photo') },
                   { icon: Eye, label: 'Photo, view once', onPress: () => void sendPicked('photo', true) },
-                  { icon: FileText, label: 'PDF document', onPress: () => void sendPicked('pdf') },
-                  { icon: File, label: 'Other file', onPress: () => void sendPicked('file') },
+                  { icon: FileText, label: 'PDF documents', onPress: () => void sendPicked('pdf') },
+                  { icon: File, label: 'Other files', onPress: () => void sendPicked('file') },
                 ]
               : []),
             { icon: BarChart3, label: 'Poll', onPress: () => setCreating('poll') },

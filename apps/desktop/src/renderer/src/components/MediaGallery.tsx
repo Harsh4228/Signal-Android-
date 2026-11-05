@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { ChevronRight, File, FileText, Image, Loader2, Trash2, TriangleAlert, X } from 'lucide-react';
+import { ZoomImage } from './ZoomImage';
 import { formatBytes, type Attachment, type MediaItem } from '@meetme/core';
 import { client, useClient } from '../messenger';
 import { FileActions, PdfPages, Viewer, useObjectUrl } from './AttachmentView';
@@ -194,7 +195,7 @@ function SavedViewer({ item, onClose, onToast }: { item: MediaItem; onClose: () 
       ) : !a?.data ? (
         <Loader2 size={24} className="spin" color="#fff" />
       ) : item.kind === 'image' && url ? (
-        <img className="viewer-image" src={url} alt="" draggable={false} />
+        <ZoomImage src={url} />
       ) : item.kind === 'pdf' ? (
         <PdfPages data={a.data} />
       ) : item.kind === 'audio' ? (

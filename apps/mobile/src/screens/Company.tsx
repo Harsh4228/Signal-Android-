@@ -15,6 +15,8 @@ type Toast = (m: string) => void;
 /** The company logo (or the CellMate shield when there is none). */
 export function CompanyLogo({ size = 32 }: { size?: number }) {
   const c = useClient();
+  // Until the company is known: a quiet placeholder, never CellMate's own logo (it flashed before the company's).
+  if (!c.brandReady) return <View style={{ width: size, height: size, borderRadius: size * 0.26, backgroundColor: colors.surface2 }} />;
   if (!c.companyLogo) return <Logo size={size} />;
   return <Image source={{ uri: c.companyLogo }} style={{ width: size, height: size, borderRadius: size * 0.26 }} />;
 }
@@ -22,14 +24,18 @@ export function CompanyLogo({ size = 32 }: { size?: number }) {
 /** Top of the chat list: the company's logo and name; tap for everything the admins wrote about it. */
 export function CompanyBadge({ navigate, subtitle }: { navigate: (r: Route) => void; subtitle?: React.ReactNode }) {
   const c = useClient();
-  const name = c.companyProfile?.name || c.company?.name || 'CellMate';
+  const name = c.companyProfile?.name || c.company?.name || (c.brandReady ? 'CellMate' : '');
   return (
     <Pressable onPress={() => navigate({ name: 'company' })} style={[s.row, { gap: 10, paddingLeft: 8 }]} accessibilityLabel={`About ${name}`}>
       <CompanyLogo />
       <View style={{ flexShrink: 1 }}>
-        <Text style={[s.title, { fontSize: 20, fontWeight: '700' }]} numberOfLines={1}>
-          {name}
-        </Text>
+        {name ? (
+          <Text style={[s.title, { fontSize: 20, fontWeight: '700' }]} numberOfLines={1}>
+            {name}
+          </Text>
+        ) : (
+          <View style={{ width: 120, height: 18, borderRadius: 6, backgroundColor: colors.surface2 }} />
+        )}
         {subtitle}
       </View>
     </Pressable>

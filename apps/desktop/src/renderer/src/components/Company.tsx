@@ -11,6 +11,8 @@ type Toast = (m: string) => void;
 /** The company logo (or the CellMate shield when there is none). */
 export function CompanyLogo({ large }: { large?: boolean }) {
   const c = useClient();
+  // Until the company is known: a quiet placeholder, never CellMate's own logo (it flashed before the company's).
+  if (!c.brandReady) return <span className={`company-logo placeholder ${large ? 'lg' : ''}`} />;
   if (!c.companyLogo) return <Logo large={large} />;
   return <img className={`company-logo ${large ? 'lg' : ''}`} src={c.companyLogo} alt="" draggable={false} />;
 }
@@ -19,12 +21,12 @@ export function CompanyLogo({ large }: { large?: boolean }) {
 export function CompanyBadge({ onToast }: { onToast: Toast }) {
   const c = useClient();
   const [open, setOpen] = useState(false);
-  const name = c.companyProfile?.name || c.company?.name || 'CellMate';
+  const name = c.companyProfile?.name || c.company?.name || (c.brandReady ? 'CellMate' : '');
   return (
     <>
       <button className="company-badge" onClick={() => setOpen(true)} title={`About ${name}`}>
         <CompanyLogo />
-        <span className="name">{name}</span>
+        {name ? <span className="name">{name}</span> : <span className="name-placeholder" />}
       </button>
       {open && <CompanyInfo onClose={() => setOpen(false)} onToast={onToast} />}
     </>

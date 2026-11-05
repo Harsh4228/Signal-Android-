@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Camera, CircleDashed, Info, MessageSquare, Phone, RefreshCw, UserRound, Video, X } from 'lucide-react';
+import { ZoomImage } from './ZoomImage';
 import { shortId } from '@meetme/core';
 import { calls, client, useClient } from '../messenger';
 import { Avatar, ChatAvatar, colorFor, errorText } from './ui';
@@ -128,7 +129,7 @@ export function FullPhoto({ src, title, onClose }: { src: string; title: string;
         </button>
       </header>
       <div className="viewer-body">
-        <img className="viewer-image" src={src} alt="" draggable={false} onClick={(e) => e.stopPropagation()} />
+        <ZoomImage src={src} />
       </div>
     </div>
   );

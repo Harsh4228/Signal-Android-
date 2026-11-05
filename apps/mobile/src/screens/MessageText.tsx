@@ -1,4 +1,5 @@
 import { Alert, Image, Linking, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ZoomImage } from '../ZoomImage';
 import { Eye, EyeOff, Image as ImageIcon, X } from 'lucide-react-native';
 import { LINK_RE, shortId, toBase64, type ChatMessage } from '@meetme/core';
 import { client } from '../messenger';
@@ -82,7 +83,7 @@ export function ViewOnceViewer({ m, onClose }: { m: ChatMessage; onClose: () => 
   return (
     <View style={[StyleSheet.absoluteFill, { backgroundColor: '#000' }]}>
       {a?.data && a.kind === 'image' ? (
-        <Image source={{ uri: `data:${a.mime};base64,${toBase64(a.data)}` }} style={{ flex: 1 }} resizeMode="contain" />
+        <ZoomImage uri={`data:${a.mime};base64,${toBase64(a.data)}`} />
       ) : (
         <View style={[s.center]}>
           <ImageIcon size={40} color="#888" />

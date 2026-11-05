@@ -52,6 +52,8 @@ import {
   isGroupKey,
   type CallLog,
   type ChatMessage,
+  MAX_ATTACHMENT_BYTES,
+  MAX_FILES_AT_ONCE,
 } from '@meetme/core';
 import { ChatCamera } from './ChatCamera';
 import { copyText, hasShareMenu, saveToDevice, sharedText, shareOut } from '../deviceFiles';
@@ -256,24 +258,35 @@ export function ChatView({ peer, onError }: { peer: string; onError: (m: string)
     setMenu(false);
     if (!fileInput.current) return;
     fileInput.current.accept = accept;
+    // Up to 10 at once (each its own message); view once is always a single photo.
+    fileInput.current.multiple = !viewOnce;
     fileInput.current.value = '';
     fileInput.current.click();
   }
 
   async function onFile(files: FileList | null) {
-    const f = files?.[0];
-    if (!f) return;
+    const all = files ? [...files] : [];
+    if (!all.length) return;
+    if (all.length > MAX_FILES_AT_ONCE) onError(`Only ${MAX_FILES_AT_ONCE} at a time: the first ${MAX_FILES_AT_ONCE} were sent`);
+    const chosen = all.slice(0, MAX_FILES_AT_ONCE);
+    const tooBig = chosen.filter((f) => f.size > MAX_ATTACHMENT_BYTES);
+    if (tooBig.length) onError(`Too large (max ${MAX_ATTACHMENT_BYTES / 1024 / 1024} MB), not sent: ${tooBig.map((f) => f.name).join(', ')}`);
+    const ok = chosen.filter((f) => f.size <= MAX_ATTACHMENT_BYTES);
+    if (!ok.length) return;
     const caption = text;
     setText('');
     const r = replyTo;
     setReplyTo(null);
     try {
-      // Read into memory only; the original file on disk is untouched and nothing new is written.
-      const data = new Uint8Array(await f.arrayBuffer());
-      await client.sendFile(peer, { name: f.name, mime: f.type || 'application/octet-stream', data }, caption, {
-        replyTo: r ?? undefined,
-        viewOnce: viewOnceNext.current,
-      });
+      for (let i = 0; i < ok.length; i++) {
+        const f = ok[i]!;
+        // Read into memory only; the original file on disk is untouched and nothing new is written.
+        const data = new Uint8Array(await f.arrayBuffer());
+        await client.sendFile(peer, { name: f.name, mime: f.type || 'application/octet-stream', data }, i === 0 ? caption : '', {
+          replyTo: i === 0 ? (r ?? undefined) : undefined,
+          viewOnce: viewOnceNext.current,
+        });
+      }
     } catch (err) {
       onError(errorText(err));
     }
@@ -653,17 +666,17 @@ export function ChatView({ peer, onError }: { peer: string; onError: (m: string)
                           <button type="button" onClick={() => (setMenu(false), setShooting(true))}>
                             <CameraIcon size={17} /> Camera
                           </button>
-                          <button type="button" onClick={() => pick('image/*')}>
-                            <Image size={17} /> Photo
+                          <button type="button" onClick={() => pick('image/*,video/*')}>
+                            <Image size={17} /> Photos & videos
                           </button>
                           <button type="button" onClick={() => pick('image/*', true)}>
                             <Eye size={17} /> Photo, view once
                           </button>
                           <button type="button" onClick={() => pick('application/pdf,.pdf')}>
-                            <FileText size={17} /> PDF document
+                            <FileText size={17} /> PDF documents
                           </button>
                           <button type="button" onClick={() => pick('')}>
-                            <File size={17} /> Other file
+                            <File size={17} /> Other files
                           </button>
                         </>
                       )}

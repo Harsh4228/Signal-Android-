@@ -17,6 +17,7 @@ import { ArrowUpDown, Check, ChevronLeft, Eye, EyeOff, ShieldCheck, UsersRound, 
 import { isGroupKey, richPieces } from '@meetme/core';
 import { client } from './messenger';
 import { colors, isDark, s } from './theme';
+import { UI_FONT_CAP } from './theme';
 
 /** Soft background / strong text pairs, picked per name so each contact keeps the same colour. */
 const PALETTE: [string, string][] = [
@@ -61,7 +62,9 @@ export function Avatar({ name, size = 44 }: { name: string; size?: number }) {
         justifyContent: 'center',
       }}
     >
-      <Text style={{ color: fg, fontWeight: '600', fontSize: size * 0.4 }}>{client.displayName(name).slice(0, 1).toUpperCase()}</Text>
+      <Text style={{ color: fg, fontWeight: '600', fontSize: size * 0.4 }} maxFontSizeMultiplier={1}>
+        {client.displayName(name).slice(0, 1).toUpperCase()}
+      </Text>
     </View>
   );
 }
@@ -203,7 +206,7 @@ export function Header({
       {left}
       <View style={{ flex: 1, paddingLeft: onBack || left ? 0 : 8 }}>
         {typeof title === 'string' ? (
-          <Text style={s.title} numberOfLines={1}>
+          <Text style={s.title} numberOfLines={1} maxFontSizeMultiplier={UI_FONT_CAP}>
             {title}
           </Text>
         ) : (
@@ -251,7 +254,7 @@ export function Button({
       ]}
     >
       {busy ? <ActivityIndicator size="small" color={fg} /> : Icon ? <Icon size={18} color={fg} strokeWidth={2} /> : null}
-      <Text style={{ color: fg, fontSize: 15, fontWeight: '600' }} numberOfLines={1}>
+      <Text style={{ color: fg, fontSize: 15, fontWeight: '600', flexShrink: 1 }} numberOfLines={1} maxFontSizeMultiplier={UI_FONT_CAP}>
         {title}
       </Text>
     </Pressable>
@@ -339,7 +342,9 @@ export function Row({
         </View>
       )}
       <View style={{ flex: 1 }}>
-        <Text style={{ color: fg, fontSize: 15, fontWeight: '500' }}>{title}</Text>
+        <Text style={{ color: fg, fontSize: 15, fontWeight: '500' }} maxFontSizeMultiplier={UI_FONT_CAP}>
+          {title}
+        </Text>
         {subtitle && <Text style={[s.muted, { marginTop: 2 }]}>{subtitle}</Text>}
       </View>
       {right}
@@ -484,7 +489,9 @@ export function SortChip<T extends string>({ value, options, onChange }: { value
         style={{ flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 12, paddingVertical: 7, borderRadius: 18, borderWidth: 1, borderColor: colors.line }}
       >
         <ArrowUpDown size={14} color={colors.muted} />
-        <Text style={{ color: colors.text2, fontSize: 13, fontWeight: '600' }}>{options.find(([v]) => v === value)?.[1]}</Text>
+        <Text style={{ color: colors.text2, fontSize: 13, fontWeight: '600' }} numberOfLines={1} maxFontSizeMultiplier={UI_FONT_CAP}>
+          {options.find(([v]) => v === value)?.[1]}
+        </Text>
       </Pressable>
       {open && (
         <Sheet
@@ -512,7 +519,9 @@ export function InfoChip({ kind, icon: Icon, text, onPress }: { kind: keyof type
       style={({ pressed }) => ({ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 7, borderRadius: 18, backgroundColor: bg, opacity: pressed ? 0.7 : 1 })}
     >
       <Icon size={14} color={fg} />
-      <Text style={{ color: fg, fontWeight: '600', fontSize: 13.5 }}>{text}</Text>
+      <Text style={{ color: fg, fontWeight: '600', fontSize: 13.5, flexShrink: 1 }} numberOfLines={1} maxFontSizeMultiplier={UI_FONT_CAP}>
+        {text}
+      </Text>
     </Pressable>
   );
 }

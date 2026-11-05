@@ -4,6 +4,7 @@ import { Archive, ArchiveRestore, BellOff, Ban, Bell, Building2, ChevronDown, Ch
 import { MessengerClient, isGroupKey, type ChatList } from '@meetme/core';
 import { client, useClient } from '../messenger';
 import { colors, s } from '../theme';
+import { UI_FONT_CAP } from '../theme';
 import { Banner, Button, ChatAvatar, Field, Header, IconButton, Sheet, shortTime, typingText } from '../ui';
 import { DirectoryList, openDirectChat } from './DirectoryScreen';
 import { AvatarTap } from './Profile';
@@ -112,7 +113,9 @@ export function ChatListScreen({ navigate, onError }: { navigate: (r: Route) => 
         />
         {!!filter && <IconButton icon={X} label="Clear search" size={18} onPress={() => setFilter('')} />}
       </View>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flexGrow: 0 }} contentContainerStyle={styles.chips}>
+      {/* The chips scroll sideways; "+ new list" stays outside at the end of the row, always fully visible. */}
+      <View style={styles.chipBar}>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flexGrow: 0, flexShrink: 1 }} contentContainerStyle={styles.chips}>
         {chips.map(([id, label]) => (
           <Pressable
             key={id}
@@ -120,12 +123,14 @@ export function ChatListScreen({ navigate, onError }: { navigate: (r: Route) => 
             onLongPress={() => id.startsWith('list:') && setEditingList(c.chatLists.find((l) => `list:${l.id}` === id) ?? null)}
             style={[styles.chip, view === id && styles.chipOn]}
           >
-            <Text style={[styles.chipText, view === id && { color: colors.accentText }]}>{label}</Text>
+            <Text style={[styles.chipText, view === id && { color: colors.accentText }]} numberOfLines={1} maxFontSizeMultiplier={UI_FONT_CAP}>
+              {label}
+            </Text>
           </Pressable>
         ))}
         {allDepartments.length > 0 && (
           <Pressable onPress={() => setPickDept(true)} style={[styles.chip, !!dept && !c.favouriteDepartments.includes(dept) && styles.chipOn, s.row, { gap: 4 }]}>
-            <Text style={[styles.chipText, !!dept && !c.favouriteDepartments.includes(dept) && { color: colors.accentText }]}>
+            <Text style={[styles.chipText, !!dept && !c.favouriteDepartments.includes(dept) && { color: colors.accentText }]} numberOfLines={1} maxFontSizeMultiplier={UI_FONT_CAP}>
               {dept && !c.favouriteDepartments.includes(dept) ? dept : 'Department'}
             </Text>
             <ChevronDown size={14} color={colors.muted} />
@@ -136,10 +141,16 @@ export function ChatListScreen({ navigate, onError }: { navigate: (r: Route) => 
             <Pencil size={14} color={colors.muted} />
           </Pressable>
         )}
-        <Pressable onPress={() => setEditingList('new')} style={[styles.chip, { borderWidth: 1, borderStyle: 'dashed', borderColor: colors.lineStrong, backgroundColor: 'transparent' }]} accessibilityLabel="New list">
+      </ScrollView>
+        <Pressable
+          onPress={() => setEditingList('new')}
+          hitSlop={6}
+          style={[styles.chip, styles.chipAdd]}
+          accessibilityLabel="New list"
+        >
           <Plus size={16} color={colors.text2} />
         </Pressable>
-      </ScrollView>
+      </View>
       {editingList && (
         <ChatListEditor
           list={editingList === 'new' ? undefined : editingList}
@@ -374,7 +385,9 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 3 },
   },
   item: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingLeft: 16 },
-  chips: { gap: 8, paddingHorizontal: 12, paddingBottom: 8 },
+  chipBar: { flexDirection: 'row', alignItems: 'center', paddingRight: 12, paddingBottom: 8 },
+  chips: { gap: 8, paddingLeft: 12, paddingRight: 8, alignItems: 'center' },
+  chipAdd: { borderWidth: 1, borderStyle: 'dashed', borderColor: colors.lineStrong, backgroundColor: 'transparent', paddingHorizontal: 10, flexShrink: 0 },
   chip: { paddingHorizontal: 14, paddingVertical: 7, borderRadius: 18, backgroundColor: colors.bg },
   chipOn: { backgroundColor: colors.accentSoft },
   chipText: { color: colors.text2, fontSize: 13.5, fontWeight: '600' },

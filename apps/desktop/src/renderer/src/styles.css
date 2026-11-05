@@ -4020,11 +4020,26 @@ a.rich.phone {
   white-space: nowrap;
 }
 /* "+ new list" stays visible at the right edge while the chips scroll. */
-.chat-chips .chip-add {
-  position: sticky;
-  right: 0;
-  background: var(--surface);
-  box-shadow: -8px 0 8px var(--surface);
+/* Chips row: the chips scroll in their own box, "+ new list" stays outside it at the end, always visible. */
+.chat-chips-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 12px 6px;
+  min-width: 0;
+}
+.chat-chips-bar .chat-chips {
+  /* shrinks to scroll when the chips don't fit; otherwise "+" sits right after the last chip */
+  flex: 0 1 auto;
+  min-width: 0;
+  margin: 0;
+  /* a soft fade at the right edge shows there are more chips to scroll to */
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 18px), transparent);
+  mask-image: linear-gradient(to right, #000 calc(100% - 18px), transparent);
+  padding-right: 14px;
+}
+.chat-chips-bar > .chip-add {
+  flex: none;
 }
 
 /* Message actions: open while the mouse is on the message or the bar (the gap between them doesn't close it),
@@ -4446,3 +4461,18 @@ a.rich.phone {
 .send-picker .list-divider:hover {
   background: none;
 }
+
+/* Company name and logo before they are known (first start): quiet placeholders instead of CellMate's own. */
+.company-logo.placeholder { display: inline-block; background: var(--surface-2); }
+.name-placeholder { display: inline-block; width: 110px; height: 16px; border-radius: 6px; background: var(--surface-2); }
+
+/* Photo viewer zoom: wheel / pinch / double-click / buttons; drag to move when zoomed. */
+.zoom-box { position: relative; flex: 1; align-self: stretch; display: flex; align-items: center; justify-content: center; overflow: hidden; touch-action: none; min-height: 0; }
+.zoom-box.zoomed { cursor: grab; }
+.zoom-box.zoomed:active { cursor: grabbing; }
+.zoom-image { transition: transform 0.08s ease-out; transform-origin: center center; will-change: transform; user-select: none; }
+.zoom-controls { position: absolute; left: 50%; bottom: calc(12px + env(safe-area-inset-bottom)); transform: translateX(-50%); display: flex; align-items: center; gap: 4px; padding: 4px 8px; border-radius: 999px; background: rgba(0, 0, 0, 0.55); color: #fff; }
+.zoom-controls button.icon { color: #fff; }
+.zoom-controls button.icon:disabled { opacity: 0.4; }
+.zoom-level { min-width: 44px; text-align: center; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+@media (prefers-reduced-motion: reduce) { .zoom-image { transition: none; } }

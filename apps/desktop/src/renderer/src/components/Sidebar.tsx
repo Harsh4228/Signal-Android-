@@ -259,7 +259,11 @@ export function Sidebar({ onSettings, onError }: { onSettings: () => void; onErr
           </button>
         )}
       </div>
-      {/* A mouse wheel scrolls the chips sideways (they are one row). */}
+      {/*
+        The chips scroll sideways in their own box (a mouse wheel scrolls them too); "+ new list" sits outside it at
+        the end of the row, so it is always fully visible (it used to be cut off at the edge).
+      */}
+      <div className="chat-chips-bar">
       <div
         className="chips chat-chips"
         onWheel={(e) => {
@@ -292,9 +296,6 @@ export function Sidebar({ onSettings, onError }: { onSettings: () => void; onErr
             <Pencil size={14} />
           </button>
         )}
-        <button className="chip-add" title="New list: pick people, groups and departments" onClick={() => setEditingList('new')}>
-          <Plus size={15} />
-        </button>
         {allDepartments.length > 0 && (
           <select
             className={`chip-select ${view.startsWith('dept:') && !c.favouriteDepartments.includes(view.slice(5)) ? 'active' : ''}`}
@@ -319,6 +320,10 @@ export function Sidebar({ onSettings, onError }: { onSettings: () => void; onErr
             <Star size={15} fill={c.favouriteDepartments.includes(view.slice(5)) ? 'currentColor' : 'none'} />
           </button>
         )}
+      </div>
+      <button className="chip-add" title="New list: pick people, groups and departments" onClick={() => setEditingList('new')}>
+        <Plus size={15} />
+      </button>
       </div>
       {editingList && (
         <ChatListEditor

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { ActivityIndicator, BackHandler, Image, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ZoomImage } from '../ZoomImage';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
 import {
   Download,
@@ -113,7 +114,7 @@ export function MediaViewerHost({ onToast }: { onToast: (m: string) => void }) {
             {c.can('forward', c.activeChat) && <IconButton icon={Forward} label="Share to a chat" onPress={() => showForward(o.a)} />}
           </View>
           {o.kind === 'image' ? (
-            <Image source={{ uri: `data:${o.a.mime};base64,${o.b64}` }} style={{ flex: 1 }} resizeMode="contain" />
+            <ZoomImage uri={`data:${o.a.mime};base64,${o.b64}`} />
           ) : (
             <PdfView b64={o.b64} />
           )}

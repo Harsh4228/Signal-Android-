@@ -2,6 +2,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Bell, CircleDashed, MessageSquareText, Phone, RadioTower, type LucideIcon } from 'lucide-react-native';
 import { useClient } from '../messenger';
 import { colors } from '../theme';
+import { UI_FONT_CAP } from '../theme';
 import { Avatar } from '../ui';
 import type { Route } from '../App';
 
@@ -37,12 +38,12 @@ export function BottomTabs({ current, navigate }: { current: Tab; navigate: (r: 
               {Icon ? <Icon size={22} color={on ? colors.accent : colors.muted} strokeWidth={on ? 2.2 : 1.9} /> : <Avatar name={c.account!.username} size={24} />}
               {!!badge && (
                 <View style={styles.badge}>
-                  <Text style={styles.badgeText}>{badge > 99 ? '99+' : badge}</Text>
+                  <Text style={styles.badgeText} maxFontSizeMultiplier={1.1}>{badge > 99 ? '99+' : badge}</Text>
                 </View>
               )}
               {dot && <View style={styles.dot} />}
             </View>
-            <Text style={[styles.label, on && { color: colors.text }]} numberOfLines={1}>
+            <Text style={[styles.label, on && { color: colors.text }]} numberOfLines={1} maxFontSizeMultiplier={UI_FONT_CAP}>
               {label}
             </Text>
           </Pressable>

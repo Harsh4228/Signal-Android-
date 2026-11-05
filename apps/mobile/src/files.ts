@@ -1,7 +1,36 @@
 import { errorCodes, isErrorWithCode, pick, types } from '@react-native-documents/picker';
-import { fromBase64, MAX_ATTACHMENT_BYTES, type OutgoingFile } from '@meetme/core';
+import { fromBase64, MAX_ATTACHMENT_BYTES, MAX_FILES_AT_ONCE, type OutgoingFile } from '@meetme/core';
 
 export type PickKind = 'photo' | 'pdf' | 'file';
+
+/**
+ * Choose up to MAX_FILES_AT_ONCE photos and videos / PDFs / files at once (like WhatsApp) and read them into memory.
+ * Files over the size limit are left out and named in `tooBig`. Empty when cancelled.
+ */
+export async function pickFiles(kind: PickKind): Promise<{ files: OutgoingFile[]; tooBig: string[]; extra: number }> {
+  let res;
+  try {
+    res = await pick({
+      allowMultiSelection: true,
+      type: kind === 'photo' ? [types.images, types.video] : kind === 'pdf' ? [types.pdf] : [types.allFiles],
+    });
+  } catch (e) {
+    if (isErrorWithCode(e) && e.code === errorCodes.OPERATION_CANCELED) return { files: [], tooBig: [], extra: 0 };
+    throw e;
+  }
+  const chosen = res.slice(0, MAX_FILES_AT_ONCE);
+  const tooBig = chosen.filter((r) => r.size && r.size > MAX_ATTACHMENT_BYTES).map((r) => r.name ?? 'file');
+  const files: OutgoingFile[] = [];
+  for (const r of chosen) {
+    if (r.size && r.size > MAX_ATTACHMENT_BYTES) continue;
+    files.push({
+      name: r.name ?? 'file',
+      mime: r.type ?? (kind === 'pdf' ? 'application/pdf' : 'application/octet-stream'),
+      data: await readUri(r.uri),
+    });
+  }
+  return { files, tooBig, extra: Math.max(0, res.length - MAX_FILES_AT_ONCE) };
+}
 
 /**
  * Let the user choose a photo / PDF / file and read it into memory.

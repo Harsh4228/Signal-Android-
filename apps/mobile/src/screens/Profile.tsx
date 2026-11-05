@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react';
 import { ActivityIndicator, Image, Linking, Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ZoomImage } from '../ZoomImage';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Cake, Camera as CameraIcon, CircleDashed, Info, MessageSquare, Phone, RefreshCw, UserRound, Video, X } from 'lucide-react-native';
 import { Camera, CameraType, type CameraApi } from 'react-native-camera-kit';
@@ -81,7 +82,7 @@ export function FullPhoto({ uri, title, onClose }: { uri: string; title: string;
   return (
     <Modal animationType="fade" onRequestClose={onClose} statusBarTranslucent>
       <View style={{ flex: 1, backgroundColor: '#000' }}>
-        <Image source={{ uri }} style={{ flex: 1 }} resizeMode="contain" />
+        <ZoomImage uri={uri} />
         <View style={[s.row, styles.fullHead, { top: insets.top + 8 }]}>
           <IconButton icon={X} label="Close" color="#fff" onPress={onClose} />
           <Text style={{ color: '#fff', fontSize: 17, fontWeight: '600', flex: 1 }} numberOfLines={1}>

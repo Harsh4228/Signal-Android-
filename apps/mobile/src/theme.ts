@@ -122,3 +122,9 @@ export const s = StyleSheet.create({
   },
   divider: { height: StyleSheet.hairlineWidth, backgroundColor: colors.line },
 });
+
+/**
+ * Fixed-size controls (chips, tabs, buttons, headers) grow with the phone's text size up to this much, no more:
+ * with very large text settings they were cut off. Messages and lists still follow the full setting.
+ */
+export const UI_FONT_CAP = 1.3;

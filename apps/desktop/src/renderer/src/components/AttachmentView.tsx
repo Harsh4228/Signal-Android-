@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Download, File, FileText, Forward, Image, Loader2, Lock, Share2, TriangleAlert, X } from 'lucide-react';
+import { ZoomImage } from './ZoomImage';
 import { formatBytes, type Attachment, type ChatMessage } from '@meetme/core';
 import { client, useClient } from '../messenger';
 import { ChatAvatar, errorText } from './ui';
@@ -137,7 +138,7 @@ export function AttachmentView({ a, onToast }: { a: Attachment; onToast: (m: str
         </span>
         {open && (
           <Viewer title={a.name} onClose={() => setOpen(false)} actions={<FileActions a={a} onToast={onToast} />}>
-            <img className="viewer-image" src={url} alt="" draggable={false} />
+            <ZoomImage src={url} />
           </Viewer>
         )}
       </>

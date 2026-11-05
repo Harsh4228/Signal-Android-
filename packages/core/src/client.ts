@@ -821,6 +821,14 @@ export class MessengerClient extends Emitter<Events> {
     this.statuses = await this.store.getSetting<StatusUpdate[]>('statuses', []);
     this.starred = await this.store.getSetting<StarredMessage[]>('starred', []);
     this.chatPrefs = await this.store.getSetting<Record<string, ChatPrefs>>('chatPrefs', {});
+    // The company's name and logo from last time: shown right away, refreshed once connected.
+    const brand = await this.store.getSetting<{ company: { code: string; name: string } | null; profile: CompanyProfile | null; logo: string } | null>('brand', null);
+    if (brand) {
+      this.company = brand.company;
+      this.companyProfile = brand.profile;
+      this.companyLogo = brand.logo || '';
+      this.brandReady = true;
+    }
     this.favouriteDepartments = await this.store.getSetting<string[]>('favouriteDepartments', []);
     this.chatLists = await this.store.getSetting<ChatList[]>('chatLists', []);
     this.privacy = { readReceipts: true, ...(await this.store.getSetting<Partial<{ readReceipts: boolean }>>('privacy', {})) };
@@ -3368,16 +3376,35 @@ export class MessengerClient extends Emitter<Events> {
   companyProfile: CompanyProfile | null = null;
   /** The company logo as a data: URL ('' = none). */
   companyLogo = '';
+  /**
+   * The company name and logo are known (saved from last time, or loaded now). Until then apps show a neutral
+   * placeholder, not CellMate's own name and logo (which flashed before the company's came in).
+   */
+  brandReady = false;
+
+  /** Remember the company name and logo on this device, so the next start shows them at once. */
+  private saveBrand(): void {
+    void this.store.setSetting('brand', { company: this.company, profile: this.companyProfile, logo: this.companyLogo }).catch(() => {});
+  }
 
   private async loadCompanyProfile(): Promise<void> {
     const p = await this.http<CompanyProfile>('GET', '/v1/company').catch(() => null);
-    if (!p) return;
-    const logoChanged = p.logo !== this.companyProfile?.logo;
+    if (!p) {
+      // Server without companies / not reachable: stop waiting, show CellMate's own name and logo.
+      if (!this.brandReady) {
+        this.brandReady = true;
+        this.emit('change');
+      }
+      return;
+    }
+    const logoChanged = p.logo !== this.companyProfile?.logo || (!!p.logo && !this.companyLogo);
     this.companyProfile = p;
     if (logoChanged) {
       const a = p.logo ? await this.http<AvatarResponse>('GET', '/v1/company/logo').catch(() => null) : null;
       this.companyLogo = a && (AVATAR_MIMES as readonly string[]).includes(a.mime) ? `data:${a.mime};base64,${a.data}` : '';
     }
+    this.brandReady = true;
+    this.saveBrand();
     this.emit('change');
   }
 
@@ -4012,6 +4039,7 @@ export class MessengerClient extends Emitter<Events> {
     this.chatLists = [];
     this.companyProfile = null;
     this.companyLogo = '';
+    this.brandReady = false;
     this.privacy = { readReceipts: true };
     this.blocked = [];
     this.about = '';
