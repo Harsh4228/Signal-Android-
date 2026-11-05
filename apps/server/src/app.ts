@@ -157,11 +157,19 @@ const WEB_FILES: Record<string, [file: string, type: string]> = {
   '/legal.css': ['legal.css', 'text/css; charset=utf-8'],
   // Download page: Windows installer, Android APK, App Store link, web app (files come from /updates/).
   '/download': ['download.html', 'text/html; charset=utf-8'],
+  '/downloads': ['download.html', 'text/html; charset=utf-8'],
   '/download.css': ['download.css', 'text/css; charset=utf-8'],
   '/download.js': ['download.js', 'text/javascript; charset=utf-8'],
 };
 const WEB_CSP =
   "default-src 'none'; script-src 'self'; style-src 'self'; img-src data:; connect-src 'self'; form-action 'none'; frame-ancestors 'none'; base-uri 'none'";
+/** Unknown addresses opened in a browser. */
+const NOT_FOUND_PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Page not found · CellMate</title><link rel="stylesheet" href="/legal.css"></head><body><main>
+<nav><a class="brand" href="/download">CellMate</a><a href="/download">Download</a><a href="/support">Support</a></nav>
+<div class="card"><h1>Page not found</h1><p>This address doesn't exist. Check the spelling, or go to:</p>
+<p><a href="/download">Download CellMate</a> &middot; <a href="/app/">Open CellMate in the browser</a> &middot; <a href="/support">Support</a></p></div>
+</main></body></html>`;
 const WEB_SESSION_MS = 8 * 3600_000;
 const SEALED_PATH = /^\/v1\/sealed\/([^/]+)$/;
 /** An account address from a URL path segment (IDs may have spaces and symbols, so they come %-encoded). */
@@ -1085,6 +1093,11 @@ export function createMeetMeServer(
       // The contact address on the public pages (SUPPORT_EMAIL).
       const support = (config.supportEmail ?? 'hello.cellbtech@gmail.com').replace(/[<>"'&]/g, '');
       return res.end(page[0].endsWith('.html') ? body.toString('utf8').replaceAll('{{support}}', support) : body);
+    }
+    // A person typed an address that doesn't exist (a browser, not the app's API): a page that helps, not "unauthorized".
+    if (method === 'GET' && !path.startsWith('/v1/') && /text\/html/.test(String(req.headers.accept ?? ''))) {
+      res.writeHead(404, { 'content-type': 'text/html; charset=utf-8', 'content-security-policy': WEB_CSP, 'x-frame-options': 'DENY' });
+      return res.end(NOT_FOUND_PAGE);
     }
     // Super admin web page: sign in with company code + ID + password (the login password, never the device secret).
     if (method === 'POST' && path === '/v1/super/setup') {
