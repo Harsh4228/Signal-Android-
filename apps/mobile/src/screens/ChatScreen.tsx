@@ -268,13 +268,14 @@ export function ChatScreen({
         title={
           <Pressable style={[s.row, { gap: 10 }]} onPress={() => navigate({ name: 'info', peer })}>
             <ChatAvatar chatKey={peer} size={38} />
-            <View style={{ flex: 1 }}>
+            <View style={{ flex: 1, minWidth: 0 }}>
               <View style={[s.row, { gap: 5 }]}>
-                <Text style={[s.textStrong, { fontSize: 16, flexShrink: 1 }]} numberOfLines={1}>
+                {/* The name always shows: the department label gives way first (it shortens with "…"). */}
+                <Text style={[s.textStrong, { fontSize: 16, flexShrink: 1, minWidth: 64 }]} numberOfLines={1}>
                   {c.chatTitle(peer)}
                 </Text>
                 {!!profile?.departments.length && (
-                  <View style={{ backgroundColor: colors.accentSoft, borderRadius: 999, paddingHorizontal: 7, paddingVertical: 1 }}>
+                  <View style={{ backgroundColor: colors.accentSoft, borderRadius: 999, paddingHorizontal: 7, paddingVertical: 1, flexShrink: 3, maxWidth: '45%' }}>
                     <Text style={{ color: colors.accentText, fontSize: 11, fontWeight: '600' }} numberOfLines={1}>
                       {profile.departments.join(', ')}
                     </Text>
