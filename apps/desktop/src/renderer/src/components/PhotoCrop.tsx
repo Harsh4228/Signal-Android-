@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { createRoot } from 'react-dom/client';
-import { ZoomIn, ZoomOut } from 'lucide-react';
+import { X, ZoomIn, ZoomOut } from 'lucide-react';
 
 /** Profile and group photos are kept this size: sharp on every screen, small enough to load fast. */
 const OUT_PX = 640;
@@ -115,6 +115,9 @@ function Cropper({ bitmap, title, onCancel, onDone }: { bitmap: ImageBitmap; tit
       <div className="modal crop-modal" onClick={(e) => e.stopPropagation()}>
         <header>
           <div className="title">{title}</div>
+          <button type="button" className="icon" onClick={onCancel} title="Close">
+            <X size={18} />
+          </button>
         </header>
         <div
           className="crop-view"
