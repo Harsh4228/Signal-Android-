@@ -4,7 +4,7 @@
 #   powershell -ExecutionPolicy Bypass -File scripts\move-pc-import.ps1 -Src F:\CellMate-move
 param(
   [Parameter(Mandatory = $true)][string]$Src,
-  [string]$Server = 'ubuntu@80.225.252.210'
+  [string]$Server = 'root@189.72.153.171'
 )
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot

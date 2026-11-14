@@ -73,7 +73,7 @@ powershell -ExecutionPolicy Bypass -File scripts\deploy-server.ps1
 
 It ends with `Server is live`. People's apps reconnect by themselves within a few seconds.
 
-Useful server commands (`ssh ubuntu@80.225.252.210` first):
+Useful server commands (`ssh root@189.72.153.171` first):
 
 ```bash
 cd ~/meetme/infra
@@ -82,6 +82,13 @@ sudo docker compose logs --tail 100 server  # server log (errors show here)
 sudo docker compose restart server          # restart only the server
 ls backups/                                 # nightly database backups (kept 14 days)
 ```
+
+The server is a Hostinger VPS (since 14 Nov 2026; before that Oracle `80.225.252.210`). The code is in
+`/opt/cellmate` (`~/meetme` points to it) and CNC MES lives on the same server in `/opt/cnc`. CellMate's Caddy is
+the front door for both: three server-only files (not in git, saved in every `backup-server.ps1` backup) add CNC:
+`infra/Caddyfile.server`, `infra/docker-compose.override.yml` and `infra/sites/cnc.caddy` (copy of
+`/opt/cnc/deploy/caddy/cnc.caddy`). Domain: `chat.cellbe.in`; the old `chat.gosite.lol` stays in `OLD_DOMAINS`
+(and its DNS on this server) until every app has opened once and moved over by itself.
 
 ## 5. Raise the version number (apps only)
 
@@ -154,5 +161,5 @@ The installer is created in `apps\desktop\dist\`.
 
 ## Owner page
 
-https://chat.gosite.lol/super: create, approve, suspend or rename companies and move people between companies.
+https://chat.cellbe.in/super: create, approve, suspend or rename companies and move people between companies.
 Sign in with your owner ID + password.

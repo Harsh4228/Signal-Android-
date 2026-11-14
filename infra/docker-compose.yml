@@ -147,6 +147,10 @@ services:
       - --denied-peer-ip=192.168.0.0-192.168.255.255
       # Oracle / AWS / GCP give the VM a private IP behind 1:1 NAT: coturn must announce the public one.
       - --external-ip=${PUBLIC_IP:?set PUBLIC_IP in infra/.env}/${PRIVATE_IP:?set PRIVATE_IP in infra/.env}
+      # Only the server's own address: otherwise coturn also hands out Docker's internal bridge addresses
+      # (172.16-31.x) as relays, and calls that need the relay fail. (Hostinger: PRIVATE_IP = PUBLIC_IP.)
+      - --listening-ip=${PRIVATE_IP}
+      - --relay-ip=${PRIVATE_IP}
 
   # Off-site copy, so a lost VM doesn't take the backups with it. Enable with COMPOSE_PROFILES=offsite in .env.
   # Everything is encrypted with BACKUP_PASSPHRASE (rclone crypt) before upload: the bucket only sees ciphertext.

@@ -7,7 +7,7 @@
 # -StopServer stops the app first and leaves it stopped, so nothing new arrives on the old server.
 # The file holds passwords and push keys: keep it private (never commit, never share).
 param(
-  [string]$Server = 'ubuntu@80.225.252.210',
+  [string]$Server = 'root@189.72.153.171',
   [string]$Dest = (Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) 'backups'),
   [switch]$StopServer
 )

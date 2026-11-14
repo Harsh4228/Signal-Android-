@@ -31,6 +31,8 @@ sudo tar xzf "$SRC" -C "$W"
 for f in db.dump env; do [ -f "$W/$f" ] || { echo "Not a CellMate backup ($f missing)"; exit 1; }; done
 sudo cat "$W/MANIFEST" 2>/dev/null || true
 mkdir -p backups secrets updates
+# A brand-new server has no .env yet and docker compose refuses to run without one: start from the backup's.
+if [ ! -f .env ]; then sudo cp "$W/env" .env; sudo chown "$(id -u):$(id -g)" .env; chmod 600 .env; fi
 
 step "Safety copy of what is on this server now"
 if [ -f .env ]; then cp .env ".env.before-restore-$TS"; echo "   .env.before-restore-$TS"; fi
@@ -64,6 +66,13 @@ chmod 600 .env
 echo "   PUBLIC_IP=$PUB  PRIVATE_IP=$PRIV  $(grep '^DOMAIN=' .env)"
 if [ -d "$W/secrets" ]; then sudo cp -a "$W/secrets/." secrets/; echo "   push keys: $(ls secrets | tr '\n' ' ')"; fi
 if [ -d "$W/updates" ]; then sudo cp -a "$W/updates/." updates/; echo "   desktop installers copied"; fi
+# This server's own front-door files (shared Caddy with other apps), only restored where none exist yet.
+if [ -d "$W/server-local" ]; then
+  for f in Caddyfile.server docker-compose.override.yml; do
+    [ -f "$W/server-local/$f" ] && [ ! -f "$f" ] && sudo cp "$W/server-local/$f" "$f" && echo "   $f"
+  done
+  [ -d "$W/server-local/sites" ] && [ ! -d sites ] && sudo cp -a "$W/server-local/sites" sites && echo "   sites/"
+fi
 
 step "Database"
 dc up -d db

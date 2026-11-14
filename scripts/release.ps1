@@ -86,5 +86,5 @@ Write-Host ''
 Write-Host "Release $tag done." -ForegroundColor Green
 if (-not $SkipApk) { Write-Host "  APK:       $([Environment]::GetFolderPath('Desktop'))\CellMate-$Version.apk" }
 if (-not $SkipDesktop) { Write-Host "  Installer: $repo\apps\desktop\dist\" }
-Write-Host '  Download page: https://chat.gosite.lol/download'
+Write-Host '  Download page: https://chat.cellbe.in/download'
 Write-Host '  GitHub Actions is also building it: GitHub -> Actions -> Artifacts'

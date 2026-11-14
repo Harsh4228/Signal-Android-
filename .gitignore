@@ -14,3 +14,8 @@ apps/mobile/ios/MeetMe/GoogleService-Info.plist
 infra/secrets/
 infra/updates/*
 !infra/updates/README.md
+# Server-only front door (Hostinger VPS: CellMate's Caddy also serves CNC MES), see MANUAL.md
+infra/Caddyfile.server
+infra/docker-compose.override.yml
+infra/sites/
+infra/.env.before-restore-*

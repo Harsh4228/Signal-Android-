@@ -3,12 +3,12 @@
 #   Same server (roll back):  powershell -ExecutionPolicy Bypass -File scripts\restore-server.ps1 -Backup E:\cellmet\backups\cellmate-backup-....tgz
 #   New server (move):        1. run infra/setup-oracle.sh on the new server (see the top of that file)
 #                             2. powershell -ExecutionPolicy Bypass -File scripts\restore-server.ps1 -Backup <file> -Server ubuntu@<NEW_IP>
-#                             3. point chat.gosite.lol at the new server (move the reserved IP, or change DNS)
+#                             3. point chat.cellbe.in (and the old chat.gosite.lol) at the new server (DNS A records)
 #
 # What is on the server now is saved first (infra/backups/before-restore-*.dump), so nothing is lost.
 param(
   [Parameter(Mandatory = $true)][string]$Backup,
-  [string]$Server = 'ubuntu@80.225.252.210'
+  [string]$Server = 'root@189.72.153.171'
 )
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot

@@ -35,7 +35,7 @@ const DEFAULT_SERVER = import.meta.env.DEV
   ? 'http://localhost:8080'
   : window.meetme.platform === 'web'
     ? location.origin // the web app is served by the CellMate server itself
-    : 'https://chat.gosite.lol';
+    : 'https://chat.cellbe.in';
 
 /**
  * New people join with the QR invite from their admin (on a computer: paste the invite code) and only choose a

@@ -7,7 +7,7 @@
 # release.ps1 runs this by itself. Keeps the last 3 versions of each on the server (older ones are removed).
 param(
   [string]$Version,
-  [string]$Server = 'ubuntu@80.225.252.210'
+  [string]$Server = 'root@189.72.153.171'
 )
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
@@ -56,4 +56,4 @@ if (Test-Path $apk) {
 }
 
 Write-Host ''
-Write-Host 'Download page: https://chat.gosite.lol/download'
+Write-Host 'Download page: https://chat.cellbe.in/download'

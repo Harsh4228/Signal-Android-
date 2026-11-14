@@ -7,7 +7,7 @@
 param(
   [Parameter(Mandatory = $true)][string]$Dest,
   [string]$Project = "$env:USERPROFILE\OneDrive\Desktop\Signal\meetme",
-  [string]$Server = 'ubuntu@80.225.252.210'
+  [string]$Server = 'root@189.72.153.171'
 )
 $ErrorActionPreference = 'Stop'
 $report = [System.Collections.Generic.List[string]]::new()

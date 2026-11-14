@@ -53,6 +53,10 @@ step "Settings, push keys, desktop installers"
 sudo cp .env "$W/env"
 [ -d secrets ] && sudo cp -a secrets "$W/secrets"
 [ -d updates ] && sudo cp -a updates "$W/updates"
+# Server-only front-door files (e.g. the Hostinger VPS shares its Caddy with CNC MES): not in git
+mkdir -p "$W/server-local"
+for f in Caddyfile.server docker-compose.override.yml; do [ -f "$f" ] && sudo cp "$f" "$W/server-local/"; done
+[ -d sites ] && sudo cp -a sites "$W/server-local/sites"
 
 cat <<EOF | sudo tee "$W/MANIFEST" >/dev/null
 CellMate backup
