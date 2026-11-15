@@ -76,7 +76,31 @@ if ($SkipApk) { Write-Host "`n== APK: skipped (-SkipApk)" }
 else { Run 'Build the APK' { powershell -ExecutionPolicy Bypass -File "$repo\scripts\build-apk.ps1" } }
 
 if ($SkipDesktop) { Write-Host "`n== Windows installer: skipped (-SkipDesktop)" }
-else { Run 'Build the Windows installer' { npm run dist:win -w @meetme/desktop } }
+else {
+  Write-Host ''
+  Write-Host '== Build the Windows installer' -ForegroundColor Cyan
+  npm run dist:win -w @meetme/desktop
+  if ($LASTEXITCODE -ne 0) {
+    # Windows sometimes refuses to start a build tool on this PC ("spawn UNKNOWN"). The tag also built the installer
+    # on GitHub (Desktop workflow): take that one instead.
+    Write-Host 'Local Windows build failed: using the installer GitHub built for this tag' -ForegroundColor Yellow
+    $runId = $null
+    for ($i = 0; $i -lt 40 -and -not $runId; $i++) {
+      $runId = gh run list --workflow Desktop --branch $tag --limit 1 --json databaseId -q '.[0].databaseId'
+      if (-not $runId) { Start-Sleep 15 }
+    }
+    if (-not $runId) { throw 'No GitHub Desktop build found for this tag' }
+    gh run watch $runId --exit-status | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "GitHub Desktop build failed: gh run view $runId --log-failed" }
+    $tmp = Join-Path $env:TEMP "cellmate-win-$Version"
+    Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
+    gh run download $runId -n meetme-desktop-win -D $tmp
+    if ($LASTEXITCODE -ne 0) { throw 'Could not download the Windows installer from GitHub' }
+    $dist = Join-Path $repo 'apps\desktop\dist'
+    New-Item -ItemType Directory -Force $dist | Out-Null
+    Copy-Item "$tmp\CellMate-$Version-win-x64.exe", "$tmp\CellMate-$Version-win-x64.exe.blockmap", "$tmp\latest.yml" $dist -Force
+  }
+}
 
 # ---- 6. downloads: the new installer and APK on the server (download page + Windows auto-update)
 if ($SkipApk -and $SkipDesktop) { Write-Host "`n== Downloads: nothing new to upload" }
