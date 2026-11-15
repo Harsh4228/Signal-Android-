@@ -8,13 +8,20 @@
 #   MANIFEST   - when, where, how many users
 #
 # Normally run from your PC:  scripts\backup-server.ps1
-# On the server:              bash ~/meetme/infra/backup-now.sh [--stop] [output.tgz]
+# On the server:              bash ~/meetme/infra/backup-now.sh [--stop] [--light] [output.tgz]
 #   --stop  stops the app first so nothing changes during the copy. Use it right before moving to a new
 #           server. The app STAYS stopped afterwards, so no new messages land on the old server.
+#   --light leaves out updates/ (desktop installers, hundreds of MB, rebuilt by every release): for the
+#           nightly copy to the PC (scripts\pull-backups.ps1).
 set -euo pipefail
 
 STOP=0
-if [ "${1:-}" = "--stop" ]; then STOP=1; shift; fi
+LIGHT=0
+while [ "${1:-}" = "--stop" ] || [ "${1:-}" = "--light" ]; do
+  [ "$1" = "--stop" ] && STOP=1
+  [ "$1" = "--light" ] && LIGHT=1
+  shift
+done
 OUT=${1:-$HOME/cellmate-backup-$(date +%Y-%m-%d_%H%M).tgz}
 
 cd "$HOME/meetme/infra"
@@ -52,7 +59,7 @@ fi
 step "Settings, push keys, desktop installers"
 sudo cp .env "$W/env"
 [ -d secrets ] && sudo cp -a secrets "$W/secrets"
-[ -d updates ] && sudo cp -a updates "$W/updates"
+if [ $LIGHT = 0 ] && [ -d updates ]; then sudo cp -a updates "$W/updates"; fi
 # Server-only front-door files (e.g. the Hostinger VPS shares its Caddy with CNC MES): not in git
 mkdir -p "$W/server-local"
 for f in Caddyfile.server docker-compose.override.yml; do [ -f "$f" ] && sudo cp "$f" "$W/server-local/"; done
