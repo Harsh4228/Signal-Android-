@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, FlatList, Image, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
-import { ChevronRight, File, FileText, Image as ImageIcon, TriangleAlert } from 'lucide-react-native';
+import { ActivityIndicator, Alert, FlatList, Image, Linking, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import { ChevronRight, File, FileText, Film, Image as ImageIcon, Link2, Play, TriangleAlert } from 'lucide-react-native';
 import { formatBytes, toBase64, type MediaItem } from '@meetme/core';
 import { client, useClient } from '../messenger';
 import { colors, s } from '../theme';
@@ -9,7 +9,7 @@ import { openAttachment } from './AttachmentView';
 import { play } from '../voice';
 import type { Route } from '../App';
 
-const isMedia = (m: MediaItem) => m.kind === 'image';
+const isMedia = (m: MediaItem) => m.kind === 'image' || m.kind === 'video';
 
 function day(ts: number): string {
   const d = new Date(ts);
@@ -38,6 +38,26 @@ function askDelete(item: MediaItem, onError: (m: string) => void) {
 
 /** Saved photo, decrypted into memory while it is on screen. */
 function Thumb({ item, size, onError }: { item: MediaItem; size: number; onError: (m: string) => void }) {
+  // Videos are only decrypted when opened (a whole video for a small tile would be slow).
+  if (item.kind === 'video') {
+    return (
+      <Pressable
+        onPress={() => void view(item, onError)}
+        onLongPress={() => askDelete(item, onError)}
+        style={[styles.thumb, { width: size, height: size, backgroundColor: '#1f2937' }]}
+        accessibilityLabel={`Video ${item.name}`}
+      >
+        <Film size={22} color="#cbd5e1" />
+        <View style={styles.playSmall}>
+          <Play size={12} color="#fff" fill="#fff" />
+        </View>
+      </Pressable>
+    );
+  }
+  return <PhotoThumb item={item} size={size} onError={onError} />;
+}
+
+function PhotoThumb({ item, size, onError }: { item: MediaItem; size: number; onError: (m: string) => void }) {
   const [uri, setUri] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
   useEffect(() => {
@@ -98,7 +118,8 @@ export function MediaSection({ chatKey, navigate, onError }: { chatKey: string; 
 /** Every saved photo and document of a chat, like WhatsApp's "Media, links and docs". */
 export function MediaScreen({ chatKey, navigate, onError }: { chatKey: string; navigate: (r: Route) => void; onError: (m: string) => void }) {
   const c = useClient();
-  const [tab, setTab] = useState<'media' | 'docs'>('media');
+  const [tab, setTab] = useState<'media' | 'docs' | 'links'>('media');
+  const links = c.linksOf(chatKey);
   const { width } = useWindowDimensions();
   const items = c.getMedia(chatKey);
   const photos = items.filter(isMedia);
@@ -109,15 +130,46 @@ export function MediaScreen({ chatKey, navigate, onError }: { chatKey: string; n
     <View style={s.fill}>
       <Header title={`${c.chatTitle(chatKey)} · Media`} onBack={() => navigate({ name: 'info', peer: chatKey })} />
       <View style={[s.row, styles.tabs]}>
-        {(['media', 'docs'] as const).map((t) => (
+        {(['media', 'docs', 'links'] as const).map((t) => (
           <Pressable key={t} onPress={() => setTab(t)} style={[styles.tab, tab === t && styles.tabActive]}>
             <Text style={{ color: tab === t ? colors.accent : colors.muted, fontWeight: '600' }}>
-              {t === 'media' ? `Media (${photos.length})` : `Docs (${docs.length})`}
+              {t === 'media' ? `Media (${photos.length})` : t === 'docs' ? `Docs (${docs.length})` : `Links (${links.length})`}
             </Text>
           </Pressable>
         ))}
       </View>
-      {tab === 'media' ? (
+      {tab === 'links' ? (
+        <FlatList
+          key="links"
+          data={links}
+          keyExtractor={(l, i) => `${l.msgId}-${i}`}
+          contentContainerStyle={{ padding: 12, gap: 8, flexGrow: 1 }}
+          ListEmptyComponent={<Empty icon={Link2} text="No links yet" />}
+          renderItem={({ item }) => (
+            <Pressable
+              onPress={() =>
+                Alert.alert('Open link?', item.url, [
+                  { text: 'Cancel', style: 'cancel' },
+                  { text: 'Open', onPress: () => void Linking.openURL(item.url) },
+                ])
+              }
+              style={({ pressed }) => [s.card, s.row, { padding: 12, gap: 12 }, pressed && { backgroundColor: colors.hover }]}
+            >
+              <View style={[styles.docIcon, { backgroundColor: colors.accentSoft }]}>
+                <Link2 size={20} color={colors.accent} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={{ color: colors.accent, fontSize: 14 }} numberOfLines={2}>
+                  {item.url}
+                </Text>
+                <Text style={[s.muted, { fontSize: 12 }]}>
+                  {item.outgoing ? 'You' : c.displayName(item.from)} · {day(item.ts)}
+                </Text>
+              </View>
+            </Pressable>
+          )}
+        />
+      ) : tab === 'media' ? (
         <FlatList
           key="media"
           data={photos}
@@ -196,4 +248,5 @@ const styles = StyleSheet.create({
   tab: { flex: 1, alignItems: 'center', paddingVertical: 12, borderBottomWidth: 2, borderBottomColor: 'transparent' },
   tabActive: { borderBottomColor: colors.accent },
   docIcon: { width: 40, height: 40, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
+  playSmall: { position: 'absolute', right: 6, bottom: 6, width: 22, height: 22, borderRadius: 11, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.55)' },
 });

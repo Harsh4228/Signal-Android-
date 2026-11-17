@@ -140,7 +140,13 @@ Tap **📎** in a chat (or in the admin 📢 window) and choose Photo, PDF or Fi
 - The file is encrypted on your device with a new random key (XChaCha20-Poly1305). The server only gets the ciphertext, under a random ID, and deletes it after 14 days. The key and a SHA-256 checksum travel inside the end-to-end encrypted message.
 - The receiver downloads, verifies and decrypts it **into memory only**. By default nothing is written to disk and there is no Save button.
 - **Files stay inside CellMate:** everyone can **share a file to another chat** (it is encrypted again for that chat), but nobody, admins included, can save a file to the computer or phone or share it to another app. There is no Save dialog on desktop and no share sheet on mobile.
-- **Photos** are shown in the chat and in a full-screen viewer.
+- **Photos** are made smaller before sending, like WhatsApp (longest side 1600 px, JPEG: a 5 MB camera photo becomes about 300 KB; iPhone HEIC becomes JPEG so Windows can show it). Choose **Other files** to send the original untouched. Phones do this in an invisible built-in WebView, so no extra library is needed.
+- **Previews:** photos and videos carry a tiny preview picture (a few KB) inside the encrypted message, so the chat shows it at once while the file downloads.
+- **Videos** (MP4, MOV, WebM, 3GP) play inside the chat. Desktop / web play from memory; phones decrypt the video into the app's private cache only while it plays (like voice messages). No download or picture-in-picture buttons.
+- **Voice messages** play at 1×, 1.5× or 2×. Computers record MP4 / AAC where they can, so iPhones play them; older WebM recordings open in a web player on iPhones.
+- A file that failed to download or send has a **Retry** button.
+- **Desktop / web:** drag photos and files onto a chat, or paste a copied picture (only with the "send files" right).
+- **Server safety:** uploads and downloads are streamed to and from disk (a 25 MB file never sits in the server's memory), and new uploads pause with a clear message while the disk has less than `MIN_FREE_DISK_MB` (2048) free.
 - **PDFs** open in a built-in view-only viewer. Desktop uses pdf.js drawn to canvas. Android uses an offline pdf.js page bundled in the app (`npm run build:pdfviewer`). iOS uses WKWebView from memory. PDF JavaScript never runs.
 - **Other file types** show their name and size, but can't be opened inside CellMate, because opening them would mean saving them for another app.
 - Screenshot blocking covers the viewers too. On Android they are drawn inside the protected window, not in a separate dialog.
@@ -197,7 +203,7 @@ The full name is shown instead of the ID in chat lists, chat headers and contact
 
 ## Media and docs
 
-Open a chat's details (click the name or photo) to see **Media and docs**: every photo and document sent or received in that chat, like WhatsApp. **Media** shows photos in a grid, **Docs** lists PDFs and other files with who sent them and when. Click one to view it.
+Open a chat's details (click the name or photo) to see **Media and docs**: every photo, video, document and link in that chat, like WhatsApp. **Media** shows photos and videos in a grid, **Docs** lists PDFs and other files with who sent them and when, **Links** lists every shared link. Click one to view it.
 
 - Message text is still kept in memory only. Photos and documents are now also **kept on the device**, so this page still has them after the app restarts.
 - Each file is encrypted with a random key that lives in the OS keychain (DPAPI / Keychain / Android Keystore). The files on disk (`media/` in the app data folder) are unreadable without it.
@@ -217,6 +223,9 @@ All of these are end-to-end encrypted like normal messages. Desktop: hover a mes
 | **Forward** | ➦ to one or more chats; the copy is encrypted again and marked *Forwarded*. Polls and events can't be forwarded |
 | **Star** | ☆ keeps a message in ⋮ → **Starred messages** (a short text snapshot is kept encrypted on the device, so the list survives restarts) |
 | **Search** | 🔍 in the chat header searches that chat's messages, captions and file names |
+| **Pin** | 📌 a message for everyone in the chat (up to 3; a 4th replaces the oldest). In groups where only chosen people may write, only they can pin |
+| **Formatting** | `*bold*`, `_italic_`, `~strike~`, `` `code` ``, ```` ```monospace``` ````, `> quote`, `- list`, `1. list`, like WhatsApp |
+| **Emoji** | 🙂 next to the message box on desktop / web (phones use the keyboard's emoji) |
 | **Voice messages** | 🎤 (shown when the text box is empty): record, then send or 🗑. Up to 5 minutes |
 | **Polls** | 📎 → Poll: question, 2–12 options, optionally several answers. Votes update live for everyone; *View votes* shows who picked what |
 | **Events** | 📎 → Event: name, description, start / end, place. Everyone can answer Going / Maybe / Not going |

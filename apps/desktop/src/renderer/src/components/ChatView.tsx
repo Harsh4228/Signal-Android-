@@ -42,6 +42,10 @@ import {
   ArrowLeft,
   Share2,
   Camera as CameraIcon,
+  Pin,
+  PinOff,
+  RotateCw,
+  Smile,
 } from 'lucide-react';
 import {
   MessengerClient,
@@ -56,6 +60,8 @@ import {
   MAX_FILES_AT_ONCE,
 } from '@meetme/core';
 import { ChatCamera } from './ChatCamera';
+import { EmojiPicker } from './EmojiPicker';
+import { prepareMedia } from '../media';
 import { copyText, hasShareMenu, saveToDevice, sharedText, shareOut } from '../deviceFiles';
 import { MessageText, ViewOnceBubble, ViewOnceViewer } from './MessageText';
 
@@ -221,7 +227,8 @@ export function ChatView({ peer, onError }: { peer: string; onError: (m: string)
     const r = replyTo;
     setReplyTo(null);
     try {
-      await client.sendFile(peer, { name: `voice-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.webm`, mime, data }, '', {
+      const ext = mime.includes('mp4') ? 'm4a' : mime.includes('ogg') ? 'ogg' : 'webm';
+      await client.sendFile(peer, { name: `voice-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.${ext}`, mime, data }, '', {
         replyTo: r ?? undefined,
       });
     } catch (err) {
@@ -253,8 +260,11 @@ export function ChatView({ peer, onError }: { peer: string; onError: (m: string)
 
   /** The next picked file goes as view once. */
   const viewOnceNext = useRef(false);
+  /** The next picked files are photos / videos: made smaller and given a preview ("Other files" go untouched). */
+  const mediaNext = useRef(false);
   function pick(accept: string, viewOnce = false) {
     viewOnceNext.current = viewOnce;
+    mediaNext.current = accept.startsWith('image/');
     setMenu(false);
     if (!fileInput.current) return;
     fileInput.current.accept = accept;
@@ -264,9 +274,10 @@ export function ChatView({ peer, onError }: { peer: string; onError: (m: string)
     fileInput.current.click();
   }
 
-  async function onFile(files: FileList | null) {
+  async function onFile(files: FileList | File[] | null, asMedia = mediaNext.current) {
     const all = files ? [...files] : [];
     if (!all.length) return;
+    if (!c.can('sendFiles', peer)) return onError('Your admin has turned off sending files here');
     if (all.length > MAX_FILES_AT_ONCE) onError(`Only ${MAX_FILES_AT_ONCE} at a time: the first ${MAX_FILES_AT_ONCE} were sent`);
     const chosen = all.slice(0, MAX_FILES_AT_ONCE);
     const tooBig = chosen.filter((f) => f.size > MAX_ATTACHMENT_BYTES);
@@ -282,14 +293,71 @@ export function ChatView({ peer, onError }: { peer: string; onError: (m: string)
         const f = ok[i]!;
         // Read into memory only; the original file on disk is untouched and nothing new is written.
         const data = new Uint8Array(await f.arrayBuffer());
-        await client.sendFile(peer, { name: f.name, mime: f.type || 'application/octet-stream', data }, i === 0 ? caption : '', {
+        const raw = { name: f.name || 'file', mime: f.type || 'application/octet-stream', data };
+        const file = asMedia && /^(image|video)\//.test(raw.mime) ? await prepareMedia(raw) : raw;
+        await client.sendFile(peer, file, i === 0 ? caption : '', {
           replyTo: i === 0 ? (r ?? undefined) : undefined,
           viewOnce: viewOnceNext.current,
         });
       }
     } catch (err) {
       onError(errorText(err));
+    } finally {
+      viewOnceNext.current = false;
     }
+  }
+
+  /** Drag photos / files onto the chat, or paste a copied picture, like WhatsApp (needs the "send files" right). */
+  const [dragging, setDragging] = useState(false);
+  const canDropFiles = canWrite && c.canSendTo(peer) && c.can('sendFiles', peer);
+  const dropProps = canDropFiles
+    ? {
+        onDragOver: (e: React.DragEvent) => {
+          if (![...e.dataTransfer.types].includes('Files')) return;
+          e.preventDefault();
+          setDragging(true);
+        },
+        onDragLeave: (e: React.DragEvent) => {
+          if (!(e.currentTarget as HTMLElement).contains(e.relatedTarget as Node)) setDragging(false);
+        },
+        onDrop: (e: React.DragEvent) => {
+          e.preventDefault();
+          setDragging(false);
+          viewOnceNext.current = false;
+          const files = [...e.dataTransfer.files];
+          // Dropped photos and videos are sent like picked ones; other files as they are.
+          void onFile(files, files.every((f) => /^(image|video)\//.test(f.type)));
+        },
+      }
+    : {};
+  function onPaste(e: React.ClipboardEvent) {
+    const files = [...e.clipboardData.files];
+    if (!files.length || !canDropFiles) return;
+    e.preventDefault();
+    viewOnceNext.current = false;
+    void onFile(files, files.every((f) => /^(image|video)\//.test(f.type)));
+  }
+
+  const pinned = c.pinnedMessages(peer);
+  const [pinIndex, setPinIndex] = useState(0);
+  const shownPin = pinned[pinIndex % Math.max(1, pinned.length)];
+  async function togglePin(m: ChatMessage) {
+    try {
+      await client.pinMessage(peer, m.id, !m.pinnedAt);
+    } catch (err) {
+      onError(errorText(err));
+    }
+  }
+  const [emojiOpen, setEmojiOpen] = useState(false);
+  function insertEmoji(e: string) {
+    const el = inputRef.current;
+    const at = el?.selectionStart ?? text.length;
+    const end = el?.selectionEnd ?? at;
+    setText(text.slice(0, at) + e + text.slice(end));
+    requestAnimationFrame(() => {
+      el?.focus();
+      el?.setSelectionRange(at + e.length, at + e.length);
+    });
   }
 
   /** In a group: a group call (rings everyone); otherwise a 1:1 call. */
@@ -316,7 +384,8 @@ export function ChatView({ peer, onError }: { peer: string; onError: (m: string)
   const profile = group ? undefined : c.profileOf(peer);
 
   return (
-    <section className="chat">
+    <section className={`chat${dragging ? ' dropping' : ''}`} {...dropProps}>
+      {dragging && <div className="drop-hint">Drop to send</div>}
       <header>
         {/* Phones: back to the chat list (on wider screens the list stays visible next to the chat). */}
         <button className="icon back-btn" title="Back to chats" onClick={() => client.setActiveChat(null)}>
@@ -413,6 +482,22 @@ export function ChatView({ peer, onError }: { peer: string; onError: (m: string)
           </span>
           Join
         </button>
+      )}
+      {shownPin && (
+        <div className="pinned-bar">
+          <button className="grow pinned-main" title="Go to the pinned message" onClick={() => (jumpTo(shownPin.id), setPinIndex((i) => i + 1))}>
+            <Pin size={15} />
+            <span className="grow">
+              <strong>Pinned{pinned.length > 1 ? ` (${(pinIndex % pinned.length) + 1}/${pinned.length})` : ''}</strong>
+              <span className="pinned-text">{MessengerClient.preview(shownPin)}</span>
+            </span>
+          </button>
+          {canWrite && c.canSendTo(peer) && (
+            <button className="icon" title="Unpin" onClick={() => void togglePin(shownPin)}>
+              <PinOff size={15} />
+            </button>
+          )}
+        </div>
       )}
       {searching && (
         <div className="chat-search">
@@ -522,6 +607,8 @@ export function ChatView({ peer, onError }: { peer: string; onError: (m: string)
                     onReact={() => setReactingTo(reactingTo === m.id ? null : m.id)}
                     onForward={() => setForwarding(m)}
                     onStar={() => client.toggleStar(m)}
+                    canPin={canWrite && c.canSendTo(peer) && !m.call}
+                    onPin={() => void togglePin(m)}
                   />
                 )}
                 {reactingTo === m.id && <ReactionPicker chat={peer} m={m} onDone={() => setReactingTo(null)} onError={onError} />}
@@ -549,7 +636,15 @@ export function ChatView({ peer, onError }: { peer: string; onError: (m: string)
                       ) : m.attachment.kind === 'audio' ? (
                         <AudioView a={m.attachment} />
                       ) : (
-                        <AttachmentView a={m.attachment} onToast={onError} />
+                        <AttachmentView
+                          a={m.attachment}
+                          onToast={onError}
+                          onRetry={() =>
+                            void (m.outgoing && m.status === 'failed' ? client.retrySend(peer, m.id) : client.retryDownload(peer, m.id)).catch((e) =>
+                              onError(errorText(e)),
+                            )
+                          }
+                        />
                       ))}
                     {m.poll && <PollView chat={peer} m={m} onError={onError} />}
                     {m.event && <EventView chat={peer} m={m} onError={onError} />}
@@ -560,6 +655,7 @@ export function ChatView({ peer, onError }: { peer: string; onError: (m: string)
                   </>
                 )}
                 <div className="meta">
+                  {m.pinnedAt && <Pin size={11} className="star-mark" />}
                   {m.starred && <Star size={11} className="star-mark" />}
                   {m.edited && <span className="edited">edited</span>}
                   {m.expiresAt && (
@@ -568,7 +664,13 @@ export function ChatView({ peer, onError }: { peer: string; onError: (m: string)
                     </span>
                   )}
                   {time(m.ts)}
-                  {m.outgoing && m.status && <Tick status={m.status} />}
+                  {m.outgoing && m.status === 'failed' && !m.poll && !m.event ? (
+                    <button className="retry-send" title="Not sent - click to try again" onClick={() => void client.retrySend(peer, m.id).catch((e) => onError(errorText(e)))}>
+                      <RotateCw size={12} /> Retry
+                    </button>
+                  ) : (
+                    m.outgoing && m.status && <Tick status={m.status} />
+                  )}
                 </div>
                 {!m.deleted && <ReactionChips chat={peer} m={m} onError={onError} />}
               </div>
@@ -707,14 +809,23 @@ export function ChatView({ peer, onError }: { peer: string; onError: (m: string)
                         if (caption && caption === text.trim()) setText('');
                         const r = replyTo;
                         setReplyTo(null);
-                        client.sendFile(peer, file, caption, { replyTo: r ?? undefined, viewOnce }).catch((e) => onError(errorText(e)));
+                        void prepareMedia(file)
+                          .then((f) => client.sendFile(peer, f, caption, { replyTo: r ?? undefined, viewOnce }))
+                          .catch((e) => onError(errorText(e)));
                       }}
                     />
                   )}
                 </div>
               )}
+              <div className="emoji-wrap">
+                <button type="button" className="icon" title="Emoji" disabled={!canWrite} onClick={() => setEmojiOpen((o) => !o)}>
+                  <Smile size={19} />
+                </button>
+                {emojiOpen && <EmojiPicker onPick={insertEmoji} onClose={() => setEmojiOpen(false)} />}
+              </div>
               <textarea
                 ref={inputRef}
+                onPaste={onPaste}
                 value={text}
                 onChange={(e) => {
                   setText(e.target.value);
@@ -764,6 +875,8 @@ function MessageActions({
   onReact,
   onForward,
   onStar,
+  canPin,
+  onPin,
 }: {
   m: ChatMessage;
   open: boolean;
@@ -789,6 +902,8 @@ function MessageActions({
   onReact: () => void;
   onForward: () => void;
   onStar: () => void;
+  canPin: boolean;
+  onPin: () => void;
 }) {
   return (
     <div className={`msg-actions ${m.outgoing ? 'left' : 'right'} ${open ? 'open' : ''}`} onClick={(e) => e.stopPropagation()}>
@@ -828,6 +943,11 @@ function MessageActions({
       <button className={`icon ${m.starred ? 'starred' : ''}`} title={m.starred ? 'Unstar' : 'Star'} onClick={onStar}>
         <Star size={14} />
       </button>
+      {canPin && (
+        <button className={`icon ${m.pinnedAt ? 'starred' : ''}`} title={m.pinnedAt ? 'Unpin' : 'Pin for everyone'} onClick={onPin}>
+          {m.pinnedAt ? <PinOff size={14} /> : <Pin size={14} />}
+        </button>
+      )}
       {canEdit && (
         <button className="icon" title="Edit" onClick={onEdit}>
           <Pencil size={14} />

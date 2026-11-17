@@ -1,16 +1,16 @@
 import { useEffect } from 'react';
 import { Eye, EyeOff, X } from 'lucide-react';
-import { LINK_RE, shortId, type ChatMessage } from '@meetme/core';
+import { formatText, mentionPattern, shortId, type ChatMessage, type TextSpan } from '@meetme/core';
 import { client } from '../messenger';
-import { useObjectUrl } from './AttachmentView';
+import { useObjectUrl, VideoPlayer } from './AttachmentView';
 
-function openLink(url: string) {
+export function openLink(url: string) {
   if (!confirm(`Open this link in your browser?\n\n${url}`)) return;
   if (window.meetme.openLink) void window.meetme.openLink(url);
   else window.open(url, '_blank', 'noopener,noreferrer');
 }
 
-/** Message text with clickable links (asks first) and highlighted @mentions. */
+/** Message text: *bold*, _italic_, ~strike~, `code`, quotes and lists (like WhatsApp), links (ask first), @mentions. */
 export function MessageText({ m }: { m: ChatMessage }) {
   const tokens: string[] = [];
   for (const u of m.mentions ?? []) {
@@ -18,38 +18,34 @@ export function MessageText({ m }: { m: ChatMessage }) {
     const name = client.displayName(u);
     if (name) tokens.push(`@${name}`);
   }
-  const mention = tokens.length ? new RegExp(`(${tokens.map((x) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})`, 'gi') : null;
-  const parts: { text: string; link?: boolean }[] = [];
-  let last = 0;
-  for (const match of m.text.matchAll(LINK_RE)) {
-    if (match.index! > last) parts.push({ text: m.text.slice(last, match.index) });
-    parts.push({ text: match[0], link: true });
-    last = match.index! + match[0].length;
-  }
-  if (last < m.text.length) parts.push({ text: m.text.slice(last) });
+  const lines = formatText(m.text, mentionPattern(tokens));
   return (
     <div className="text">
-      {parts.map((p, i) =>
-        p.link ? (
-          <span key={i} className="msg-link" role="link" onClick={() => openLink(p.text)}>
-            {p.text}
-          </span>
-        ) : mention ? (
-          p.text.split(mention).map((piece, j) =>
-            j % 2 ? (
-              <span key={`${i}-${j}`} className="mention">
-                {piece}
-              </span>
-            ) : (
-              piece
-            ),
-          )
-        ) : (
-          p.text
-        ),
-      )}
+      {lines.map((l, i) => (
+        <div key={i} className={`tl${l.quote ? ' tl-quote' : ''}${l.mono ? ' tl-mono' : ''}${l.bullet ? ' tl-list' : ''}`}>
+          {l.bullet && <span className="tl-bullet">{l.bullet}</span>}
+          {l.spans.length ? l.spans.map((sp, j) => <Span key={j} s={sp} />) : '​'}
+        </div>
+      ))}
     </div>
   );
+}
+
+function Span({ s }: { s: TextSpan }) {
+  if (s.link) {
+    return (
+      <span className="msg-link" role="link" onClick={() => openLink(s.text)}>
+        {s.text}
+      </span>
+    );
+  }
+  if (s.mention) return <span className="mention">{s.text}</span>;
+  let el: React.ReactNode = s.text;
+  if (s.code) el = <code>{el}</code>;
+  if (s.strike) el = <s>{el}</s>;
+  if (s.italic) el = <em>{el}</em>;
+  if (s.bold) el = <strong>{el}</strong>;
+  return <>{el}</>;
 }
 
 /** A view-once photo in the chat: "Click to view" once, then "Opened". */
@@ -84,7 +80,13 @@ export function ViewOnceViewer({ m, onClose }: { m: ChatMessage; onClose: () => 
   });
   return (
     <div className="view-once-viewer">
-      {url && a?.mime.startsWith('image/') ? <img src={url} alt="" draggable={false} /> : <p className="hint">This file can't be shown here.</p>}
+      {url && a?.mime.startsWith('image/') ? (
+        <img src={url} alt="" draggable={false} />
+      ) : url && a?.kind === 'video' ? (
+        <VideoPlayer url={url} autoPlay className="view-once-video" />
+      ) : (
+        <p className="hint">This file can't be shown here.</p>
+      )}
       <button className="icon close" title="Close (Esc)" onClick={close}>
         <X size={22} />
       </button>

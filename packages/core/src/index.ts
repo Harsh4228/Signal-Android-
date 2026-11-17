@@ -15,3 +15,4 @@ export * from './crypto/ratchet';
 export * from './crypto/x3dh';
 export * from './history';
 export * from './groupcall';
+export * from './format';

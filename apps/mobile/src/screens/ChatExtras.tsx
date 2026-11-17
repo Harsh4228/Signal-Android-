@@ -43,7 +43,8 @@ import { client, useClient } from '../messenger';
 import { SendPicker } from './SendPicker';
 import { colors, s } from '../theme';
 import { Avatar, Button, ChatAvatar, IconButton, errorText, shortTime } from '../ui';
-import { play, startRecording, stopPlaying, stopRecording } from '../voice';
+import { needsWebPlayer, play, setSpeed, startRecording, stopPlaying, stopRecording } from '../voice';
+import { openInPlayer } from './AttachmentView';
 import { pickFile } from '../files';
 import type { Route } from '../App';
 
@@ -179,6 +180,7 @@ export function AudioView({ a }: { a: Attachment }) {
   const [playing, setPlaying] = useState(false);
   const [pos, setPos] = useState(0);
   const [len, setLen] = useState(0);
+  const [rate, setRate] = useState(1);
   const fmt = (x: number) => `${Math.floor(x / 60)}:${String(Math.floor(x % 60)).padStart(2, '0')}`;
   useEffect(() => () => void (playing && stopPlaying()), [playing]);
   if (!a.data) {
@@ -190,6 +192,7 @@ export function AudioView({ a }: { a: Attachment }) {
     );
   }
   async function toggle() {
+    if (needsWebPlayer(a)) return openInPlayer(a);
     if (playing) {
       await stopPlaying();
       setPlaying(false);
@@ -197,10 +200,14 @@ export function AudioView({ a }: { a: Attachment }) {
     }
     setPlaying(true);
     try {
-      await play(a, (p, l) => {
-        setPos(p);
-        if (l) setLen(l);
-      });
+      await play(
+        a,
+        (p, l) => {
+          setPos(p);
+          if (l) setLen(l);
+        },
+        rate,
+      );
     } catch {
       // unsupported format etc.
     }
@@ -216,6 +223,20 @@ export function AudioView({ a }: { a: Attachment }) {
         <View style={[styles.trackFill, { width: `${len ? Math.min(100, (pos / len) * 100) : 0}%` }]} />
       </View>
       <Text style={[s.muted, { fontSize: 12 }]}>{fmt(playing ? pos : len)}</Text>
+      {!needsWebPlayer(a) && (
+        <Pressable
+          onPress={() => {
+            const next = rate === 1 ? 1.5 : rate === 1.5 ? 2 : 1;
+            setRate(next);
+            void setSpeed(next);
+          }}
+          style={styles.rate}
+          accessibilityLabel="Playback speed"
+          hitSlop={6}
+        >
+          <Text style={{ color: colors.muted, fontSize: 11, fontWeight: '700' }}>{rate}×</Text>
+        </Pressable>
+      )}
       <Mic size={14} color={colors.muted} />
     </View>
   );
@@ -648,6 +669,7 @@ function ProductThumb({ p }: { p: Product }) {
 }
 
 const styles = StyleSheet.create({
+  rate: { borderWidth: 1, borderColor: colors.line, borderRadius: 10, paddingHorizontal: 6, paddingVertical: 1, minWidth: 34, alignItems: 'center' },
   quote: {
     borderLeftWidth: 3,
     borderLeftColor: colors.accent,

@@ -13,10 +13,15 @@ export function decryptAttachment(ciphertext: Uint8Array, key: Uint8Array, diges
   return openWithKey(key, ciphertext); // AEAD: also fails on any tampering
 }
 
-export type AttachmentKind = 'image' | 'pdf' | 'audio' | 'file';
+export type AttachmentKind = 'image' | 'video' | 'pdf' | 'audio' | 'file';
+
+/** Videos every platform's player can show (MP4 / MOV / WebM / 3GP). */
+const VIDEO_RE = /^video\/(mp4|quicktime|webm|3gpp|3gpp2|x-m4v|mpeg)$/i;
+const VIDEO_EXT_RE = /\.(mp4|m4v|mov|webm|3gp)$/i;
 
 export function attachmentKind(mime: string, name: string): AttachmentKind {
   if (/^image\/(png|jpe?g|gif|webp|heic|heif|bmp)$/i.test(mime)) return 'image';
+  if (VIDEO_RE.test(mime) || (mime === 'application/octet-stream' && VIDEO_EXT_RE.test(name))) return 'video';
   if (/^audio\/(webm|ogg|mp4|aac|mpeg|m4a|x-m4a|wav)$/i.test(mime)) return 'audio';
   if (mime === 'application/pdf' || /\.pdf$/i.test(name)) return 'pdf';
   return 'file';
@@ -35,4 +40,13 @@ export function safeFileName(name: string): string {
     .replace(/[\\/]/g, '_')
     .trim();
   return (cleaned || 'file').slice(0, 120);
+}
+
+/**
+ * A small preview picture sent with a photo or video (base64 JPEG, a few KB), so the chat shows something at once
+ * while the file itself downloads. Anything else (too big, not base64) is ignored.
+ */
+export const MAX_THUMB_CHARS = 24_000;
+export function validThumb(t: unknown): t is string {
+  return typeof t === 'string' && t.length > 0 && t.length <= MAX_THUMB_CHARS && /^[A-Za-z0-9+/]+={0,2}$/.test(t);
 }

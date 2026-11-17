@@ -6,6 +6,9 @@ import {
   Download,
   File,
   FileText,
+  Film,
+  Play,
+  RotateCw,
   Forward,
   Image as ImageIcon,
   Lock,
@@ -23,8 +26,9 @@ import { colors, s } from '../theme';
 import { IconButton, Sheet, errorText } from '../ui';
 import { saveToDevice, shareOut } from '../deviceFiles';
 import { SendPicker } from './SendPicker';
+import { MediaPlayer } from './VideoView';
 
-const ICON: Record<Attachment['kind'], LucideIcon> = { image: ImageIcon, pdf: FileText, audio: Mic, file: File };
+const ICON: Record<Attachment['kind'], LucideIcon> = { image: ImageIcon, video: Film, pdf: FileText, audio: Mic, file: File };
 
 /** Share outside CellMate works on a message: the viewer only has the file. */
 const asMessage = (a: Attachment) => ({ id: '', peer: client.activeChat ?? '', text: '', ts: 0, outgoing: false, attachment: a }) as ChatMessage;
@@ -33,7 +37,8 @@ const asMessage = (a: Attachment) => ({ id: '', peer: client.activeChat ?? '', t
 // Full-screen viewer. It is rendered INSIDE the main activity window (not a RN <Modal>, which on
 // Android is a separate window that FLAG_SECURE does not cover), so screenshots stay blocked.
 
-type Open = { a: Attachment; kind: 'image' | 'pdf'; b64: string } | null;
+/** video / audio: played from a temporary private file (see MediaPlayer); `b64` is only used for photos and PDFs. */
+type Open = { a: Attachment; kind: 'image' | 'pdf' | 'video' | 'audio'; b64: string } | null;
 let current: Open = null;
 /**
  * The "share to which chat" picker. Everyone may share files on to other chats; there is deliberately no way
@@ -55,6 +60,7 @@ const showForward = (a: Attachment | null) => {
 export function openAttachment(a: Attachment): boolean {
   if (!a.data) return false;
   if (a.kind === 'image' || a.kind === 'pdf') setOpen({ a, kind: a.kind, b64: toBase64(a.data) });
+  else if (a.kind === 'video') setOpen({ a, kind: 'video', b64: '' });
   else showForward(a);
   return true;
 }
@@ -115,6 +121,8 @@ export function MediaViewerHost({ onToast }: { onToast: (m: string) => void }) {
           </View>
           {o.kind === 'image' ? (
             <ZoomImage uri={`data:${o.a.mime};base64,${o.b64}`} />
+          ) : o.kind === 'video' || o.kind === 'audio' ? (
+            <MediaPlayer a={o.a} audio={o.kind === 'audio'} />
           ) : (
             <PdfView b64={o.b64} />
           )}
@@ -144,27 +152,69 @@ export function MediaViewerHost({ onToast }: { onToast: (m: string) => void }) {
  * Photos / PDFs / files inside a chat bubble, shown from memory. Long-press or the share button shares it
  * to another chat; nothing can take it outside CellMate.
  */
-export function AttachmentView({ a }: { a: Attachment }) {
-  const b64 = useMemo(() => (a.data ? toBase64(a.data) : null), [a.data]);
-  const actions = b64 && client.can('forward', client.activeChat) ? () => showForward(a) : undefined;
+/** A voice message this phone's own player can't play (WebM from a computer, on an iPhone): open the web player. */
+export function openInPlayer(a: Attachment) {
+  if (a.data) setOpen({ a, kind: a.kind === 'video' ? 'video' : 'audio', b64: '' });
+}
 
-  if (a.state === 'uploading' || a.state === 'downloading' || !b64) {
-    const failed = a.state === 'failed' || (a.state === 'ready' && !b64);
+/**
+ * Photos / videos / PDFs / files inside a chat bubble, shown from memory. Long-press or the share button shares it
+ * to another chat; nothing can take it outside CellMate (unless the admin allows saving / sharing out).
+ */
+export function AttachmentView({ a, onRetry }: { a: Attachment; onRetry?: () => void }) {
+  // Only photos are turned into a data: URL for the bubble; videos are played from a file when tapped.
+  const b64 = useMemo(() => (a.data && a.kind !== 'video' ? toBase64(a.data) : null), [a.data, a.kind]);
+  const ready = a.kind === 'video' ? !!a.data : !!b64;
+  const actions = ready && client.can('forward', client.activeChat) ? () => showForward(a) : undefined;
+  const preview = a.thumb ? `data:image/jpeg;base64,${a.thumb}` : null;
+
+  if (a.state === 'uploading' || a.state === 'downloading' || !ready) {
+    const failed = a.state === 'failed' || (a.state === 'ready' && !ready);
+    if (preview && !failed && (a.kind === 'image' || a.kind === 'video')) {
+      // The small preview (blurred) while the real file comes, like WhatsApp.
+      return (
+        <View style={styles.thumb}>
+          <Image source={{ uri: preview }} style={[StyleSheet.absoluteFill, { borderRadius: 12 }]} blurRadius={8} resizeMode="cover" />
+          <View style={styles.overlay}>
+            <ActivityIndicator color="#fff" />
+            <Text style={styles.overlayText}>{a.state === 'uploading' ? 'Sending' : formatBytes(a.size)}</Text>
+          </View>
+        </View>
+      );
+    }
     return (
       <Card
         icon={failed ? TriangleAlert : ICON[a.kind]}
         warn={failed}
         name={a.name}
-        sub={failed ? 'File unavailable' : a.state === 'uploading' ? 'Encrypting & sending…' : 'Decrypting…'}
+        sub={failed ? (a.data ? 'Not sent · tap to try again' : 'Could not download · tap to try again') : a.state === 'uploading' ? 'Encrypting & sending…' : `Downloading ${formatBytes(a.size)}…`}
         busy={!failed}
+        onPress={failed ? onRetry : undefined}
+        retry={failed && !!onRetry}
       />
     );
   }
 
   if (a.kind === 'image') {
     return (
-      <Pressable onPress={() => setOpen({ a, kind: 'image', b64 })} onLongPress={actions}>
+      <Pressable onPress={() => setOpen({ a, kind: 'image', b64: b64! })} onLongPress={actions}>
         <Image source={{ uri: `data:${a.mime};base64,${b64}` }} style={styles.thumb} resizeMode="cover" />
+      </Pressable>
+    );
+  }
+
+  if (a.kind === 'video') {
+    return (
+      <Pressable onPress={() => setOpen({ a, kind: 'video', b64: '' })} onLongPress={actions} accessibilityLabel="Play video">
+        <View style={[styles.thumb, { backgroundColor: '#1f2937' }]}>
+          {preview && <Image source={{ uri: preview }} style={[StyleSheet.absoluteFill, { borderRadius: 12 }]} resizeMode="cover" />}
+          <View style={styles.overlay}>
+            <View style={styles.play}>
+              <Play size={24} color="#fff" fill="#fff" />
+            </View>
+          </View>
+          <Text style={[styles.overlayText, { position: 'absolute', left: 8, bottom: 8 }]}>{formatBytes(a.size)}</Text>
+        </View>
       </Pressable>
     );
   }
@@ -176,7 +226,7 @@ export function AttachmentView({ a }: { a: Attachment }) {
         pdf
         name={a.name}
         sub={`${formatBytes(a.size)} · Tap to view`}
-        onPress={() => setOpen({ a, kind: 'pdf', b64 })}
+        onPress={() => setOpen({ a, kind: 'pdf', b64: b64! })}
         onActions={actions}
       />
     );
@@ -194,6 +244,7 @@ function Card({
   warn,
   onPress,
   onActions,
+  retry,
 }: {
   icon: LucideIcon;
   name: string;
@@ -204,6 +255,7 @@ function Card({
   onPress?: () => void;
   /** Share to another chat (once the file is ready). */
   onActions?: () => void;
+  retry?: boolean;
 }) {
   const [bg, fg] = warn ? [colors.warnSoft, colors.warn] : pdf ? ['#fef3f2', '#d92d20'] : [colors.accentSoft, colors.accent];
   return (
@@ -218,6 +270,7 @@ function Card({
         <Text style={[s.muted, { fontSize: 12 }]}>{sub}</Text>
       </View>
       {onActions && <IconButton icon={Forward} label="Share to a chat" size={18} onPress={onActions} />}
+      {retry && onPress && <IconButton icon={RotateCw} label="Try again" size={18} onPress={onPress} />}
     </Pressable>
   );
 }
@@ -282,7 +335,10 @@ function PdfView({ b64 }: { b64: string }) {
 }
 
 const styles = StyleSheet.create({
-  thumb: { width: 230, height: 230, borderRadius: 12, marginBottom: 4, backgroundColor: colors.hover },
+  thumb: { width: 230, height: 230, borderRadius: 12, marginBottom: 4, backgroundColor: colors.hover, overflow: 'hidden' },
+  overlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: 'rgba(0,0,0,0.2)' },
+  overlayText: { color: '#fff', fontSize: 12, fontWeight: '700', textShadowColor: 'rgba(0,0,0,0.6)', textShadowRadius: 3 },
+  play: { width: 52, height: 52, borderRadius: 26, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.55)' },
   card: {
     flexDirection: 'row',
     alignItems: 'center',

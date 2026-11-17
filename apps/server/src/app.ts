@@ -1,5 +1,6 @@
 import { createHash, createHmac, randomBytes, scrypt, timingSafeEqual, type ScryptOptions } from 'node:crypto';
-import { mkdirSync, promises as fs } from 'node:fs';
+import { createReadStream, createWriteStream, mkdirSync, promises as fs } from 'node:fs';
+import { once } from 'node:events';
 import http from 'node:http';
 import { dirname, extname, join, resolve as resolvePath, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -140,6 +141,70 @@ const MAX_BODY = 64 * 1024;
 const MAX_ENVELOPE = 256 * 1024;
 /** Encrypted attachments are sent as base64 text (works the same on every client platform). */
 const MAX_ATTACHMENT_B64 = Math.ceil(((MAX_ATTACHMENT_BYTES + 64) * 4) / 3) + 4;
+/**
+ * New uploads are refused (507) while the disk has less free space than this, so files can never fill the disk
+ * and stop the database. Old files are deleted after ATTACHMENT_TTL_MS, which frees space again.
+ */
+const MIN_FREE_DISK_BYTES = Number(process.env.MIN_FREE_DISK_MB ?? 2048) * 1024 * 1024;
+
+/**
+ * Streams a base64 upload straight into a file (decoding on the way), so a 25 MB file never sits in the server's
+ * memory as one 33 MB string. Returns the number of bytes written.
+ */
+async function base64BodyToFile(req: http.IncomingMessage, limit: number, file: string): Promise<number> {
+  const tmp = `${file}.part`;
+  const out = createWriteStream(tmp);
+  let size = 0;
+  let bytes = 0;
+  let carry = '';
+  let ended = false; // '=' padding seen: nothing may follow
+  try {
+    for await (const chunk of req) {
+      size += (chunk as Buffer).length;
+      if (size > limit) throw new HttpError(413, 'body too large');
+      const text = carry + (chunk as Buffer).toString('latin1').replace(/\s+/g, '');
+      if (!/^[A-Za-z0-9+/]*={0,2}$/.test(text) || (ended && text)) throw new HttpError(400, 'invalid encoding');
+      if (text.includes('=')) ended = true;
+      const whole = ended ? text.length : text.length - (text.length % 4);
+      carry = text.slice(whole);
+      if (whole) {
+        const buf = Buffer.from(text.slice(0, whole), 'base64');
+        bytes += buf.length;
+        if (!out.write(buf)) await once(out, 'drain');
+      }
+      if (ended) carry = '';
+    }
+    if (carry) {
+      const buf = Buffer.from(carry, 'base64');
+      bytes += buf.length;
+      out.write(buf);
+    }
+    out.end();
+    await once(out, 'finish');
+    if (bytes < 40) throw new HttpError(400, 'too small');
+    await fs.rename(tmp, file);
+    return bytes;
+  } catch (e) {
+    out.destroy();
+    await fs.rm(tmp, { force: true }).catch(() => {});
+    throw e;
+  }
+}
+
+/** Sends a file as base64 text, read and encoded piece by piece (never the whole file in memory). */
+async function sendFileAsBase64(res: http.ServerResponse, file: string, size: number): Promise<void> {
+  res.writeHead(200, { 'content-type': 'text/plain', 'content-length': String(4 * Math.ceil(size / 3)), 'cache-control': 'no-store' });
+  let carry: Buffer = Buffer.alloc(0);
+  // A multiple of 3 bytes encodes to base64 without padding in the middle.
+  for await (const chunk of createReadStream(file, { highWaterMark: 3 * 64 * 1024 })) {
+    const all = carry.length ? Buffer.concat([carry, chunk as Buffer]) : (chunk as Buffer);
+    const whole = all.length - (all.length % 3);
+    carry = all.subarray(whole);
+    if (whole && !res.write(all.subarray(0, whole).toString('base64'))) await once(res, 'drain');
+    if (res.destroyed) return;
+  }
+  res.end(carry.length ? carry.toString('base64') : undefined);
+}
 const ATTACHMENT_TTL_MS = 14 * 24 * 3600 * 1000;
 const MAX_QUEUE = 5000;
 const QUEUE_TTL_MS = 30 * 24 * 3600 * 1000;
@@ -1003,6 +1068,19 @@ export function createMeetMeServer(
   const attachmentsDir = config.attachmentsDir ?? join(dirname(config.dbPath), 'attachments');
   mkdirSync(attachmentsDir, { recursive: true });
   const attachmentFile = (id: string) => join(attachmentsDir, `${id}.bin`);
+  /** Free disk space check for uploads, cached for 30 s (statfs is cheap, but uploads can come in bursts). */
+  let diskCheck = { at: 0, ok: true };
+  async function diskHasRoom(): Promise<boolean> {
+    if (Date.now() - diskCheck.at < 30_000) return diskCheck.ok;
+    try {
+      const st = await fs.statfs(attachmentsDir);
+      diskCheck = { at: Date.now(), ok: st.bavail * st.bsize >= MIN_FREE_DISK_BYTES };
+      if (!diskCheck.ok) console.error(`attachments: less than ${MIN_FREE_DISK_BYTES >> 20} MB free on the disk, uploads paused`);
+    } catch {
+      diskCheck = { at: Date.now(), ok: true }; // can't tell: don't block people
+    }
+    return diskCheck.ok;
+  }
   const uploadLimit = new RateLimiter(120, 3600_000);
   const reportLimit = new RateLimiter(20, 3600_000);
   const shareLogLimit = new RateLimiter(300, 3600_000);
@@ -1419,23 +1497,16 @@ export function createMeetMeServer(
     }
     if (method === 'POST' && path === '/v1/attachments') {
       if (!uploadLimit.allow(me)) throw new HttpError(429, 'too many uploads');
-      const b64 = (await readBody(req, MAX_ATTACHMENT_B64)).trim();
-      if (!/^[A-Za-z0-9+/]*={0,2}$/.test(b64)) throw new HttpError(400, 'invalid encoding');
-      const bytes = Buffer.from(b64, 'base64');
-      if (bytes.length < 40) throw new HttpError(400, 'too small');
+      if (!(await diskHasRoom())) throw new HttpError(507, 'The server is out of storage space. Please tell your admin.');
       const id = randomBytes(16).toString('hex');
-      await fs.writeFile(attachmentFile(id), bytes);
+      await base64BodyToFile(req, MAX_ATTACHMENT_B64, attachmentFile(id));
       return send(200, { id });
     }
     if (method === 'GET' && (m = path.match(/^\/v1\/attachments\/([0-9a-f]{32})$/))) {
-      let bytes: Buffer;
-      try {
-        bytes = await fs.readFile(attachmentFile(m[1]!));
-      } catch {
-        throw new HttpError(404, 'attachment not found or expired');
-      }
-      res.writeHead(200, { 'content-type': 'text/plain' });
-      return res.end(bytes.toString('base64'));
+      const file = attachmentFile(m[1]!);
+      const st = await fs.stat(file).catch(() => null);
+      if (!st?.isFile()) throw new HttpError(404, 'attachment not found or expired');
+      return sendFileAsBase64(res, file, st.size);
     }
     if (method === 'GET' && path === '/v1/me') {
       const user = (await db.getUser(me))!;

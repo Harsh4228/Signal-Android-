@@ -52,7 +52,15 @@ export async function stopRecording(keep: boolean): Promise<{ data: Uint8Array; 
 let playing: { path: string; done: () => void } | null = null;
 
 /** Play a voice message; `onProgress` gets [position, length] in seconds. Resolves when it ends or is stopped. */
-export async function play(a: Attachment, onProgress: (pos: number, len: number) => void): Promise<void> {
+/** iPhones can't play WebM / Ogg voice messages with their own player (desktop recordings before 1.6). */
+export const needsWebPlayer = (a: Attachment) => Platform.OS === 'ios' && /webm|ogg/i.test(a.mime);
+
+/** Playback speed for the voice message playing now (1, 1.5 or 2), like WhatsApp. */
+export async function setSpeed(rate: number): Promise<void> {
+  if (playing) await Sound.setPlaybackSpeed(rate).catch(() => {});
+}
+
+export async function play(a: Attachment, onProgress: (pos: number, len: number) => void, rate = 1): Promise<void> {
   await stopPlaying();
   if (!a.data) throw new Error('The voice message is not available');
   const ext = a.mime.includes('webm') ? 'webm' : a.mime.includes('ogg') ? 'ogg' : 'm4a';
@@ -69,7 +77,9 @@ export async function play(a: Attachment, onProgress: (pos: number, len: number)
     playing = { path, done };
     Sound.addPlayBackListener((e) => onProgress(e.currentPosition / 1000, e.duration / 1000));
     Sound.addPlaybackEndListener(() => done());
-    Sound.startPlayer(`file://${path}`).catch(() => done());
+    Sound.startPlayer(`file://${path}`)
+      .then(() => (rate !== 1 ? Sound.setPlaybackSpeed(rate) : undefined))
+      .catch(() => done());
   });
 }
 

@@ -28,6 +28,7 @@ import {
   type SharedLocation,
 } from '@meetme/core';
 import { client, useClient } from '../messenger';
+import { voiceMime } from '../media';
 import { useObjectUrl } from './AttachmentView';
 import { SendPicker } from './SendPicker';
 import { Avatar, ChatAvatar, errorText, shortTime } from './ui';
@@ -167,6 +168,8 @@ export function AudioView({ a }: { a: Attachment }) {
   const [playing, setPlaying] = useState(false);
   const [pos, setPos] = useState(0);
   const [len, setLen] = useState(0);
+  /** Playback speed, like WhatsApp: 1× → 1.5× → 2×. */
+  const [rate, setRate] = useState(1);
   const fmt = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
   if (!url) {
     return (
@@ -191,7 +194,10 @@ export function AudioView({ a }: { a: Attachment }) {
         onClick={() => {
           const el = ref.current!;
           if (playing) el.pause();
-          else void el.play();
+          else {
+            el.playbackRate = rate;
+            void el.play();
+          }
           setPlaying(!playing);
         }}
       >
@@ -201,6 +207,17 @@ export function AudioView({ a }: { a: Attachment }) {
         <i style={{ width: `${len ? (pos / len) * 100 : 0}%` }} />
       </span>
       <span className="muted small">{fmt(playing || pos ? pos : len)}</span>
+      <button
+        className="voice-rate"
+        title="Playback speed"
+        onClick={() => {
+          const next = rate === 1 ? 1.5 : rate === 1.5 ? 2 : 1;
+          setRate(next);
+          if (ref.current) ref.current.playbackRate = next;
+        }}
+      >
+        {rate}×
+      </button>
       <Mic size={14} className="muted" />
     </div>
   );
@@ -220,15 +237,17 @@ export function VoiceRecorder({ onSend, onCancel, onError }: { onSend: (data: Ui
       .getUserMedia({ audio: true })
       .then((s) => {
         stream = s;
-        const mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : 'audio/webm';
+        // MP4 / AAC where possible: iPhones can't play WebM voice messages.
+        const mime = voiceMime();
         const r = new MediaRecorder(s, { mimeType: mime });
         rec.current = r;
         r.ondataavailable = (e) => e.data.size && chunks.current.push(e.data);
         r.onstop = async () => {
           stream?.getTracks().forEach((t) => t.stop());
           if (!send.current) return;
-          const blob = new Blob(chunks.current, { type: 'audio/webm' });
-          onSend(new Uint8Array(await blob.arrayBuffer()), 'audio/webm');
+          const type = mime.split(';')[0]!;
+          const blob = new Blob(chunks.current, { type });
+          onSend(new Uint8Array(await blob.arrayBuffer()), type);
         };
         r.start(250);
         timer = setInterval(() => setSecs((x) => x + 1), 1000);

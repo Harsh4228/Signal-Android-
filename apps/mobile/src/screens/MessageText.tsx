@@ -1,10 +1,11 @@
-import { Alert, Image, Linking, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Alert, Image, Linking, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { ZoomImage } from '../ZoomImage';
 import { Eye, EyeOff, Image as ImageIcon, X } from 'lucide-react-native';
-import { LINK_RE, shortId, toBase64, type ChatMessage } from '@meetme/core';
+import { formatText, mentionPattern, shortId, toBase64, type ChatMessage, type TextSpan } from '@meetme/core';
 import { client } from '../messenger';
 import { colors, s } from '../theme';
 import { useBack } from '../ui';
+import { MediaPlayer } from './VideoView';
 
 /** Ask first: a link in a message could lead anywhere. */
 function openLink(url: string) {
@@ -14,7 +15,9 @@ function openLink(url: string) {
   ]);
 }
 
-/** Message text with tappable links and highlighted @mentions. */
+const mono = Platform.OS === 'ios' ? 'Menlo' : 'monospace';
+
+/** Message text: *bold*, _italic_, ~strike~, `code`, quotes and lists (like WhatsApp), tappable links, @mentions. */
 export function MessageText({ m }: { m: ChatMessage }) {
   const tokens: string[] = [];
   for (const u of m.mentions ?? []) {
@@ -22,36 +25,41 @@ export function MessageText({ m }: { m: ChatMessage }) {
     const name = client.displayName(u);
     if (name) tokens.push(`@${name}`);
   }
-  const mention = tokens.length ? new RegExp(`(${tokens.map((x) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})`, 'gi') : null;
-  const parts: { text: string; link?: boolean; mention?: boolean }[] = [];
-  let last = 0;
-  for (const match of m.text.matchAll(LINK_RE)) {
-    if (match.index! > last) parts.push({ text: m.text.slice(last, match.index) });
-    parts.push({ text: match[0], link: true });
-    last = match.index! + match[0].length;
-  }
-  if (last < m.text.length) parts.push({ text: m.text.slice(last) });
+  const lines = formatText(m.text, mentionPattern(tokens));
   return (
-    <Text style={[s.text, { lineHeight: 21 }]} selectable={false}>
-      {parts.map((p, i) =>
-        p.link ? (
-          <Text key={i} style={{ color: colors.accent, textDecorationLine: 'underline' }} onPress={() => openLink(p.text)}>
-            {p.text}
+    <View>
+      {lines.map((l, i) => (
+        <View key={i} style={[l.quote && styles.quote, l.mono && styles.monoLine, !!l.bullet && { flexDirection: 'row', gap: 6 }]}>
+          {!!l.bullet && <Text style={[s.text, { color: colors.muted, lineHeight: 21 }]}>{l.bullet}</Text>}
+          <Text style={[s.text, { lineHeight: 21, flexShrink: 1 }, l.quote && { color: colors.muted }]} selectable={false}>
+            {l.spans.length ? l.spans.map((sp, j) => <Span key={j} s={sp} />) : ' '}
           </Text>
-        ) : mention ? (
-          p.text.split(mention).map((piece, j) =>
-            j % 2 ? (
-              <Text key={`${i}-${j}`} style={{ color: colors.accent, fontWeight: '600' }}>
-                {piece}
-              </Text>
-            ) : (
-              piece
-            ),
-          )
-        ) : (
-          p.text
-        ),
-      )}
+        </View>
+      ))}
+    </View>
+  );
+}
+
+function Span({ s: sp }: { s: TextSpan }) {
+  if (sp.link) {
+    return (
+      <Text style={{ color: colors.accent, textDecorationLine: 'underline' }} onPress={() => openLink(sp.text)}>
+        {sp.text}
+      </Text>
+    );
+  }
+  if (sp.mention) return <Text style={{ color: colors.accent, fontWeight: '600' }}>{sp.text}</Text>;
+  if (!sp.bold && !sp.italic && !sp.strike && !sp.code) return <>{sp.text}</>;
+  return (
+    <Text
+      style={[
+        sp.bold && { fontWeight: '700' },
+        sp.italic && { fontStyle: 'italic' },
+        sp.strike && { textDecorationLine: 'line-through' },
+        sp.code && { fontFamily: mono, fontSize: 14, backgroundColor: colors.hover },
+      ]}
+    >
+      {sp.text}
     </Text>
   );
 }
@@ -84,6 +92,10 @@ export function ViewOnceViewer({ m, onClose }: { m: ChatMessage; onClose: () => 
     <View style={[StyleSheet.absoluteFill, { backgroundColor: '#000' }]}>
       {a?.data && a.kind === 'image' ? (
         <ZoomImage uri={`data:${a.mime};base64,${toBase64(a.data)}`} />
+      ) : a?.data && a.kind === 'video' ? (
+        <View style={{ flex: 1, paddingTop: 60, paddingBottom: 60 }}>
+          <MediaPlayer a={a} />
+        </View>
       ) : (
         <View style={[s.center]}>
           <ImageIcon size={40} color="#888" />
@@ -99,6 +111,8 @@ export function ViewOnceViewer({ m, onClose }: { m: ChatMessage; onClose: () => 
 }
 
 const styles = StyleSheet.create({
+  quote: { borderLeftWidth: 3, borderLeftColor: colors.lineStrong, paddingLeft: 8 },
+  monoLine: { backgroundColor: colors.hover, paddingHorizontal: 6 },
   vo: { gap: 10, paddingVertical: 6, paddingRight: 8 },
   close: { position: 'absolute', top: 12, left: 12, padding: 10 },
   hint: { position: 'absolute', bottom: 28, alignSelf: 'center', color: '#ddd', fontSize: 13 },

@@ -19,6 +19,7 @@ import { CallBar, CallScreen } from './screens/CallScreen';
 import { GroupCallBar, GroupCallScreen } from './screens/GroupCallScreen';
 import { BroadcastScreen } from './screens/BroadcastScreen';
 import { MediaViewerHost } from './screens/AttachmentView';
+import { MediaWorkerHost } from './mediaWorker';
 import { PhotoCropHost } from './PhotoCrop';
 import { isGroupKey, type UserProfile } from '@meetme/core';
 import { setShareTargets, takeShared, type SharedIn } from './deviceFiles';
@@ -288,6 +289,7 @@ export default function App() {
         {/* WhatsApp's bottom bar on the main pages (not inside a chat or a sub-page). */}
         {ready && c.account && !c.moved && !c.pending && tab && <BottomTabs current={tab} navigate={setRoute} />}
         <MediaViewerHost onToast={setToast} />
+        <MediaWorkerHost />
         <PhotoCropHost />
         {shared && !lock.locked && (
           <ShareInScreen

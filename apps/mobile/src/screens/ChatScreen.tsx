@@ -39,6 +39,9 @@ import {
   Video,
   X,
   Flag,
+  Pin,
+  PinOff,
+  RotateCw,
   Share2,
   Camera as CameraIcon,
 } from 'lucide-react-native';
@@ -61,6 +64,7 @@ import { pickFile, pickFiles, type PickKind } from '../files';
 import { copyText, saveToDevice, shareOut } from '../deviceFiles';
 import { AttachmentView } from './AttachmentView';
 import { ChatCamera } from './ChatCamera';
+import { prepareMedia } from '../mediaWorker';
 import { MessageText, ViewOnceBubble, ViewOnceViewer } from './MessageText';
 import { EventView, NewEvent, NewPoll, PollView } from './PollEvent';
 import { calls, client, groupCalls, useClient, useGroupCall } from '../messenger';
@@ -157,7 +161,9 @@ export function ChatScreen({
       const r = replyTo;
       setReplyTo(null);
       for (let i = 0; i < files.length; i++) {
-        await client.sendFile(peer, files[i]!, i === 0 ? caption : '', { replyTo: i === 0 ? (r ?? undefined) : undefined, viewOnce });
+        // Photos are made smaller and get a preview (like WhatsApp); PDFs and "Other files" go untouched.
+        const file = kind === 'photo' ? await prepareMedia(files[i]!) : files[i]!;
+        await client.sendFile(peer, file, i === 0 ? caption : '', { replyTo: i === 0 ? (r ?? undefined) : undefined, viewOnce });
       }
     } catch (e) {
       onError(errorText(e));
@@ -181,6 +187,11 @@ export function ChatScreen({
     setSearching(false);
     listRef.current?.scrollToIndex({ index, viewPosition: 0.5, animated: true });
   }
+
+  const pinned = c.pinnedMessages(peer);
+  const [pinIndex, setPinIndex] = useState(0);
+  const shownPin = pinned[pinIndex % Math.max(1, pinned.length)];
+  const togglePin = (m: ChatMessage) => client.pinMessage(peer, m.id, !m.pinnedAt).catch((e) => onError(errorText(e)));
 
   const remove = (m: ChatMessage, forEveryone: boolean) =>
     client.deleteMessage(peer, m.id, forEveryone).catch((e) => onError(errorText(e)));
@@ -210,6 +221,12 @@ export function ChatScreen({
       list.push({ icon: Share2, label: 'Share to another app', onPress: () => void shareOut(m, peer).catch((e) => onError(errorText(e))) });
     }
     list.push({ icon: Star, label: m.starred ? 'Unstar' : 'Star', onPress: () => client.toggleStar(m) });
+    if (online && !gone && c.canSendTo(peer) && !m.call) {
+      list.push({ icon: m.pinnedAt ? PinOff : Pin, label: m.pinnedAt ? 'Unpin' : 'Pin for everyone', onPress: () => void togglePin(m) });
+    }
+    if (m.outgoing && m.status === 'failed' && !m.poll && !m.event) {
+      list.push({ icon: RotateCw, label: 'Send again', onPress: () => void client.retrySend(peer, m.id).catch((e) => onError(errorText(e))) });
+    }
     if (m.outgoing && c.canEditDelete && m.text && !m.poll && !m.event) {
       list.push({
         icon: Pencil,
@@ -317,6 +334,26 @@ export function ChatScreen({
           </Text>
           <Text style={{ color: '#fff', fontWeight: '700' }}>Join</Text>
         </Pressable>
+      )}
+      {shownPin && (
+        <View style={styles.pinnedBar}>
+          <Pressable
+            style={[s.row, { flex: 1, gap: 10, paddingVertical: 8 }]}
+            onPress={() => (jumpTo(shownPin.id), setPinIndex((i) => i + 1))}
+            accessibilityLabel="Go to the pinned message"
+          >
+            <Pin size={16} color={colors.accent} />
+            <View style={{ flex: 1 }}>
+              <Text style={{ color: colors.accentText, fontSize: 12, fontWeight: '700' }}>
+                Pinned{pinned.length > 1 ? ` (${(pinIndex % pinned.length) + 1}/${pinned.length})` : ''}
+              </Text>
+              <Text style={[s.muted, { fontSize: 13 }]} numberOfLines={1}>
+                {MessengerClient.preview(shownPin)}
+              </Text>
+            </View>
+          </Pressable>
+          {online && !gone && c.canSendTo(peer) && <IconButton icon={PinOff} label="Unpin" size={18} color={colors.muted} onPress={() => void togglePin(shownPin)} />}
+        </View>
       )}
       {searching && (
         <View style={{ backgroundColor: colors.surface, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.lineStrong }}>
@@ -427,23 +464,38 @@ export function ChatScreen({
                     ) : m.attachment.kind === 'audio' ? (
                       <AudioView a={m.attachment} />
                     ) : (
-                      <AttachmentView a={m.attachment} />
+                      <AttachmentView
+                        a={m.attachment}
+                        onRetry={() =>
+                          void (m.outgoing && m.status === 'failed' ? client.retrySend(peer, m.id) : client.retryDownload(peer, m.id)).catch((e) =>
+                            onError(errorText(e)),
+                          )
+                        }
+                      />
                     ))}
                   {m.poll && <PollView chat={peer} m={m} onError={onError} />}
                   {m.event && <EventView chat={peer} m={m} onError={onError} />}
                   {m.contact && <ContactCardView username={m.contact} navigate={navigate} />}
                   {m.location && <LocationCardView l={m.location} />}
                   {m.product && <ProductCardView p={m.product} onViewCatalog={setViewingCatalog} />}
-                  {/* selectable={false}: message text cannot be copied */}
+                  {/* Copying is a right the admin gives (Copy in the long-press menu); the text itself isn't selectable. */}
                   {!!m.text && <MessageText m={m} />}
                 </>
               )}
               <View style={[s.row, { gap: 4, alignSelf: 'flex-end', marginTop: 2 }]}>
+                {!!m.pinnedAt && <Pin size={11} color={colors.faint} />}
                 {m.starred && <Star size={11} color="#f79009" fill="#f79009" />}
                 {m.edited && <Text style={{ color: colors.faint, fontSize: 11, fontStyle: 'italic' }}>edited</Text>}
                 {!!m.expiresAt && <Timer size={11} color={colors.faint} />}
                 <Text style={{ color: colors.faint, fontSize: 11 }}>{clock(m.ts)}</Text>
-                {m.outgoing && m.status && <Tick status={m.status} />}
+                {m.outgoing && m.status === 'failed' && !m.poll && !m.event ? (
+                  <Pressable onPress={() => void client.retrySend(peer, m.id).catch((e) => onError(errorText(e)))} hitSlop={8} style={[s.row, { gap: 3 }]} accessibilityLabel="Not sent, tap to try again">
+                    <RotateCw size={12} color={colors.danger} />
+                    <Text style={{ color: colors.danger, fontSize: 11, fontWeight: '700' }}>Retry</Text>
+                  </Pressable>
+                ) : (
+                  m.outgoing && m.status && <Tick status={m.status} />
+                )}
               </View>
               {!m.deleted && <ReactionChips chat={peer} m={m} onError={onError} />}
             </Pressable>
@@ -594,7 +646,9 @@ export function ChatScreen({
             if (caption && caption === text.trim()) setText('');
             const r = replyTo;
             setReplyTo(null);
-            client.sendFile(peer, file, caption, { replyTo: r ?? undefined, viewOnce }).catch((e) => onError(errorText(e)));
+            void prepareMedia(file)
+              .then((f) => client.sendFile(peer, f, caption, { replyTo: r ?? undefined, viewOnce }))
+              .catch((e) => onError(errorText(e)));
           }}
         />
       )}
@@ -628,6 +682,16 @@ function CallIcon({ c }: { c: CallLog }) {
 }
 
 const styles = StyleSheet.create({
+  pinnedBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingLeft: 14,
+    paddingRight: 4,
+    backgroundColor: colors.surface,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.lineStrong,
+  },
   ongoing: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 16, paddingVertical: 10, backgroundColor: '#00a884' },
   mentions: {
     backgroundColor: colors.surface,

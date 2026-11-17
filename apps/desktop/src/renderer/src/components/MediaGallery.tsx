@@ -1,13 +1,14 @@
 import { useEffect, useState } from 'react';
-import { ChevronRight, File, FileText, Image, Loader2, Trash2, TriangleAlert, X } from 'lucide-react';
+import { ChevronRight, File, FileText, Film, Image, Link2, Loader2, Play, Trash2, TriangleAlert, X } from 'lucide-react';
 import { ZoomImage } from './ZoomImage';
 import { formatBytes, type Attachment, type MediaItem } from '@meetme/core';
 import { client, useClient } from '../messenger';
-import { FileActions, PdfPages, Viewer, useObjectUrl } from './AttachmentView';
+import { FileActions, PdfPages, VideoPlayer, Viewer, useObjectUrl } from './AttachmentView';
+import { openLink } from './MessageText';
 import { AudioView } from './ChatExtras';
 import { errorText } from './ui';
 
-const isMedia = (m: MediaItem) => m.kind === 'image';
+const isMedia = (m: MediaItem) => m.kind === 'image' || m.kind === 'video';
 const day = (ts: number) => new Date(ts).toLocaleDateString([], { day: '2-digit', month: 'short', year: 'numeric' });
 const month = (ts: number) => new Date(ts).toLocaleDateString([], { month: 'long', year: 'numeric' });
 
@@ -73,10 +74,11 @@ export function MediaSection({ chatKey, onToast }: { chatKey: string; onToast: (
 /** Every saved photo and document of a chat, like WhatsApp's "Media, links and docs". */
 function MediaGallery({ chatKey, onClose, onToast }: { chatKey: string; onClose: () => void; onToast: (m: string) => void }) {
   const c = useClient();
-  const [tab, setTab] = useState<'media' | 'docs'>('media');
+  const [tab, setTab] = useState<'media' | 'docs' | 'links'>('media');
   const [viewing, setViewing] = useState<MediaItem | null>(null);
   const items = c.getMedia(chatKey);
-  const shown = items.filter((m) => (tab === 'media') === isMedia(m));
+  const links = c.linksOf(chatKey);
+  const shown = tab === 'links' ? [] : items.filter((m) => (tab === 'media') === isMedia(m));
 
   // Grouped by month, newest first.
   const groups: [string, MediaItem[]][] = [];
@@ -108,8 +110,34 @@ function MediaGallery({ chatKey, onClose, onToast }: { chatKey: string; onClose:
           <button className={tab === 'docs' ? 'active' : ''} onClick={() => setTab('docs')}>
             Docs ({items.filter((m) => !isMedia(m)).length})
           </button>
+          <button className={tab === 'links' ? 'active' : ''} onClick={() => setTab('links')}>
+            Links ({links.length})
+          </button>
         </div>
-        {!shown.length && (
+        {tab === 'links' &&
+          (links.length ? (
+            <ul className="doc-list">
+              {links.map((l, i) => (
+                <li key={`${l.msgId}-${i}`} className="clickable" onClick={() => openLink(l.url)}>
+                  <span className="att-icon">
+                    <Link2 size={20} />
+                  </span>
+                  <div className="grow">
+                    <div className="att-name msg-link">{l.url}</div>
+                    <div className="muted small">
+                      {l.outgoing ? 'You' : client.displayName(l.from)} · {day(l.ts)}
+                    </div>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <div className="notice-empty muted">
+              <Link2 size={28} color="var(--faint)" />
+              <div>No links yet</div>
+            </div>
+          ))}
+        {tab !== 'links' && !shown.length && (
           <div className="notice-empty muted">
             {tab === 'media' ? <Image size={28} color="var(--faint)" /> : <FileText size={28} color="var(--faint)" />}
             <div>{tab === 'media' ? 'No photos yet' : 'No documents yet'}</div>
@@ -152,6 +180,21 @@ function MediaGallery({ chatKey, onClose, onToast }: { chatKey: string; onClose:
 }
 
 function Thumb({ item, onOpen }: { item: MediaItem; onOpen: () => void }) {
+  // Videos are only decrypted when opened (a whole video for a small tile would be slow).
+  if (item.kind === 'video') {
+    return (
+      <button className="media-thumb video" onClick={onOpen} title={`${item.name} · ${day(item.ts)}`}>
+        <Film size={22} />
+        <span className="att-play small">
+          <Play size={14} fill="currentColor" />
+        </span>
+      </button>
+    );
+  }
+  return <PhotoThumb item={item} onOpen={onOpen} />;
+}
+
+function PhotoThumb({ item, onOpen }: { item: MediaItem; onOpen: () => void }) {
   const { a, error } = useSaved(item);
   const url = useObjectUrl(a ?? { name: '', mime: item.mime, size: 0, kind: 'image', state: 'downloading' });
   return (
@@ -196,6 +239,8 @@ function SavedViewer({ item, onClose, onToast }: { item: MediaItem; onClose: () 
         <Loader2 size={24} className="spin" color="#fff" />
       ) : item.kind === 'image' && url ? (
         <ZoomImage src={url} />
+      ) : item.kind === 'video' && url ? (
+        <VideoPlayer url={url} autoPlay className="viewer-video" />
       ) : item.kind === 'pdf' ? (
         <PdfPages data={a.data} />
       ) : item.kind === 'audio' ? (

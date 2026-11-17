@@ -86,8 +86,9 @@ import {
   MAX_REPORT_MESSAGES,
   DELETE_REQUEST,
 } from './api';
-import { attachmentKind, decryptAttachment, encryptAttachment, safeFileName, type AttachmentKind } from './attachments';
+import { attachmentKind, decryptAttachment, encryptAttachment, safeFileName, validThumb, type AttachmentKind } from './attachments';
 import { randomBytes } from './crypto/primitives';
+import { linksIn } from './format';
 import { DuplicateMessageError } from './crypto/ratchet';
 import type { PreKeyBundle } from './crypto/x3dh';
 import { Emitter } from './emitter';
@@ -177,6 +178,8 @@ export interface ChatMessage {
   /** My message: when it reached them / they read it (message info). */
   deliveredAt?: number;
   readAt?: number;
+  /** Pinned to the top of the chat for everyone (when, ms). */
+  pinnedAt?: number;
 }
 
 /** Per-chat choices kept on this device (and in the backup): pinned, archived, muted. */
@@ -201,6 +204,8 @@ export interface ChatList {
   departments: string[];
 }
 export const MAX_PINNED = 3;
+/** Pinned messages per chat (a new pin replaces the oldest), like WhatsApp. */
+export const MAX_PINNED_MESSAGES = 3;
 
 /** Rejects if the promise takes longer than `ms`. */
 function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
@@ -426,6 +431,8 @@ export interface Attachment {
   kind: AttachmentKind;
   state: 'uploading' | 'downloading' | 'ready' | 'failed';
   data?: Uint8Array;
+  /** Photos / videos: a tiny JPEG preview (base64) shown while the file downloads. */
+  thumb?: string;
   /**
    * Where the encrypted file is on the server, with its key (kept in the encrypted history, so a restored chat on
    * another device can still fetch the file while the server keeps it: 14 days).
@@ -437,6 +444,8 @@ export interface OutgoingFile {
   name: string;
   mime: string;
   data: Uint8Array;
+  /** Photos / videos: a tiny JPEG preview (base64, made by the app), sent along so the chat shows it at once. */
+  thumb?: string;
 }
 
 export interface BroadcastResult {
@@ -1255,7 +1264,7 @@ export class MessengerClient extends Emitter<Events> {
     if (!this.can('forward', from)) throw new Error('Your admin has turned off forwarding');
     if (!this.can('sendFiles', to)) throw new Error('Your admin has turned off sending files there');
     if (!a.data) throw new Error('The file is not available');
-    await this.sendMessage(to, '', { file: { name: a.name, mime: a.mime, data: a.data }, forwarded: true });
+    await this.sendMessage(to, '', { file: { name: a.name, mime: a.mime, data: a.data, thumb: a.thumb }, forwarded: true });
   }
 
   /** The department list admins pick from (A-Z). */
@@ -1820,6 +1829,7 @@ export class MessengerClient extends Emitter<Events> {
             size: att.size,
             kind: attachmentKind(att.mime, name),
             state: 'downloading',
+            thumb: validThumb(att.thumb) ? att.thumb : undefined,
             ptr: att,
           };
           void this.fetchAttachment(msg, att);
@@ -1879,6 +1889,17 @@ export class MessengerClient extends Emitter<Events> {
         m.text = p.text;
         m.edited = true;
         this.emit('change');
+        break;
+      }
+      case 'pin': {
+        if (typeof p.id !== 'string' || typeof p.on !== 'boolean') return;
+        const key = await this.chatKeyFor(from, p.g);
+        if (!key) return;
+        // In groups only people who may write there can pin (like WhatsApp's "only admins" groups).
+        if (isGroupKey(key) && !(await this.mayPost(key, from))) return;
+        const m = this.chats.get(key)?.find((x) => x.id === p.id && !x.deleted && !x.system);
+        if (!m) return;
+        this.applyPin(key, m, p.on ? ts || Date.now() : undefined);
         break;
       }
       case 'del': {
@@ -2225,7 +2246,7 @@ export class MessengerClient extends Emitter<Events> {
     if (m.attachment && !m.attachment.data) throw new Error('The file is not available');
     const a = m.attachment;
     await this.sendMessage(to, m.text, {
-      file: a && { name: a.name, mime: a.mime, data: a.data! },
+      file: a && { name: a.name, mime: a.mime, data: a.data!, thumb: a.thumb },
       contact: m.contact,
       location: m.location,
       product: m.product,
@@ -2254,6 +2275,83 @@ export class MessengerClient extends Emitter<Events> {
       set(before);
       throw err;
     }
+  }
+
+  /** Every link shared in a chat, newest first (the "Links" tab of Media, links and docs). */
+  linksOf(chat: string): { msgId: string; url: string; from: string; outgoing: boolean; ts: number }[] {
+    const me = this.account?.username ?? '';
+    const out: { msgId: string; url: string; from: string; outgoing: boolean; ts: number }[] = [];
+    for (const m of this.chats.get(chat) ?? []) {
+      if (m.deleted || m.system || !m.text || (m.viewOnce && !m.outgoing)) continue;
+      for (const url of linksIn(m.text)) out.push({ msgId: m.id, url, from: m.outgoing ? me : (m.from ?? m.peer), outgoing: m.outgoing, ts: m.ts });
+    }
+    return out.reverse();
+  }
+
+  /** Pinned messages of a chat, the newest pin first (at most MAX_PINNED_MESSAGES). */
+  pinnedMessages(chat: string): ChatMessage[] {
+    return (this.chats.get(chat) ?? []).filter((m) => m.pinnedAt && !m.deleted).sort((a, b) => b.pinnedAt! - a.pinnedAt!);
+  }
+
+  /** Pin (or unpin) a message for everyone in the chat. A 4th pin replaces the oldest, like WhatsApp. */
+  async pinMessage(chat: string, msgId: string, on: boolean): Promise<void> {
+    const m = this.chats.get(chat)?.find((x) => x.id === msgId && !x.deleted && !x.system);
+    if (!m) throw new Error('Message not found');
+    if (m.call) throw new Error('Calls cannot be pinned');
+    if (isGroupKey(chat) && !this.canSendTo(chat)) throw new Error('Only selected members can pin messages in this group');
+    const before = m.pinnedAt;
+    this.applyPin(chat, m, on ? Date.now() : undefined);
+    try {
+      await this.sendToChat(chat, { k: 'pin', id: msgId, on });
+    } catch (err) {
+      this.applyPin(chat, m, before);
+      throw err;
+    }
+  }
+
+  private applyPin(chat: string, m: ChatMessage, at: number | undefined) {
+    m.pinnedAt = at;
+    if (at) {
+      const pinned = this.pinnedMessages(chat);
+      for (const old of pinned.slice(MAX_PINNED_MESSAGES)) old.pinnedAt = undefined;
+    }
+    this.emit('change');
+  }
+
+  /** A file that could not be downloaded: try again (the server keeps files for 14 days). */
+  async retryDownload(chat: string, msgId: string): Promise<void> {
+    const m = this.chats.get(chat)?.find((x) => x.id === msgId);
+    const a = m?.attachment;
+    if (!m || !a || a.data || a.state === 'uploading') return;
+    if (!a.ptr || !validPointer(a.ptr)) throw new Error('This file is no longer available');
+    a.state = 'downloading';
+    this.emit('change');
+    await this.fetchAttachment(m, a.ptr);
+    if ((a.state as Attachment['state']) === 'failed') throw new Error('Could not download the file (it may have expired after 14 days)');
+  }
+
+  /** A message of mine that failed to send (no network, server busy): send it again. */
+  async retrySend(chat: string, msgId: string): Promise<void> {
+    const list = this.chats.get(chat);
+    const i = list?.findIndex((x) => x.id === msgId && x.outgoing && x.status === 'failed') ?? -1;
+    if (!list || i < 0) return;
+    const m = list[i]!;
+    if (m.poll || m.event) throw new Error('Send the poll or event again');
+    const a = m.attachment;
+    if (a && !a.data && !a.ptr) throw new Error('The file is no longer available');
+    list.splice(i, 1);
+    this.emit('change');
+    await this.sendMessage(chat, m.text, {
+      file: a?.data ? { name: a.name, mime: a.mime, data: a.data, thumb: a.thumb } : undefined,
+      uploaded: !a?.data && a?.ptr ? a.ptr : undefined,
+      replyTo: m.replyTo,
+      contact: m.contact,
+      location: m.location,
+      product: m.product,
+      forwarded: m.forwarded,
+      mentions: m.mentions,
+      viewOnce: m.viewOnce,
+    });
   }
 
   /** Snapshot of a message for a reply: who wrote it and a short preview. */
@@ -2312,6 +2410,7 @@ export class MessengerClient extends Emitter<Events> {
         kind: attachmentKind(opts.file.mime, name),
         state: 'uploading',
         data: opts.file.data,
+        thumb: validThumb(opts.file.thumb) ? opts.file.thumb : undefined,
       };
     }
     if (!group) this.addContactLocal(peer);
@@ -2480,6 +2579,7 @@ export class MessengerClient extends Emitter<Events> {
       name: safeFileName(file.name),
       mime: /^[\w.+-]{1,64}\/[\w.+-]{1,100}$/.test(file.mime) ? file.mime : 'application/octet-stream',
       size: file.data.length,
+      thumb: validThumb(file.thumb) && /^(image|video)\//.test(file.mime) ? file.thumb : undefined,
     };
   }
 
@@ -3160,7 +3260,7 @@ export class MessengerClient extends Emitter<Events> {
     if (m.contact) return `👤 ${m.contact}`;
     if (m.product) return `🛍️ ${m.product.name}`;
     if (m.attachment) {
-      const label = { image: 'Photo', pdf: 'PDF', audio: '🎤 Voice message', file: 'File' }[m.attachment.kind];
+      const label = { image: 'Photo', video: '🎥 Video', pdf: 'PDF', audio: '🎤 Voice message', file: 'File' }[m.attachment.kind] ?? 'File';
       return m.text ? `${label}: ${m.text}` : label;
     }
     return m.text;
@@ -3322,13 +3422,14 @@ export class MessengerClient extends Emitter<Events> {
 
   /** Photos and documents saved from this chat, newest first. They stay after the app restarts. */
   getMedia(chat: string): MediaItem[] {
-    return this.media.list(chat);
+    // Videos saved by older versions were stored as plain files.
+    return this.media.list(chat).map((m) => (m.kind === 'file' && attachmentKind(m.mime, m.name) === 'video' ? { ...m, kind: 'video' } : m));
   }
 
   /** Decrypt a saved file into memory, as an Attachment the apps' viewers can show. */
   async openMedia(item: MediaItem): Promise<Attachment> {
     const data = await this.media.read(item);
-    return { name: item.name, mime: item.mime, size: item.size, kind: item.kind, state: 'ready', data };
+    return { name: item.name, mime: item.mime, size: item.size, kind: attachmentKind(item.mime, item.name), state: 'ready', data };
   }
 
   /** Delete one saved file from this device (same rule as deleting a message for me). */
@@ -3841,6 +3942,7 @@ export class MessengerClient extends Emitter<Events> {
       for (const m of list) {
         const a = m.attachment;
         if (!a || a.data || a.state === 'uploading') continue;
+        a.kind = attachmentKind(a.mime, a.name); // e.g. videos from older versions were plain files
         const saved = this.media.find(chat, m.id);
         try {
           if (saved) {

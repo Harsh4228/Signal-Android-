@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Download, File, FileText, Forward, Image, Loader2, Lock, Share2, TriangleAlert, X } from 'lucide-react';
+import { Download, File, FileText, Film, Forward, Image, Loader2, Lock, Play, RotateCw, Share2, TriangleAlert, X } from 'lucide-react';
 import { ZoomImage } from './ZoomImage';
 import { formatBytes, type Attachment, type ChatMessage } from '@meetme/core';
 import { client, useClient } from '../messenger';
@@ -26,7 +26,7 @@ export function useObjectUrl(a: Attachment): string | null {
 }
 
 function KindIcon({ kind }: { kind: Attachment['kind'] }) {
-  const Icon = kind === 'image' ? Image : kind === 'pdf' ? FileText : File;
+  const Icon = kind === 'image' ? Image : kind === 'video' ? Film : kind === 'pdf' ? FileText : File;
   return (
     <span className={`att-icon ${kind}`}>
       <Icon size={20} />
@@ -102,11 +102,44 @@ function ForwardPicker({ a, onClose, onToast }: { a: Attachment; onClose: () => 
   );
 }
 
-export function AttachmentView({ a, onToast }: { a: Attachment; onToast: (m: string) => void }) {
+/** A video in the chat: its preview with a play button, then the player (from memory; no download button). */
+export function VideoPlayer({ url, poster, autoPlay, className }: { url: string; poster?: string; autoPlay?: boolean; className?: string }) {
+  return (
+    <video
+      className={className ?? 'att-video'}
+      src={url}
+      poster={poster}
+      controls
+      autoPlay={autoPlay}
+      playsInline
+      preload="metadata"
+      disablePictureInPicture
+      controlsList="nodownload noremoteplayback"
+      onContextMenu={(e) => e.preventDefault()}
+    />
+  );
+}
+
+const thumbUrl = (a: Attachment) => (a.thumb ? `data:image/jpeg;base64,${a.thumb}` : undefined);
+
+export function AttachmentView({ a, onToast, onRetry }: { a: Attachment; onToast: (m: string) => void; onRetry?: () => void }) {
   const [open, setOpen] = useState(false);
   const url = useObjectUrl(a);
+  const preview = thumbUrl(a);
 
   if (a.state === 'downloading' || a.state === 'uploading') {
+    // Photos / videos: the small preview (blurred) with a spinner, like WhatsApp.
+    if (preview && (a.kind === 'image' || a.kind === 'video')) {
+      return (
+        <span className="att-image-wrap loading">
+          <img className="att-image blur" src={preview} alt="" draggable={false} />
+          <span className="att-overlay">
+            <Loader2 size={26} className="spin" />
+            <small>{a.state === 'uploading' ? 'Sending' : formatBytes(a.size)}</small>
+          </span>
+        </span>
+      );
+    }
     return (
       <div className="att-card">
         <span className="att-icon">
@@ -114,7 +147,7 @@ export function AttachmentView({ a, onToast }: { a: Attachment; onToast: (m: str
         </span>
         <div className="grow">
           <div className="att-name">{a.name}</div>
-          <div className="muted small">{a.state === 'uploading' ? 'Encrypting and sending…' : 'Decrypting…'}</div>
+          <div className="muted small">{a.state === 'uploading' ? 'Encrypting and sending…' : `Downloading ${formatBytes(a.size)}…`}</div>
         </div>
       </div>
     );
@@ -127,8 +160,13 @@ export function AttachmentView({ a, onToast }: { a: Attachment; onToast: (m: str
         </span>
         <div className="grow">
           <div className="att-name">{a.name}</div>
-          <div className="muted small">File unavailable (expired or failed)</div>
+          <div className="muted small">{a.data ? 'Not sent' : 'Could not download (it may have expired)'}</div>
         </div>
+        {onRetry && (
+          <button className="icon" title="Try again" onClick={onRetry}>
+            <RotateCw size={16} />
+          </button>
+        )}
       </div>
     );
   }
@@ -145,6 +183,27 @@ export function AttachmentView({ a, onToast }: { a: Attachment; onToast: (m: str
             <ZoomImage src={url} />
           </Viewer>
         )}
+      </>
+    );
+  }
+
+  if (a.kind === 'video' && url) {
+    return (
+      <>
+        <span className="att-image-wrap">
+          {open ? (
+            <VideoPlayer url={url} poster={preview} autoPlay />
+          ) : (
+            <button className="att-video-cover" title="Play video" onClick={() => setOpen(true)}>
+              {preview ? <img className="att-image" src={preview} alt="" draggable={false} /> : <span className="att-video-blank" />}
+              <span className="att-play">
+                <Play size={26} fill="currentColor" />
+              </span>
+              <small className="att-size">{formatBytes(a.size)}</small>
+            </button>
+          )}
+          <FileActions a={a} onToast={onToast} compact />
+        </span>
       </>
     );
   }
