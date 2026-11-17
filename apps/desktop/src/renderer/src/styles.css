@@ -4561,3 +4561,15 @@ button.media-thumb.video { position: relative; display: flex; align-items: cente
 .live-line { color: var(--ok, #079455); font-weight: 600; margin-top: 2px; }
 .live-share { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 8px; }
 .row-between { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+/* chat wallpaper and text size */
+.messages.wallpaper {
+  background-color: var(--wallpaper);
+  background-image: radial-gradient(color-mix(in srgb, var(--text) 6%, transparent) 1px, transparent 1.4px);
+  background-size: 22px 22px;
+}
+.messages .bubble .text { font-size: calc(14.5px * var(--msg-scale, 1)); }
+.wallpapers { display: flex; flex-wrap: wrap; gap: 8px; }
+.wp-swatch { width: 36px; height: 36px; border-radius: 50%; border: 2px solid var(--line); padding: 0; box-shadow: none; font-size: 11px; color: var(--muted); }
+.wp-swatch.auto { width: auto; padding: 0 10px; border-radius: 18px; }
+.wp-swatch.active { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+.draft-label { color: var(--ok, #079455); font-weight: 600; display: inline-flex; align-items: center; gap: 3px; }

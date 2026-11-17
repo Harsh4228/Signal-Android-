@@ -1,3 +1,4 @@
+import { wallpaperColor } from './ChatLook';
 import { useEffect, useRef, useState } from 'react';
 import { Alert, FlatList, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import {
@@ -92,13 +93,21 @@ export function ChatScreen({
   const c = useClient();
   const group = isGroupKey(peer);
   const groupInfo = c.groupOf(peer);
-  const [text, setText] = useState('');
+  // The unsent text of each chat stays when switching chats (and over a restart), like WhatsApp.
+  const [text, setTextState] = useState(() => client.getDraft(peer));
+  useEffect(() => setTextState(client.getDraft(peer)), [peer]);
+  const setText = (t: string) => {
+    setTextState(t);
+    if (!editingRef.current) client.setDraft(peer, t);
+  };
   const [verified, setVerified] = useState(false);
   const [attachOpen, setAttachOpen] = useState(false);
   /** The camera is open: take a photo and send it into this chat (like WhatsApp). */
   const [shooting, setShooting] = useState(false);
   const [selected, setSelected] = useState<ChatMessage | null>(null);
   const [editing, setEditing] = useState<ChatMessage | null>(null);
+  const editingRef = useRef<ChatMessage | null>(null);
+  editingRef.current = editing;
   const [creating, setCreating] = useState<'poll' | 'event' | 'location' | 'contact' | 'catalog' | null>(null);
   const [replyTo, setReplyTo] = useState<ChatMessage | null>(null);
   const [forwarding, setForwarding] = useState<ChatMessage | null>(null);
@@ -113,6 +122,7 @@ export function ChatScreen({
   useBack(replyTo ? () => setReplyTo(null) : null);
   useBack(editing ? () => setEditing(null) : null);
   const listRef = useRef<FlatList<ChatMessage>>(null);
+  const wallpaper = wallpaperColor(c.wallpaperOf(peer));
   const messages = c.getMessages(peer);
   // Newest first for an inverted list: it opens at the newest message and only draws what is on screen,
   // so a chat with thousands of messages opens as fast as a short one.
@@ -233,7 +243,7 @@ export function ChatScreen({
         label: 'Edit',
         onPress: () => {
           setEditing(m);
-          setText(m.text);
+          setTextState(m.text);
         },
       });
     }
@@ -386,6 +396,7 @@ export function ChatScreen({
 
       <FlatList
         ref={listRef}
+        style={wallpaper ? { backgroundColor: wallpaper } : undefined}
         data={newestFirst}
         inverted
         keyExtractor={(m) => m.id}

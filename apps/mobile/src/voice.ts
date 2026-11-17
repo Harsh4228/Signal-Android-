@@ -89,3 +89,6 @@ export async function stopPlaying(): Promise<void> {
   await Sound.stopPlayer().catch(() => {});
   p.done();
 }
+
+/** A voice message is playing or being recorded (message tones then stay quiet). */
+export const audioBusy = () => !!playing || !!recording;

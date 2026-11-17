@@ -1,3 +1,4 @@
+import { AppearanceSettings } from './ChatLook';
 import { StorageScreen } from './Storage';
 import { useEffect, useState } from 'react';
 import { Alert, Linking, Pressable, ScrollView, Switch, Text, View } from 'react-native';
@@ -306,6 +307,8 @@ export function SettingsScreen({ navigate }: { navigate: (r: Route) => void }) {
 
         <Text style={s.section}>Appearance</Text>
         <ThemeSettings />
+        <View style={{ height: 10 }} />
+        <AppearanceSettings />
 
         {c.isSuper && (
           <>

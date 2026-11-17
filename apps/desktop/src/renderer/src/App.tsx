@@ -1,3 +1,4 @@
+import { startMessageTones } from './appearance';
 import { useLiveLocationWatcher } from './components/ChatExtras';
 import { useEffect, useState } from 'react';
 import { Hourglass, Info, LockKeyhole } from 'lucide-react';
@@ -76,6 +77,7 @@ function useAutoLock() {
 export function App() {
   const c = useClient();
   useLiveLocationWatcher();
+  useEffect(() => startMessageTones(), []);
   const call = useCall();
   const groupCall = useGroupCall();
   const lock = useLock();

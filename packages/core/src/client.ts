@@ -87,7 +87,7 @@ import {
   MAX_REPORT_MESSAGES,
   DELETE_REQUEST,
 } from './api';
-import { attachmentKind, decryptAttachment, encryptAttachment, safeFileName, validThumb, type AttachmentKind } from './attachments';
+import { attachmentKind, decryptAttachment, encryptAttachment, safeFileName, validThumb, validWave, type AttachmentKind } from './attachments';
 import { randomBytes } from './crypto/primitives';
 import { linksIn } from './format';
 import { DuplicateMessageError } from './crypto/ratchet';
@@ -181,6 +181,8 @@ export interface ChatMessage {
   readAt?: number;
   /** Pinned to the top of the chat for everyone (when, ms). */
   pinnedAt?: number;
+  /** A sticker (shown without a bubble). */
+  sticker?: boolean;
 }
 
 /** Per-chat choices kept on this device (and in the backup): pinned, archived, muted. */
@@ -194,6 +196,35 @@ export interface ChatPrefs {
   favourite?: boolean;
   /** Taken off my chat list at this time (ms); it comes back with the next message. */
   hidden?: number;
+  /** Chat lock: hidden from the list, opened only with the app lock PIN / fingerprint. */
+  locked?: boolean;
+  /** Chat wallpaper (one of WALLPAPERS); unset = my default wallpaper. */
+  wallpaper?: string;
+  /** Message tone for this chat while CellMate is open (one of MESSAGE_TONES); unset = default. */
+  tone?: string;
+}
+
+/** Chat backgrounds, like WhatsApp's wallpapers: a light and a dark colour each (the apps add a soft pattern). */
+export const WALLPAPERS: { id: string; name: string; light: string; dark: string }[] = [
+  { id: 'none', name: 'Default', light: '', dark: '' },
+  { id: 'sand', name: 'Sand', light: '#efe7dc', dark: '#1f1b16' },
+  { id: 'mint', name: 'Mint', light: '#e3f2ea', dark: '#14211b' },
+  { id: 'sky', name: 'Sky', light: '#e2edf9', dark: '#131c27' },
+  { id: 'lilac', name: 'Lilac', light: '#ece6f7', dark: '#1c1726' },
+  { id: 'rose', name: 'Rose', light: '#f6e4e8', dark: '#261519' },
+  { id: 'slate', name: 'Slate', light: '#e4e7ec', dark: '#161a20' },
+];
+/** Message tones while CellMate is open (phones in the background use the system's notification sound). */
+export const MESSAGE_TONES = ['default', 'soft', 'bell', 'none'] as const;
+export type MessageTone = (typeof MESSAGE_TONES)[number];
+/** Text size in chats. */
+export const FONT_SIZES = { small: 0.9, normal: 1, large: 1.15, xlarge: 1.3 } as const;
+export type FontSize = keyof typeof FONT_SIZES;
+/** Look and feel kept on this device: text size, default wallpaper and message tone. */
+export interface AppearancePrefs {
+  fontSize: FontSize;
+  wallpaper: string;
+  tone: MessageTone;
 }
 
 /** My own chat list filter, like WhatsApp's lists: chosen chats plus everyone in chosen departments. */
@@ -448,6 +479,10 @@ export interface Attachment {
   data?: Uint8Array;
   /** Photos / videos: a tiny JPEG preview (base64) shown while the file downloads. */
   thumb?: string;
+  /** Voice messages: waveform bars (hex digits). */
+  wave?: string;
+  /** Uploading / downloading: how far (0-1), when the platform can tell. */
+  progress?: number;
   /**
    * Where the encrypted file is on the server, with its key (kept in the encrypted history, so a restored chat on
    * another device can still fetch the file while the server keeps it: 14 days).
@@ -461,6 +496,8 @@ export interface OutgoingFile {
   data: Uint8Array;
   /** Photos / videos: a tiny JPEG preview (base64, made by the app), sent along so the chat shows it at once. */
   thumb?: string;
+  /** Voice messages: waveform bars, one hex digit (0-f) each, measured while recording. */
+  wave?: string;
 }
 
 export interface BroadcastResult {
@@ -532,12 +569,18 @@ export interface StatusGroup {
   allSeen: boolean;
   /** Newest post. */
   latest: number;
+  /** I muted their status (shown under "Muted updates", no green ring). */
+  muted: boolean;
 }
 
 /** A text status, or a photo / video (`photo` is either) with a caption. */
 export type NewStatus = { text: string; bg?: string } | { photo: OutgoingFile; caption?: string };
-/** Status videos: everyone who looks downloads them, so they are kept short. */
+/** Status videos / voice notes: everyone who looks downloads them, so they are kept short. */
 export const MAX_STATUS_VIDEO_BYTES = 16 * 1024 * 1024;
+/** Quick reactions to a status (sent as a reply, like WhatsApp). */
+export const STATUS_REACTIONS = ['😂', '😮', '😍', '😢', '👏', '🔥', '🙏', '👍'] as const;
+/** Stickers are small pictures. */
+export const MAX_STICKER_BYTES = 300 * 1024;
 
 /**
  * Usernames a notice goes to: people who have logged in at least once, aren't banned and aren't me, and are
@@ -858,6 +901,10 @@ export class MessengerClient extends Emitter<Events> {
     this.statuses = await this.store.getSetting<StatusUpdate[]>('statuses', []);
     this.starred = await this.store.getSetting<StarredMessage[]>('starred', []);
     this.chatPrefs = await this.store.getSetting<Record<string, ChatPrefs>>('chatPrefs', {});
+    this.appearance = { ...this.appearance, ...(await this.store.getSetting<Partial<AppearancePrefs>>('appearance', {})) };
+    this.drafts = await this.store.getSetting<Record<string, string>>('drafts', {});
+    this.joinRequests = await this.store.getSetting<{ group: string; user: string; ts: number }[]>('joinRequests', []);
+    this.mutedStatus = await this.store.getSetting<string[]>('mutedStatus', []);
     // The company's name and logo from last time: shown right away, refreshed once connected.
     const brand = await this.store.getSetting<{ company: { code: string; name: string } | null; profile: CompanyProfile | null; logo: string } | null>('brand', null);
     if (brand) {
@@ -1848,8 +1895,10 @@ export class MessengerClient extends Emitter<Events> {
             kind: attachmentKind(att.mime, name),
             state: 'downloading',
             thumb: validThumb(att.thumb) ? att.thumb : undefined,
+            wave: validWave(att.wave) ? att.wave : undefined,
             ptr: att,
           };
+          if (p.k === 'text' && p.st === true && msg.attachment.kind === 'image') msg.sticker = true;
           void this.fetchAttachment(msg, att);
         }
         const chat = this.chatOf(key);
@@ -1918,6 +1967,18 @@ export class MessengerClient extends Emitter<Events> {
         const m = this.chats.get(key)?.find((x) => x.id === p.id && !x.deleted && !x.system);
         if (!m) return;
         this.applyPin(key, m, p.on ? ts || Date.now() : undefined);
+        break;
+      }
+      case 'join-req': {
+        if (typeof p.g !== 'string' || !GROUP_ID_RE.test(p.g)) return;
+        const key = groupKey(p.g);
+        // Only for groups I can manage, and not for people already in them.
+        if (!(this.isAdmin || this.isGroupAdmin(key)) || this.groupOf(key)?.members.includes(from)) return;
+        if (this.joinRequests.some((r) => r.group === key && r.user === from)) return;
+        this.joinRequests = [...this.joinRequests, { group: key, user: from, ts: Date.now() }].slice(-200);
+        void this.store.setSetting('joinRequests', this.joinRequests);
+        this.emit('error', `${this.displayName(from)} asks to join ${this.chatTitle(key)}`);
+        this.emit('change');
         break;
       }
       case 'loc': {
@@ -2033,8 +2094,8 @@ export class MessengerClient extends Emitter<Events> {
         if (typeof p.text !== 'string' || p.text.length > MAX_STATUS_TEXT) return;
         const statusKind = p.photo && validPointer(p.photo) ? attachmentKind(p.photo.mime, p.photo.name) : null;
         const photo =
-          p.photo && (statusKind === 'image' || (statusKind === 'video' && p.photo.size <= MAX_STATUS_VIDEO_BYTES))
-            ? { ...p.photo, thumb: validThumb(p.photo.thumb) ? p.photo.thumb : undefined }
+          p.photo && (statusKind === 'image' || ((statusKind === 'video' || statusKind === 'audio') && p.photo.size <= MAX_STATUS_VIDEO_BYTES))
+            ? { ...p.photo, thumb: validThumb(p.photo.thumb) ? p.photo.thumb : undefined, wave: validWave(p.photo.wave) ? p.photo.wave : undefined }
             : undefined;
         if (p.photo && !photo) return;
         const text = p.text.trim();
@@ -2252,6 +2313,106 @@ export class MessengerClient extends Emitter<Events> {
     if (!this.can('sendFiles', peer)) throw new Error('Your admin has turned off sending photos and files');
     if (opts.viewOnce && !/^(image|video)\//.test(file.mime)) throw new Error('Only photos and videos can be view once');
     await this.sendMessage(peer, caption, { file, replyTo: opts.replyTo && this.quoteOf(opts.replyTo), viewOnce: opts.viewOnce });
+  }
+
+  /** Send a sticker (a picture shown without a bubble, like WhatsApp). Follows the "send files" right. */
+  async sendSticker(peer: string, sticker: OutgoingFile): Promise<void> {
+    if (!this.can('sendFiles', peer)) throw new Error('Your admin has turned off sending photos and files');
+    if (attachmentKind(sticker.mime, sticker.name) !== 'image') throw new Error('A sticker must be a picture');
+    if (sticker.data.length > MAX_STICKER_BYTES) throw new Error('Sticker too large (max 300 KB)');
+    await this.sendMessage(peer, '', { file: sticker, sticker: true });
+  }
+
+  /** My stickers (made from my photos or kept from chats): ids, newest first. Kept encrypted on this device. */
+  private stickerIds: string[] | null = null;
+
+  async myStickers(): Promise<{ id: string; mime: string; data: Uint8Array }[]> {
+    this.stickerIds ??= await this.store.getSetting<string[]>('stickers', []);
+    const out: { id: string; mime: string; data: Uint8Array }[] = [];
+    for (const id of this.stickerIds) {
+      const doc = await this.media.readDoc(`sticker:${id}`).catch(() => null);
+      if (!doc) continue;
+      const { mime, data } = JSON.parse(fromUtf8(doc)) as { mime: string; data: string };
+      out.push({ id, mime, data: fromBase64(data) });
+    }
+    return out;
+  }
+
+  /** Keep a picture as a sticker (made square and small by the app). At most 60 stickers; the oldest go first. */
+  async addSticker(file: { mime: string; data: Uint8Array }): Promise<void> {
+    if (!/^image\/(png|webp|jpeg|gif)$/.test(file.mime)) throw new Error('A sticker must be a PNG, WebP, JPEG or GIF picture');
+    if (file.data.length > MAX_STICKER_BYTES) throw new Error('Sticker too large (max 300 KB)');
+    this.stickerIds ??= await this.store.getSetting<string[]>('stickers', []);
+    const id = newId();
+    await this.media.saveDoc(`sticker:${id}`, utf8(JSON.stringify({ mime: file.mime, data: toBase64(file.data) })));
+    this.stickerIds = [id, ...this.stickerIds];
+    for (const old of this.stickerIds.splice(60)) await this.media.removeDoc(`sticker:${old}`).catch(() => {});
+    await this.store.setSetting('stickers', this.stickerIds);
+    this.emit('change');
+  }
+
+  async removeSticker(id: string): Promise<void> {
+    this.stickerIds ??= await this.store.getSetting<string[]>('stickers', []);
+    this.stickerIds = this.stickerIds.filter((x) => x !== id);
+    await this.media.removeDoc(`sticker:${id}`).catch(() => {});
+    await this.store.setSetting('stickers', this.stickerIds);
+    this.emit('change');
+  }
+
+  // ------------------------------------------------------------------ call links and group invite links
+
+  /** A link colleagues tap to join this group's call (only members can join; it opens the call in CellMate). */
+  callLink(group: string): string {
+    if (!isGroupKey(group) || !this.account) throw new Error('Call links are for groups');
+    return `${this.account.serverUrl}/c/${groupIdOf(group)}`;
+  }
+
+  /** A link colleagues tap to ask to join this group; an admin or group admin approves each request. */
+  groupLink(group: string): string {
+    if (!isGroupKey(group) || !this.account) throw new Error('Invite links are for groups');
+    return `${this.account.serverUrl}/g/${groupIdOf(group)}`;
+  }
+
+  /** A call link / group invite link of this server, or null for any other link. */
+  parseAppLink(url: string): { kind: 'call' | 'group'; group: string } | null {
+    if (!this.account) return null;
+    const base = this.account.serverUrl.replace(/\/+$/, '');
+    const m = url.startsWith(base) ? url.slice(base.length).match(/^\/(c|g)\/([0-9a-f]{16})\/?$/) : null;
+    return m ? { kind: m[1] === 'c' ? 'call' : 'group', group: `#${m[2]}` } : null;
+  }
+
+  /** Join requests for groups I manage (from invite links), oldest first. */
+  joinRequests: { group: string; user: string; ts: number }[] = [];
+
+  /** Ask to join a group from its invite link. Admins and that group's admins get the request. */
+  async requestToJoin(group: string): Promise<void> {
+    if (!isGroupKey(group)) throw new Error('Not a group link');
+    if (this.groupOf(group)) throw new Error('You are already in this group');
+    const to = this.admins.filter((u) => u !== this.account?.username);
+    if (!to.length) throw new Error('Nobody can approve requests on this server');
+    const results = await Promise.allSettled(to.map((u) => this.sendPayload(u, { k: 'join-req', g: groupIdOf(group) })));
+    if (!results.some((r) => r.status === 'fulfilled')) throw new Error('Could not send the request');
+  }
+
+  /** Approve (add them to the group) or decline a join request. Only admins / that group's admins. */
+  async answerJoinRequest(group: string, user: string, approve: boolean): Promise<void> {
+    const req = this.joinRequests.find((r) => r.group === group && r.user === user);
+    if (!req) return;
+    if (approve) {
+      const id = groupIdOf(group);
+      const mine = this.groupOf(group);
+      if (mine && this.isGroupAdmin(group)) {
+        if (!mine.members.includes(user)) await this.updateMyGroup(id, { members: [...mine.members, user] });
+      } else if (this.isAdmin) {
+        // A company admin who isn't in the group manages it from the admin side.
+        const g = (await this.listAllGroups()).find((x) => x.id === id);
+        if (!g) throw new Error('This group no longer exists');
+        if (!g.members.includes(user)) await this.updateGroup(id, { members: [...g.members, user] });
+      } else throw new Error('Only group admins can add people');
+    }
+    this.joinRequests = this.joinRequests.filter((r) => r !== req);
+    void this.store.setSetting('joinRequests', this.joinRequests);
+    this.emit('change');
   }
 
   /** Share a colleague's contact card; the other side can start a chat with them in one tap. */
@@ -2484,6 +2645,7 @@ export class MessengerClient extends Emitter<Events> {
       forwarded?: boolean;
       mentions?: string[];
       viewOnce?: boolean;
+      sticker?: boolean;
     },
   ): Promise<string | undefined> {
     text = text.trim();
@@ -2521,7 +2683,9 @@ export class MessengerClient extends Emitter<Events> {
         state: 'uploading',
         data: opts.file.data,
         thumb: validThumb(opts.file.thumb) ? opts.file.thumb : undefined,
+        wave: validWave(opts.file.wave) ? opts.file.wave : undefined,
       };
+      if (opts.sticker && msg.attachment.kind === 'image') msg.sticker = true;
     }
     if (!group) this.addContactLocal(peer);
     this.chatOf(peer).push(msg);
@@ -2529,7 +2693,7 @@ export class MessengerClient extends Emitter<Events> {
     try {
       let att: AttachmentPointer | undefined;
       if (opts.file) {
-        att = opts.uploaded ?? (await this.uploadAttachment(opts.file));
+        att = opts.uploaded ?? (await this.uploadAttachment(opts.file, msg));
         msg.attachment!.state = 'ready';
         if (opts.viewOnce) {
           // View once: I don't keep it either.
@@ -2554,6 +2718,7 @@ export class MessengerClient extends Emitter<Events> {
         fwd: opts.forwarded || undefined,
         mn: opts.mentions?.length ? opts.mentions : undefined,
         vo: opts.viewOnce || undefined,
+        st: msg.sticker || undefined,
       };
       if (group) {
         const r = await this.sendToChat(peer, payload);
@@ -2680,9 +2845,12 @@ export class MessengerClient extends Emitter<Events> {
   }
 
   /** Encrypt locally, upload only ciphertext. Returns the pointer that goes inside the E2E message. */
-  private async uploadAttachment(file: OutgoingFile): Promise<AttachmentPointer> {
+  private async uploadAttachment(file: OutgoingFile, msg?: ChatMessage): Promise<AttachmentPointer> {
     const { ciphertext, key, digest } = encryptAttachment(file.data);
-    const { id } = await this.http<{ id: string }>('POST', '/v1/attachments', toBase64(ciphertext), 'text/plain');
+    const body = toBase64(ciphertext);
+    const { id } = JSON.parse(
+      msg ? await this.transfer('POST', '/v1/attachments', body, msg) : await this.http<string>('POST', '/v1/attachments', body, 'text/plain', true),
+    ) as { id: string };
     return {
       id,
       key: toBase64(key),
@@ -2691,13 +2859,66 @@ export class MessengerClient extends Emitter<Events> {
       mime: /^[\w.+-]{1,64}\/[\w.+-]{1,100}$/.test(file.mime) ? file.mime : 'application/octet-stream',
       size: file.data.length,
       thumb: validThumb(file.thumb) && /^(image|video)\//.test(file.mime) ? file.thumb : undefined,
+      wave: validWave(file.wave) && file.mime.startsWith('audio/') ? file.wave : undefined,
     };
   }
+
+  /** Running uploads / downloads by message id, so they can be cancelled. */
+  private transfers = new Map<string, () => void>();
+
+  /**
+   * An attachment upload / download with progress (shown as a percentage) and Cancel. Uses XMLHttpRequest where the
+   * platform has it (apps); elsewhere (tests) a plain request without progress.
+   */
+  private transfer(method: 'GET' | 'POST', path: string, body: string | undefined, msg: ChatMessage): Promise<string> {
+    const a = this.account;
+    if (!a) return Promise.reject(new Error('not registered'));
+    const Xhr = (globalThis as { XMLHttpRequest?: new () => XMLHttpRequest }).XMLHttpRequest;
+    if (!Xhr) return this.http<string>(method, path, body, body === undefined ? undefined : 'text/plain', true);
+    return new Promise<string>((resolve, reject) => {
+      const xhr = new Xhr();
+      let last = 0;
+      const progress = (e: ProgressEvent) => {
+        if (!e.lengthComputable || !msg.attachment) return;
+        msg.attachment.progress = Math.min(1, e.loaded / e.total);
+        if (Date.now() - last > 250) {
+          last = Date.now();
+          this.emit('change');
+        }
+      };
+      xhr.open(method, a.serverUrl + path);
+      xhr.setRequestHeader('authorization', 'Basic ' + toBase64(utf8(`${a.username}:${a.password}`)));
+      if (body !== undefined) xhr.setRequestHeader('content-type', 'text/plain');
+      if (method === 'POST') xhr.upload.onprogress = progress;
+      else xhr.onprogress = progress;
+      const done = () => {
+        this.transfers.delete(msg.id);
+        if (msg.attachment) msg.attachment.progress = undefined;
+      };
+      xhr.onload = () => {
+        done();
+        if (xhr.status >= 200 && xhr.status < 300) resolve(xhr.responseText);
+        else reject(new ApiError(xhr.status, xhr.responseText || xhr.statusText));
+      };
+      xhr.onerror = () => (done(), reject(new Error('Network error')));
+      xhr.onabort = () => (done(), reject(new Error('Cancelled')));
+      this.transfers.set(msg.id, () => xhr.abort());
+      xhr.send(body ?? null);
+    });
+  }
+
+  /** Stop an upload or download that is running (the message can be sent / downloaded again with Retry). */
+  cancelTransfer(msgId: string): void {
+    this.transfers.get(msgId)?.();
+  }
+
+  /** Is this message's file being uploaded / downloaded right now (Cancel is possible)? */
+  isTransferring = (msgId: string) => this.transfers.has(msgId);
 
   /** Download + decrypt into memory. Nothing is ever written to disk. */
   private async fetchAttachment(msg: ChatMessage, p: AttachmentPointer) {
     try {
-      const b64 = await this.http<string>('GET', `/v1/attachments/${p.id}`, undefined, undefined, true);
+      const b64 = await this.transfer('GET', `/v1/attachments/${p.id}`, undefined, msg);
       const data = decryptAttachment(fromBase64(b64.trim()), fromBase64(p.key), fromBase64(p.digest));
       if (data.length !== p.size) throw new Error('size mismatch');
       if (msg.attachment) {
@@ -2866,9 +3087,9 @@ export class MessengerClient extends Emitter<Events> {
     if ('photo' in s) {
       checkFile(s.photo);
       const kind = attachmentKind(s.photo.mime, s.photo.name);
-      if (kind !== 'image' && kind !== 'video') throw new Error('A status must be a photo or a video');
+      if (kind !== 'image' && kind !== 'video' && kind !== 'audio') throw new Error('A status must be a photo, a video or a voice note');
       // Status videos are downloaded by everyone who looks: keep them short (like WhatsApp's 1 minute).
-      if (kind === 'video' && s.photo.data.length > MAX_STATUS_VIDEO_BYTES) {
+      if (kind !== 'image' && s.photo.data.length > MAX_STATUS_VIDEO_BYTES) {
         throw new Error(`Status videos can be up to ${MAX_STATUS_VIDEO_BYTES / 1024 / 1024} MB (about a minute)`);
       }
     }
@@ -2902,10 +3123,26 @@ export class MessengerClient extends Emitter<Events> {
   async replyToStatus(s: StatusUpdate, text: string): Promise<void> {
     if (s.outgoing) throw new Error('This is your own status');
     if (!text.trim()) return;
-    const what = s.photo ? (attachmentKind(s.photo.mime, s.photo.name) === 'video' ? '🎥 Video' : '📷 Photo') : '';
+    const k = s.photo ? attachmentKind(s.photo.mime, s.photo.name) : null;
+    const what = k === 'video' ? '🎥 Video' : k === 'audio' ? '🎤 Voice' : k ? '📷 Photo' : '';
     const label = [what, s.text].filter(Boolean).join(': ');
     if (!this.contacts.includes(s.from)) this.addContactLocal(s.from);
     await this.sendMessage(s.from, text, { replyTo: { id: `status-${s.id}`, from: s.from, text: `◌ Status · ${label}`.slice(0, MAX_QUOTE) } });
+  }
+
+  /** People whose status I muted. */
+  mutedStatus: string[] = [];
+
+  muteStatus(user: string, on: boolean): void {
+    this.mutedStatus = on ? [...new Set([...this.mutedStatus, user])] : this.mutedStatus.filter((u) => u !== user);
+    void this.store.setSetting('mutedStatus', this.mutedStatus);
+    this.emit('change');
+  }
+
+  /** React to a status with an emoji, like WhatsApp: it arrives as a reply in our chat. */
+  reactToStatus(s: StatusUpdate, emoji: string): Promise<void> {
+    if (!(STATUS_REACTIONS as readonly string[]).includes(emoji)) return Promise.reject(new Error('Unknown reaction'));
+    return this.replyToStatus(s, emoji);
   }
 
   /** Delete one of my statuses, here and on everyone's phone. */
@@ -2931,7 +3168,7 @@ export class MessengerClient extends Emitter<Events> {
     return [...by]
       .map(([user, list]) => {
         const items = list.sort((a, b) => a.ts - b.ts);
-        return { user, items, allSeen: items.every((s) => s.seen), latest: items[items.length - 1]!.ts };
+        return { user, items, allSeen: items.every((s) => s.seen), latest: items[items.length - 1]!.ts, muted: this.mutedStatus.includes(user) };
       })
       .sort((a, b) => Number(a.allSeen) - Number(b.allSeen) || b.latest - a.latest);
   }
@@ -2939,6 +3176,7 @@ export class MessengerClient extends Emitter<Events> {
   /** The ring around someone's photo, like WhatsApp: 'new' = updates I haven't viewed, 'seen' = all viewed, null = none. */
   statusRingOf(user: string): 'new' | 'seen' | null {
     const mine = user === this.account?.username;
+    if (!mine && this.mutedStatus.includes(user)) return null;
     let any = false;
     for (const s of this.statuses) {
       if (s.from !== user || s.outgoing !== mine) continue;
@@ -3783,6 +4021,80 @@ export class MessengerClient extends Emitter<Events> {
   }
 
   isPinned = (key: string) => !!this.chatPrefs[key]?.pinned;
+  isLocked = (key: string) => !!this.chatPrefs[key]?.locked;
+
+  /**
+   * Chat lock, like WhatsApp: the chat leaves the main list and goes to "Locked chats", which opens only with the
+   * app lock PIN / fingerprint (the apps check that app lock is set up first).
+   */
+  lockChat(key: string, on: boolean): void {
+    this.setChatPref(key, { locked: on || undefined });
+  }
+
+  /** My chats in "Locked chats". */
+  lockedChats(): string[] {
+    return this.orderedChats({ locked: true });
+  }
+
+  /** The wallpaper id for a chat: its own, or my default. */
+  wallpaperOf(key: string): string {
+    return this.chatPrefs[key]?.wallpaper ?? this.appearance.wallpaper;
+  }
+
+  setChatWallpaper(key: string, id: string | undefined): void {
+    if (id !== undefined && !WALLPAPERS.some((w) => w.id === id)) throw new Error('Unknown wallpaper');
+    this.setChatPref(key, { wallpaper: id });
+  }
+
+  /** The message tone for a chat: its own, or my default. */
+  toneOf(key: string): MessageTone {
+    const t = this.chatPrefs[key]?.tone;
+    return (MESSAGE_TONES as readonly string[]).includes(t ?? '') ? (t as MessageTone) : this.appearance.tone;
+  }
+
+  setChatTone(key: string, tone: MessageTone | undefined): void {
+    if (tone !== undefined && !(MESSAGE_TONES as readonly string[]).includes(tone)) throw new Error('Unknown tone');
+    this.setChatPref(key, { tone });
+  }
+
+  /** Which tone to play for a message that just arrived (null = none): not my own, not the open chat, not muted. */
+  toneFor(m: ChatMessage): MessageTone | null {
+    if (m.outgoing || m.system || m.peer === this.activeChat || this.isMuted(m.peer)) return null;
+    const t = this.toneOf(m.peer);
+    return t === 'none' ? null : t;
+  }
+
+  /** Text size, default wallpaper and tone (this device only). */
+  appearance: AppearancePrefs = { fontSize: 'normal', wallpaper: 'none', tone: 'default' };
+
+  setAppearance(patch: Partial<AppearancePrefs>): void {
+    const next = { ...this.appearance, ...patch };
+    if (!(next.fontSize in FONT_SIZES)) next.fontSize = 'normal';
+    if (!WALLPAPERS.some((w) => w.id === next.wallpaper)) next.wallpaper = 'none';
+    if (!(MESSAGE_TONES as readonly string[]).includes(next.tone)) next.tone = 'default';
+    this.appearance = next;
+    void this.store.setSetting('appearance', next);
+    this.emit('change');
+  }
+
+  /** Unsent text per chat, kept when switching chats and over a restart (this device only). */
+  private drafts: Record<string, string> = {};
+  private draftTimer: ReturnType<typeof setTimeout> | null = null;
+
+  getDraft(key: string): string {
+    return this.drafts[key] ?? '';
+  }
+
+  setDraft(key: string, text: string): void {
+    if ((this.drafts[key] ?? '') === text) return;
+    if (text.trim()) this.drafts[key] = text.slice(0, MAX_TEXT_LENGTH);
+    else delete this.drafts[key];
+    if (this.draftTimer) clearTimeout(this.draftTimer);
+    this.draftTimer = setTimeout(() => void this.store.setSetting('drafts', this.drafts), 800);
+    this.emit('change');
+  }
+
+  hasDraft = (key: string) => !!this.drafts[key];
   isFavourite = (key: string) => !!this.chatPrefs[key]?.favourite;
 
   /** Off my chat list until a newer message arrives (or I open it again). */
@@ -3860,7 +4172,7 @@ export class MessengerClient extends Emitter<Events> {
   }
 
   /** The chat list: pinned first (last pinned on top), then by the newest message. */
-  orderedChats(opts: { archived?: boolean; sort?: ChatSort } = {}): string[] {
+  orderedChats(opts: { archived?: boolean; sort?: ChatSort; locked?: boolean } = {}): string[] {
     const last = (k: string) => this.lastMessage(k)?.ts ?? 0;
     const sort = opts.sort ?? 'recent';
     // Pinned chats stay on top whatever the order, like WhatsApp.
@@ -3871,7 +4183,7 @@ export class MessengerClient extends Emitter<Events> {
           ? Number(this.getUnread(b) > 0) - Number(this.getUnread(a) > 0) || last(b) - last(a)
           : last(b) - last(a);
     return this.chatKeys()
-      .filter((k) => this.isArchived(k) === !!opts.archived && !this.isHidden(k))
+      .filter((k) => (opts.locked ? this.isLocked(k) : this.isArchived(k) === !!opts.archived && !this.isLocked(k)) && !this.isHidden(k))
       .sort((a, b) => (this.chatPrefs[b]?.pinned ?? 0) - (this.chatPrefs[a]?.pinned ?? 0) || then(a, b));
   }
 
@@ -4376,6 +4688,7 @@ export class MessengerClient extends Emitter<Events> {
     this.lastOpId = 0;
     this.opsSinceFull = 0;
     this.chatPrefs = {};
+    this.drafts = {};
     this.favouriteDepartments = [];
     this.chatLists = [];
     this.companyProfile = null;

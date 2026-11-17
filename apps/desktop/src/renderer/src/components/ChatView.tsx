@@ -58,10 +58,12 @@ import {
   type ChatMessage,
   MAX_ATTACHMENT_BYTES,
   MAX_FILES_AT_ONCE,
+  FONT_SIZES,
 } from '@meetme/core';
 import { ChatCamera } from './ChatCamera';
 import { EmojiPicker } from './EmojiPicker';
 import { prepareMedia } from '../media';
+import { wallpaperColor } from '../appearance';
 import { copyText, hasShareMenu, saveToDevice, sharedText, shareOut } from '../deviceFiles';
 import { MessageText, ViewOnceBubble, ViewOnceViewer } from './MessageText';
 
@@ -115,7 +117,12 @@ export function ChatView({ peer, onError }: { peer: string; onError: (m: string)
   const c = useClient();
   const group = isGroupKey(peer);
   const groupInfo = c.groupOf(peer);
-  const [text, setText] = useState('');
+  // The unsent text of each chat stays when switching chats (and over a restart), like WhatsApp.
+  const [text, setTextState] = useState(() => client.getDraft(peer));
+  const setText = (t: string) => {
+    setTextState(t);
+    if (!editing) client.setDraft(peer, t);
+  };
   const [editing, setEditing] = useState<ChatMessage | null>(null);
   const [replyTo, setReplyTo] = useState<ChatMessage | null>(null);
   const [forwarding, setForwarding] = useState<ChatMessage | null>(null);
@@ -151,6 +158,7 @@ export function ChatView({ peer, onError }: { peer: string; onError: (m: string)
   const visible = messages.length > shown ? messages.slice(-shown) : messages;
   const timer = c.getDisappearingTimer(peer);
   const online = c.status === 'online';
+  const wallpaper = wallpaperColor(c.wallpaperOf(peer));
   const gone = group && !groupInfo; // removed from the group, or the group was deleted
   const canWrite = online && !gone;
 
@@ -239,7 +247,7 @@ export function ChatView({ peer, onError }: { peer: string; onError: (m: string)
   function startEdit(m: ChatMessage) {
     setMenuFor(null);
     setEditing(m);
-    setText(m.text);
+    setTextState(m.text);
     inputRef.current?.focus();
   }
 
@@ -523,7 +531,8 @@ export function ChatView({ peer, onError }: { peer: string; onError: (m: string)
 
       <div className="body">
         <div
-          className={`messages${c.can('copy', peer) ? ' allow-copy' : ''}`}
+          className={`messages${c.can('copy', peer) ? ' allow-copy' : ''}${wallpaper ? ' wallpaper' : ''}`}
+          style={{ ...(wallpaper ? { ['--wallpaper' as string]: wallpaper } : {}), ['--msg-scale' as string]: FONT_SIZES[c.appearance.fontSize] }}
           onClick={() => {
             setMenuFor(null);
             setReactingTo(null);

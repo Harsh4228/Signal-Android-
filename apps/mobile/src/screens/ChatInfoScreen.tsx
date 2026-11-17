@@ -1,3 +1,4 @@
+import { ChatLookSettings } from './ChatLook';
 import { useCallback, useEffect, useState } from 'react';
 import { Alert, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { pickProfilePhoto } from '../photos';
@@ -113,6 +114,7 @@ function GroupInfoScreen({
         </View>
         {clearing && g && <ClearHistorySheet scope="group" target={g.id} label={g.name} onClose={() => setClearing(false)} onToast={onError} />}
         <MediaSection chatKey={chatKey} navigate={navigate} onError={onError} />
+        <ChatLookSettings chat={chatKey} onToast={onError} />
         {manage && g && (
           <View style={[s.card, { marginTop: 12, padding: 4 }]}>
             <Row icon={UserPlus} title="Add members" onPress={() => setAdding(true)} right={<ChevronRight size={18} color={colors.faint} />} />
@@ -387,6 +389,7 @@ function PersonInfoScreen({
         </View>
 
         <MediaSection chatKey={peer} navigate={navigate} onError={onError} />
+        <ChatLookSettings chat={peer} onToast={onError} />
         {catalogCount !== null && catalogCount > 0 && (
           <View style={[s.card, { marginTop: 12, padding: 4 }]}>
             <Row

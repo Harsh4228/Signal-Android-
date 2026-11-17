@@ -1,3 +1,4 @@
+import { AppearanceSettings } from './ChatLook';
 import { StorageSettings } from './Storage';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Camera, CircleCheck, CloudUpload, LogOut, Settings as SettingsIcon, Trash2, X } from 'lucide-react';
@@ -295,6 +296,7 @@ export function Settings({ onClose, onToast }: { onClose: () => void; onToast: (
 
         <div className="section-title">Appearance</div>
         <ThemePicker />
+        <AppearanceSettings />
 
         <div className="section-title">Privacy</div>
         <PrivacySettings />

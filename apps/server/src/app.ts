@@ -237,6 +237,19 @@ const NOT_FOUND_PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-
 <div class="card"><h1>Page not found</h1><p>This address doesn't exist. Check the spelling, or go to:</p>
 <p><a href="/download">Download CellMate</a> &middot; <a href="/app/">Open CellMate in the browser</a> &middot; <a href="/support">Support</a></p></div>
 </main></body></html>`;
+/**
+ * A CellMate call link (/c/<group>) or group invite link (/g/<group>) opened outside the app. It says nothing about
+ * the group: the app itself checks who may join.
+ */
+const APP_LINK_PAGE = (kind: 'call' | 'group') => `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${kind === 'call' ? 'Join a call' : 'Join a group'} · CellMate</title><link rel="stylesheet" href="/legal.css"></head><body><main>
+<nav><a class="brand" href="/download">CellMate</a><a href="/download">Download</a><a href="/support">Support</a></nav>
+<div class="card"><h1>${kind === 'call' ? 'Join the call in CellMate' : 'Ask to join the group in CellMate'}</h1>
+<p>This is a CellMate ${kind === 'call' ? 'call' : 'group invite'} link. Paste it into any chat in CellMate (or send it to yourself) and tap it there${
+  kind === 'call' ? ' to join the call' : ': an admin approves your request'
+}. Only people with a CellMate account at this company can use it.</p>
+<p><a href="/app/">Open CellMate in the browser</a> &middot; <a href="/download">Download CellMate</a></p></div>
+</main></body></html>`;
 const WEB_SESSION_MS = 8 * 3600_000;
 const SEALED_PATH = /^\/v1\/sealed\/([^/]+)$/;
 /** An account address from a URL path segment (IDs may have spaces and symbols, so they come %-encoded). */
@@ -1173,6 +1186,11 @@ export function createMeetMeServer(
       // The contact address on the public pages (SUPPORT_EMAIL).
       const support = (config.supportEmail ?? 'hello.cellbtech@gmail.com').replace(/[<>"'&]/g, '');
       return res.end(page[0].endsWith('.html') ? body.toString('utf8').replaceAll('{{support}}', support) : body);
+    }
+    const appLink = method === 'GET' ? path.match(/^\/(c|g)\/[0-9a-f]{16}\/?$/) : null;
+    if (appLink) {
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'content-security-policy': WEB_CSP, 'x-frame-options': 'DENY' });
+      return res.end(APP_LINK_PAGE(appLink[1] === 'c' ? 'call' : 'group'));
     }
     // A person typed an address that doesn't exist (a browser, not the app's API): a page that helps, not "unauthorized".
     if (method === 'GET' && !path.startsWith('/v1/') && /text\/html/.test(String(req.headers.accept ?? ''))) {

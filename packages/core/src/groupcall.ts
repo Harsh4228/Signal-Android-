@@ -26,6 +26,8 @@ export interface Participant {
   cameraOff: boolean;
   /** Sharing their screen (shown whole, not cropped). */
   sharing?: boolean;
+  /** Raised their hand. */
+  hand?: boolean;
 }
 
 export interface GroupCallState {
@@ -41,6 +43,8 @@ export interface GroupCallState {
   cameraOff: boolean;
   /** I am sharing my screen instead of my camera (video calls). */
   sharing: boolean;
+  /** My hand is raised. */
+  hand: boolean;
   participants: Participant[];
   startedAt: number | null;
   endReason: string | null;
@@ -58,6 +62,7 @@ const idle = (endReason: string | null = null): GroupCallState => ({
   muted: false,
   cameraOff: false,
   sharing: false,
+  hand: false,
   participants: [],
   startedAt: null,
   endReason,
@@ -176,8 +181,36 @@ export class GroupCallManager extends Emitter<{ change: [GroupCallState] }> {
   private sendMedia() {
     const sharing = this.state.sharing;
     for (const u of this.inCall()) {
-      void this.send(u, { action: 'media', muted: this.state.muted, cameraOff: sharing ? false : this.state.cameraOff, screen: sharing || undefined });
+      void this.send(u, {
+        action: 'media',
+        muted: this.state.muted,
+        cameraOff: sharing ? false : this.state.cameraOff,
+        screen: sharing || undefined,
+        hand: this.state.hand || undefined,
+      });
     }
+  }
+
+  /** Raise / lower my hand, like WhatsApp: everyone in the call sees ✋ next to my name. */
+  raiseHand(on: boolean): void {
+    if (this.state.status !== 'active') return;
+    this.set({ hand: on });
+    this.sendMedia();
+  }
+
+  /** Group members who are not in the call (to ring them again, like "Add" in WhatsApp's call screen). */
+  notInCall(): string[] {
+    const g = this.state.group ? this.client.groupOf(this.state.group) : null;
+    const inCall = new Set([this.me, ...this.inCall()]);
+    return (g?.members ?? []).filter((u) => !inCall.has(u));
+  }
+
+  /** Ring a group member who isn't in the call (yet). */
+  async ring(user: string): Promise<void> {
+    if (this.state.status !== 'active') throw new Error('Join the call first');
+    if (!this.notInCall().includes(user)) throw new Error('They are already in the call');
+    if (this.inCall().length + 1 >= MAX_GROUP_CALL) throw new Error(`Group calls are for up to ${MAX_GROUP_CALL} people`);
+    await this.send(user, { action: 'invite', video: this.state.video, members: [this.me, ...this.inCall()] });
   }
 
   /** The screen track shown to everyone instead of my camera. */
@@ -345,7 +378,7 @@ export class GroupCallManager extends Emitter<{ change: [GroupCallState] }> {
         return;
       }
       case 'media':
-        if (same) this.upsert(from, { muted: !!s.muted, cameraOff: !!s.cameraOff, sharing: s.screen === true });
+        if (same) this.upsert(from, { muted: !!s.muted, cameraOff: !!s.cameraOff, sharing: s.screen === true, hand: s.hand === true });
         return;
       case 'leave':
         this.leftOngoing(key, s.callId, from);

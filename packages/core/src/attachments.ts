@@ -47,6 +47,10 @@ export function safeFileName(name: string): string {
  * while the file itself downloads. Anything else (too big, not base64) is ignored.
  */
 export const MAX_THUMB_CHARS = 24_000;
+/** A voice message waveform: 8-64 bars, one hex digit each. */
+export function validWave(w: unknown): w is string {
+  return typeof w === 'string' && /^[0-9a-f]{8,64}$/.test(w);
+}
 export function validThumb(t: unknown): t is string {
   return typeof t === 'string' && t.length > 0 && t.length <= MAX_THUMB_CHARS && /^[A-Za-z0-9+/]+={0,2}$/.test(t);
 }

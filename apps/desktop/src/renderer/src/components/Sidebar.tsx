@@ -1,5 +1,6 @@
 import { Suspense, lazy, useEffect, useRef, useState } from 'react';
-import { Archive, ArchiveRestore, BellOff, ChevronLeft, Phone, Pin, PinOff, Ban, Bell, CircleDashed, EllipsisVertical, Headset, Lock, Megaphone, MessageSquareText, RadioTower, ListPlus, ListX, Pencil, Plus, ShoppingBag, Star, StarOff, Eraser, Trash2, UsersRound, X, MessageSquarePlus, Search, Settings as SettingsIcon, ShieldCheck, type LucideIcon } from 'lucide-react';
+import { PinInput } from './PinInput';
+import { Archive, ArchiveRestore, BellOff, LockOpen, PenLine, ChevronLeft, Phone, Pin, PinOff, Ban, Bell, CircleDashed, EllipsisVertical, Headset, Lock, Megaphone, MessageSquareText, RadioTower, ListPlus, ListX, Pencil, Plus, ShoppingBag, Star, StarOff, Eraser, Trash2, UsersRound, X, MessageSquarePlus, Search, Settings as SettingsIcon, ShieldCheck, type LucideIcon } from 'lucide-react';
 import { MessengerClient, isGroupKey, type ChatList } from '@meetme/core';
 import { appLock, client, useClient, useLock } from '../messenger';
 import { Broadcast } from './Broadcast';
@@ -31,6 +32,19 @@ export function Sidebar({ onSettings, onError }: { onSettings: () => void; onErr
   /** The page picked in the navigation (left rail, or the bottom bar on phones); null = the chat list. */
   const [panel, setPanel] = useState<Page | null>(null);
   const [archived, setArchived] = useState(false);
+  /** "Locked chats" is open (after the app lock PIN). */
+  const [lockedView, setLockedView] = useState(false);
+  const [askPin, setAskPin] = useState(false);
+  // Leaving the locked list (or the app locking) closes it again.
+  useEffect(() => {
+    if (lock.locked) setLockedView(false);
+  }, [lock.locked]);
+  const lockedCount = c.lockedChats().length;
+  function toggleChatLock(key: string) {
+    if (!c.isLocked(key) && !appLock.enabled) return onError('Set up App lock in Settings first: locked chats open with its PIN');
+    client.lockChat(key, !c.isLocked(key));
+    onError(c.isLocked(key) ? 'Chat locked: find it under "Locked chats"' : 'Chat unlocked');
+  }
   const [view, setView] = useState<string>('all');
   /** My lists (WhatsApp-style chips): the one being made or changed. */
   const [editingList, setEditingList] = useState<ChatList | 'new' | null>(null);
@@ -92,8 +106,7 @@ export function Sidebar({ onSettings, onError }: { onSettings: () => void; onErr
     (view.startsWith('dept:') && deptsOf(k).includes(view.slice(5))) ||
     (view.startsWith('list:') && !!activeList && c.inChatList(activeList, k));
   // Pinned first, then the newest; archived chats have their own list (like WhatsApp).
-  const sorted = c
-    .orderedChats({ archived })
+  const sorted = (lockedView ? c.lockedChats() : c.orderedChats({ archived }))
     .filter((k) => show(k) && (!q || c.chatTitle(k).toLowerCase().includes(q) || deptsOf(k).some((d) => d.toLowerCase().includes(q))));
   const allDepartments = [...new Set(c.chatKeys().flatMap(deptsOf))].sort();
   const offline = c.status !== 'online';
@@ -345,7 +358,48 @@ export function Sidebar({ onSettings, onError }: { onSettings: () => void; onErr
         </button>
       )}
 
-      {archived ? (
+      {lockedView ? (
+        <button className="archived-row" onClick={() => setLockedView(false)}>
+          <ChevronLeft size={17} /> Locked chats
+        </button>
+      ) : (
+        !archived &&
+        lockedCount > 0 && (
+          <button className="archived-row" onClick={() => setAskPin(true)}>
+            <Lock size={17} /> <span className="grow">Locked chats</span> <span className="muted small">{lockedCount}</span>
+          </button>
+        )
+      )}
+      {askPin && (
+        <div className="modal-bg" onClick={() => setAskPin(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()} style={{ textAlign: 'center' }}>
+            <header>
+              <div className="title">
+                <span className="title-icon">
+                  <Lock size={18} />
+                </span>
+                Locked chats
+              </div>
+              <button className="icon" onClick={() => setAskPin(false)} title="Close">
+                <X size={18} />
+              </button>
+            </header>
+            <p className="muted">Enter your app lock PIN</p>
+            <PinInput
+              onComplete={(pin) =>
+                void appLock.unlock(pin).then((ok) => {
+                  if (ok) {
+                    setAskPin(false);
+                    setLockedView(true);
+                    setArchived(false);
+                  } else onError(appLock.lockoutRemaining ? 'Too many tries, wait a moment' : 'Wrong PIN');
+                })
+              }
+            />
+          </div>
+        </div>
+      )}
+      {lockedView ? null : archived ? (
         <button className="archived-row" onClick={() => setArchived(false)}>
           <ChevronLeft size={17} /> Archived chats
         </button>
@@ -399,6 +453,14 @@ export function Sidebar({ onSettings, onError }: { onSettings: () => void; onErr
                 <div className="top">
                   <div className={`preview grow ${typing ? 'typing' : ''}`}>
                     {typing ||
+                      (c.hasDraft(key) && c.activeChat !== key ? (
+                        <>
+                          <span className="draft-label">
+                            <PenLine size={12} /> Draft:
+                          </span>{' '}
+                          {c.getDraft(key)}
+                        </>
+                      ) : null) ||
                       (last
                         ? who + (last.deleted ? 'Message deleted' : MessengerClient.preview(last))
                         : group
@@ -430,6 +492,9 @@ export function Sidebar({ onSettings, onError }: { onSettings: () => void; onErr
             c.isArchived(chatMenu.key)
               ? { icon: ArchiveRestore, label: 'Unarchive', go: () => client.archiveChat(chatMenu.key, false) }
               : { icon: Archive, label: 'Archive', go: () => client.archiveChat(chatMenu.key, true) },
+            c.isLocked(chatMenu.key)
+              ? { icon: LockOpen, label: 'Unlock chat', go: () => toggleChatLock(chatMenu.key) }
+              : { icon: Lock, label: 'Lock chat', go: () => toggleChatLock(chatMenu.key) },
             ...(c.isMuted(chatMenu.key)
               ? [{ icon: Bell, label: 'Unmute', go: () => client.muteChat(chatMenu.key, 0) }]
               : [

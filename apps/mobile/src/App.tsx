@@ -1,3 +1,4 @@
+import { startMessageTones } from './tones';
 import { useLiveLocationWatcher } from './screens/ChatExtras';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, AppState, BackHandler, KeyboardAvoidingView, Platform, StatusBar, Text, View } from 'react-native';
@@ -62,6 +63,7 @@ export type Route =
 
 export default function App() {
   useLiveLocationWatcher();
+  useEffect(() => startMessageTones(), []);
   const c = useClient();
   const call = useCall();
   const lock = useLock();

@@ -1,6 +1,11 @@
-import { useState } from 'react';
+import { LockedChatsPrompt } from './ChatLook';
+import { appLock, useLock } from '../messenger';
+
+/** Locked chats stay open while moving between chats, until the app locks again. */
+let lockedOpen = false;
+import { useEffect, useState } from 'react';
 import { Alert, FlatList, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
-import { Archive, ArchiveRestore, BellOff, Ban, Bell, Building2, ChevronDown, ChevronLeft, Eraser, StarOff, Trash2, UsersRound, X, EllipsisVertical, Headset, ListPlus, ListX, Pencil, Plus, Megaphone, Pin, PinOff, ShoppingBag, Star, MessageSquarePlus, Search, Settings, ShieldCheck } from 'lucide-react-native';
+import { Lock, LockOpen, PenLine, Archive, ArchiveRestore, BellOff, Ban, Bell, Building2, ChevronDown, ChevronLeft, Eraser, StarOff, Trash2, UsersRound, X, EllipsisVertical, Headset, ListPlus, ListX, Pencil, Plus, Megaphone, Pin, PinOff, ShoppingBag, Star, MessageSquarePlus, Search, Settings, ShieldCheck } from 'lucide-react-native';
 import { MessengerClient, isGroupKey, type ChatList } from '@meetme/core';
 import { client, useClient } from '../messenger';
 import { colors, s } from '../theme';
@@ -17,6 +22,23 @@ export function ChatListScreen({ navigate, onError }: { navigate: (r: Route) => 
   const [filter, setFilter] = useState('');
   const [more, setMore] = useState(false);
   const [archived, setArchived] = useState(false);
+  /** "Locked chats" is open (after the PIN); stays open until the app locks again. */
+  const [lockedView, setLockedViewState] = useState(lockedOpen);
+  const setLockedView = (v: boolean) => {
+    lockedOpen = v;
+    setLockedViewState(v);
+  };
+  const [askPin, setAskPin] = useState(false);
+  const lock = useLock();
+  useEffect(() => {
+    if (lock.locked) setLockedView(false);
+  }, [lock.locked]);
+  const lockedCount = c.lockedChats().length;
+  const toggleChatLock = (key: string) => {
+    if (!c.isLocked(key) && !appLock.enabled) return onError('Set up App lock in Settings first: locked chats open with its PIN');
+    client.lockChat(key, !c.isLocked(key));
+    onError(c.isLocked(key) ? 'Chat locked: find it under "Locked chats"' : 'Chat unlocked');
+  };
   const [acting, setActing] = useState<string | null>(null);
   const [view, setView] = useState('all');
   const [editingList, setEditingList] = useState<ChatList | 'new' | null>(null);
@@ -36,8 +58,7 @@ export function ChatListScreen({ navigate, onError }: { navigate: (r: Route) => 
     (view.startsWith('dept:') && deptsOf(k).includes(view.slice(5))) ||
     (view.startsWith('list:') && !!activeList && c.inChatList(activeList, k));
   // Pinned first, then the newest; archived chats have their own list (like WhatsApp).
-  const sorted = c
-    .orderedChats({ archived })
+  const sorted = (lockedView ? c.lockedChats() : c.orderedChats({ archived }))
     .filter((k) => show(k) && (!q || c.chatTitle(k).toLowerCase().includes(q) || deptsOf(k).some((d) => d.toLowerCase().includes(q))));
   const allDepartments = [...new Set(all.flatMap(deptsOf))].sort();
   const unreadChats = all.filter((k) => c.getUnread(k) > 0 && !c.isArchived(k)).length;
@@ -186,7 +207,22 @@ export function ChatListScreen({ navigate, onError }: { navigate: (r: Route) => 
         />
       )}
 
-      {archived ? (
+      {lockedView ? (
+        <Pressable onPress={() => setLockedView(false)} style={[s.row, { gap: 10, paddingHorizontal: 16, paddingVertical: 12 }]}>
+          <ChevronLeft size={20} color={colors.accent} />
+          <Text style={[s.textStrong, { color: colors.accent }]}>Locked chats</Text>
+        </Pressable>
+      ) : (
+        !archived &&
+        lockedCount > 0 && (
+          <Pressable onPress={() => setAskPin(true)} style={[s.row, { gap: 14, paddingHorizontal: 22, paddingVertical: 12 }]}>
+            <Lock size={20} color={colors.muted} />
+            <Text style={[s.textStrong, { flex: 1 }]}>Locked chats</Text>
+            <Text style={s.muted}>{lockedCount}</Text>
+          </Pressable>
+        )
+      )}
+      {lockedView ? null : archived ? (
         <Pressable onPress={() => setArchived(false)} style={[s.row, { gap: 10, paddingHorizontal: 16, paddingVertical: 12 }]}>
           <ChevronLeft size={20} color={colors.accent} />
           <Text style={[s.textStrong, { color: colors.accent }]}>Archived chats</Text>
@@ -226,7 +262,10 @@ export function ChatListScreen({ navigate, onError }: { navigate: (r: Route) => 
           const group = isGroupKey(key);
           const typing = typingText(c.getTyping(key), group);
           const who = last ? (last.outgoing ? 'You: ' : group && last.from ? `${client.displayName(last.from)}: ` : '') : '';
-          const preview = last
+          const draft = c.hasDraft(key) ? c.getDraft(key) : '';
+          const preview = draft
+            ? `Draft: ${draft}`
+            : last
             ? who + (last.deleted ? 'Message deleted' : MessengerClient.preview(last))
             : group
               ? `${c.groupOf(key)?.members.length ?? 0} members`
@@ -302,6 +341,9 @@ export function ChatListScreen({ navigate, onError }: { navigate: (r: Route) => 
             c.isArchived(acting)
               ? { icon: ArchiveRestore, label: 'Unarchive', onPress: () => run(() => client.archiveChat(acting, false)) }
               : { icon: Archive, label: 'Archive', onPress: () => run(() => client.archiveChat(acting, true)) },
+            c.isLocked(acting)
+              ? { icon: LockOpen, label: 'Unlock chat', onPress: () => toggleChatLock(acting) }
+              : { icon: Lock, label: 'Lock chat', onPress: () => toggleChatLock(acting) },
             ...(c.isMuted(acting)
               ? [{ icon: Bell, label: 'Unmute', onPress: () => run(() => client.muteChat(acting, 0)) }]
               : [
@@ -351,6 +393,16 @@ export function ChatListScreen({ navigate, onError }: { navigate: (r: Route) => 
             { icon: ShoppingBag, label: 'My catalog', onPress: () => navigate({ name: 'catalog' }) },
             { icon: Settings, label: 'Settings', onPress: () => navigate({ name: 'settings' }) },
           ]}
+        />
+      )}
+      {askPin && (
+        <LockedChatsPrompt
+          onClose={() => setAskPin(false)}
+          onOpen={() => {
+            setAskPin(false);
+            setArchived(false);
+            setLockedView(true);
+          }}
         />
       )}
     </View>

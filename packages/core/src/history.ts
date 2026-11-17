@@ -14,7 +14,7 @@ import type { ChatMessage, ChatPrefs, Notice, StarredMessage } from './client';
  */
 export const HISTORY_VERSION = 1;
 /** Most messages kept per chat (the oldest go first). */
-export const MAX_KEPT_PER_CHAT = 5000;
+export const MAX_KEPT_PER_CHAT = 20000;
 
 export interface HistorySnapshot {
   v: number;

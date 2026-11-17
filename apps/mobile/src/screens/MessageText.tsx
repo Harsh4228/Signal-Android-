@@ -1,7 +1,7 @@
 import { Alert, Image, Linking, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { ZoomImage } from '../ZoomImage';
 import { Eye, EyeOff, Image as ImageIcon, X } from 'lucide-react-native';
-import { formatText, mentionPattern, shortId, toBase64, type ChatMessage, type TextSpan } from '@meetme/core';
+import { FONT_SIZES, formatText, mentionPattern, shortId, toBase64, type ChatMessage, type TextSpan } from '@meetme/core';
 import { client } from '../messenger';
 import { colors, s } from '../theme';
 import { useBack } from '../ui';
@@ -26,12 +26,14 @@ export function MessageText({ m }: { m: ChatMessage }) {
     if (name) tokens.push(`@${name}`);
   }
   const lines = formatText(m.text, mentionPattern(tokens));
+  const scale = FONT_SIZES[client.appearance.fontSize] ?? 1;
+  const size = { fontSize: 15 * scale, lineHeight: 21 * scale };
   return (
     <View>
       {lines.map((l, i) => (
         <View key={i} style={[l.quote && styles.quote, l.mono && styles.monoLine, !!l.bullet && { flexDirection: 'row', gap: 6 }]}>
-          {!!l.bullet && <Text style={[s.text, { color: colors.muted, lineHeight: 21 }]}>{l.bullet}</Text>}
-          <Text style={[s.text, { lineHeight: 21, flexShrink: 1 }, l.quote && { color: colors.muted }]} selectable={false}>
+          {!!l.bullet && <Text style={[s.text, size, { color: colors.muted }]}>{l.bullet}</Text>}
+          <Text style={[s.text, size, { flexShrink: 1 }, l.quote && { color: colors.muted }]} selectable={false}>
             {l.spans.length ? l.spans.map((sp, j) => <Span key={j} s={sp} />) : ' '}
           </Text>
         </View>
