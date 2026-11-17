@@ -243,7 +243,7 @@ export default function App() {
   } else if (route.name === 'catalog') {
     screen = <CatalogScreen onClose={() => setRoute({ name: 'list' })} onToast={setToast} />;
   } else if (route.name === 'status') {
-    screen = <StatusScreen navigate={setRoute} />;
+    screen = <StatusScreen navigate={setRoute} onToast={setToast} />;
   } else if (route.name === 'status-new') {
     screen = <StatusComposeScreen mode={route.mode} navigate={setRoute} onToast={setToast} />;
   } else if (route.name === 'status-view') {

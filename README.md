@@ -257,6 +257,24 @@ Everyone has a **🔔 Notices** list with every past notice. Admins see **Read b
 
 Notices are end-to-end encrypted per person like announcements, so the server can't read them. Unlike chat messages they are kept (text only, no files) in the device's encrypted store, so the list survives restarts. A notice reaches people who have logged in at least once; anyone offline gets it the next time they open the app.
 
+## More like WhatsApp (v1.6)
+
+| Feature | How |
+|---|---|
+| **Send preview** | Up to 30 photos / videos / files at once: look at each, give each its own caption, drop any, then send |
+| **Photo editing** | ✏ in the send preview: crop, rotate, draw and add text (in memory; the original is never changed) |
+| **Progress** | Uploads and downloads show a percentage and can be cancelled (then *Retry*) |
+| **View once** | Photos and videos |
+| **Voice waveform** | Bars measured while recording; the played part is coloured |
+| **Stickers** | 🙂 → 🏷 on desktop, 📎 → Sticker on phones. Make them from your photos, keep ones you get (★ / long-press). Shown without a bubble. GIFs play on desktop and iPhone (Android shows the first frame in the chat) |
+| **Chat lock** | A chat's menu → *Lock chat*: it moves to *Locked chats*, which opens with the app lock PIN / fingerprint |
+| **Wallpaper, text size, tones** | Settings → Appearance (defaults) and each chat's details (wallpaper, message tone). Tones play while CellMate is open; closed phones use their own notification sound |
+| **Drafts** | Unsent text stays per chat (shown as *Draft:* in the list) |
+| **History** | Up to 20,000 messages per chat (the backup shrinks itself to fit the server limit) |
+| **Status** | Voice status, quick reactions (sent as a reply), mute someone's status |
+| **Group calls** | ✋ raise hand, *Add* rings a group member who isn't in the call |
+| **Call link / invite link** | Group details → *Links*. A call link joins the group's call; an invite link lets colleagues *ask* to join, and an admin or group admin approves each request (company control stays). Outside the app the links only show a page saying to open them in CellMate |
+
 ## Calls: screen sharing
 
 In a call on Windows / Mac / a desktop browser, **Share screen** shows the other person (or everyone in a group video call) a whole screen or one window instead of your camera. The desktop app has its own picker; nothing is shared until you pick. CellMate's own window shows black (screenshot protection). Phones see the shared screen whole, not cropped. It follows the admin's video call right.

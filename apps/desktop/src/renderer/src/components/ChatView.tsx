@@ -1,3 +1,4 @@
+import { SendMediaDialog, type Prepared } from './SendMedia';
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
 import {
   Ban,
@@ -56,6 +57,7 @@ import {
   isGroupKey,
   type CallLog,
   type ChatMessage,
+  type OutgoingFile,
   MAX_ATTACHMENT_BYTES,
   MAX_FILES_AT_ONCE,
   FONT_SIZES,
@@ -230,13 +232,13 @@ export function ChatView({ peer, onError }: { peer: string; onError: (m: string)
     setTimeout(() => setFlash((f) => (f === id ? null : f)), 1600);
   }
 
-  async function sendVoice(data: Uint8Array, mime: string) {
+  async function sendVoice(data: Uint8Array, mime: string, wave?: string) {
     setRecording(false);
     const r = replyTo;
     setReplyTo(null);
     try {
       const ext = mime.includes('mp4') ? 'm4a' : mime.includes('ogg') ? 'ogg' : 'webm';
-      await client.sendFile(peer, { name: `voice-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.${ext}`, mime, data }, '', {
+      await client.sendFile(peer, { name: `voice-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.${ext}`, mime, data, wave }, '', {
         replyTo: r ?? undefined,
       });
     } catch (err) {
@@ -292,26 +294,31 @@ export function ChatView({ peer, onError }: { peer: string; onError: (m: string)
     if (tooBig.length) onError(`Too large (max ${MAX_ATTACHMENT_BYTES / 1024 / 1024} MB), not sent: ${tooBig.map((f) => f.name).join(', ')}`);
     const ok = chosen.filter((f) => f.size <= MAX_ATTACHMENT_BYTES);
     if (!ok.length) return;
-    const caption = text;
+    // Read into memory only; the original files on disk are untouched and nothing new is written.
+    const read = await Promise.all(
+      ok.map(async (f) => ({ name: f.name || 'file', mime: f.type || 'application/octet-stream', data: new Uint8Array(await f.arrayBuffer()) })),
+    );
+    // Look at them first, with a caption for each and photo editing, like WhatsApp.
+    setPreparing({ files: read, asMedia, viewOnce: viewOnceNext.current });
+    viewOnceNext.current = false;
+  }
+
+  const [preparing, setPreparing] = useState<{ files: OutgoingFile[]; asMedia: boolean; viewOnce: boolean } | null>(null);
+  async function sendPrepared(items: Prepared[]) {
+    const p = preparing;
+    setPreparing(null);
+    if (!p) return;
     setText('');
     const r = replyTo;
     setReplyTo(null);
     try {
-      for (let i = 0; i < ok.length; i++) {
-        const f = ok[i]!;
-        // Read into memory only; the original file on disk is untouched and nothing new is written.
-        const data = new Uint8Array(await f.arrayBuffer());
-        const raw = { name: f.name || 'file', mime: f.type || 'application/octet-stream', data };
-        const file = asMedia && /^(image|video)\//.test(raw.mime) ? await prepareMedia(raw) : raw;
-        await client.sendFile(peer, file, i === 0 ? caption : '', {
-          replyTo: i === 0 ? (r ?? undefined) : undefined,
-          viewOnce: viewOnceNext.current,
-        });
+      for (let i = 0; i < items.length; i++) {
+        const { file: raw, caption } = items[i]!;
+        const file = p.asMedia && /^(image|video)\//.test(raw.mime) ? await prepareMedia(raw) : raw;
+        await client.sendFile(peer, file, caption, { replyTo: i === 0 ? (r ?? undefined) : undefined, viewOnce: p.viewOnce });
       }
     } catch (err) {
       onError(errorText(err));
-    } finally {
-      viewOnceNext.current = false;
     }
   }
 
@@ -570,7 +577,7 @@ export function ChatView({ peer, onError }: { peer: string; onError: (m: string)
               <div
                 key={m.id}
                 id={`msg-${m.id}`}
-                className={`bubble ${m.outgoing ? 'out' : 'in'}${m.broadcast ? ' announce' : ''}${m.deleted ? ' deleted' : ''}${flash === m.id ? ' flash' : ''}${m.reactions && Object.keys(m.reactions).length ? ' has-reactions' : ''}${actionsFor === m.id ? ' show-actions' : ''}`}
+                className={`bubble ${m.outgoing ? 'out' : 'in'}${m.sticker && !m.deleted ? ' sticker' : ''}${m.broadcast ? ' announce' : ''}${m.deleted ? ' deleted' : ''}${flash === m.id ? ' flash' : ''}${m.reactions && Object.keys(m.reactions).length ? ' has-reactions' : ''}${actionsFor === m.id ? ' show-actions' : ''}`}
                 onClick={(e) => {
                   // A click on the message keeps its actions (react, reply, forward, star, delete) open, like WhatsApp's
                   // menu; links, pictures, buttons and selected text keep their own click.
@@ -647,6 +654,8 @@ export function ChatView({ peer, onError }: { peer: string; onError: (m: string)
                       ) : (
                         <AttachmentView
                           a={m.attachment}
+                          sticker={m.sticker}
+                          onCancel={c.isTransferring(m.id) ? () => client.cancelTransfer(m.id) : undefined}
                           onToast={onError}
                           onRetry={() =>
                             void (m.outgoing && m.status === 'failed' ? client.retrySend(peer, m.id) : client.retryDownload(peer, m.id)).catch((e) =>
@@ -697,6 +706,16 @@ export function ChatView({ peer, onError }: { peer: string; onError: (m: string)
       {viewingCatalog && <CatalogPanel owner={viewingCatalog} onClose={() => setViewingCatalog(null)} onToast={onError} />}
       {forwarding && <ForwardPicker m={forwarding} onClose={() => setForwarding(null)} onToast={onError} />}
       {viewOnce && <ViewOnceViewer m={viewOnce} onClose={() => setViewOnce(null)} />}
+      {preparing && (
+        <SendMediaDialog
+          files={preparing.files}
+          firstCaption={text}
+          viewOnce={preparing.viewOnce}
+          onClose={() => setPreparing(null)}
+          onSend={(items) => void sendPrepared(items)}
+          onToast={onError}
+        />
+      )}
 
       {gone ? (
         <div className="composer-note">You are no longer a member of this group.</div>
@@ -714,7 +733,7 @@ export function ChatView({ peer, onError }: { peer: string; onError: (m: string)
         </div>
       ) : recording ? (
         <div className="composer">
-          <VoiceRecorder onSend={(d, mime) => void sendVoice(d, mime)} onCancel={() => setRecording(false)} onError={onError} />
+          <VoiceRecorder onSend={(d, mime, wave) => void sendVoice(d, mime, wave)} onCancel={() => setRecording(false)} onError={onError} />
         </div>
       ) : (
         <form className="composer" onSubmit={send}>
@@ -780,8 +799,8 @@ export function ChatView({ peer, onError }: { peer: string; onError: (m: string)
                           <button type="button" onClick={() => pick('image/*,video/*')}>
                             <Image size={17} /> Photos & videos
                           </button>
-                          <button type="button" onClick={() => pick('image/*', true)}>
-                            <Eye size={17} /> Photo, view once
+                          <button type="button" onClick={() => pick('image/*,video/*', true)}>
+                            <Eye size={17} /> Photo or video, view once
                           </button>
                           <button type="button" onClick={() => pick('application/pdf,.pdf')}>
                             <FileText size={17} /> PDF documents
@@ -830,7 +849,20 @@ export function ChatView({ peer, onError }: { peer: string; onError: (m: string)
                 <button type="button" className="icon" title="Emoji" disabled={!canWrite} onClick={() => setEmojiOpen((o) => !o)}>
                   <Smile size={19} />
                 </button>
-                {emojiOpen && <EmojiPicker onPick={insertEmoji} onClose={() => setEmojiOpen(false)} />}
+                {emojiOpen && (
+                  <EmojiPicker
+                    onPick={insertEmoji}
+                    onClose={() => setEmojiOpen(false)}
+                    onSticker={
+                      c.can('sendFiles', peer)
+                        ? (st) => {
+                            setEmojiOpen(false);
+                            void client.sendSticker(peer, st).catch((e) => onError(errorText(e)));
+                          }
+                        : undefined
+                    }
+                  />
+                )}
               </div>
               <textarea
                 ref={inputRef}

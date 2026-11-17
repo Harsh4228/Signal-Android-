@@ -161,12 +161,28 @@ export function openInPlayer(a: Attachment) {
  * Photos / videos / PDFs / files inside a chat bubble, shown from memory. Long-press or the share button shares it
  * to another chat; nothing can take it outside CellMate (unless the admin allows saving / sharing out).
  */
-export function AttachmentView({ a, onRetry }: { a: Attachment; onRetry?: () => void }) {
+export function AttachmentView({
+  a,
+  onRetry,
+  onCancel,
+  sticker,
+}: {
+  a: Attachment;
+  onRetry?: () => void;
+  /** Uploading / downloading now: stop it. */
+  onCancel?: () => void;
+  sticker?: boolean;
+}) {
   // Only photos are turned into a data: URL for the bubble; videos are played from a file when tapped.
   const b64 = useMemo(() => (a.data && a.kind !== 'video' ? toBase64(a.data) : null), [a.data, a.kind]);
   const ready = a.kind === 'video' ? !!a.data : !!b64;
   const actions = ready && client.can('forward', client.activeChat) ? () => showForward(a) : undefined;
   const preview = a.thumb ? `data:image/jpeg;base64,${a.thumb}` : null;
+  const pct = a.progress !== undefined ? ` · ${Math.round(a.progress * 100)}%` : '';
+
+  if (sticker && b64 && a.state === 'ready') {
+    return <Image source={{ uri: `data:${a.mime};base64,${b64}` }} style={{ width: 150, height: 150 }} resizeMode="contain" accessibilityLabel="Sticker" />;
+  }
 
   if (a.state === 'uploading' || a.state === 'downloading' || !ready) {
     const failed = a.state === 'failed' || (a.state === 'ready' && !ready);
@@ -177,7 +193,11 @@ export function AttachmentView({ a, onRetry }: { a: Attachment; onRetry?: () => 
           <Image source={{ uri: preview }} style={[StyleSheet.absoluteFill, { borderRadius: 12 }]} blurRadius={8} resizeMode="cover" />
           <View style={styles.overlay}>
             <ActivityIndicator color="#fff" />
-            <Text style={styles.overlayText}>{a.state === 'uploading' ? 'Sending' : formatBytes(a.size)}</Text>
+            <Text style={styles.overlayText}>
+              {a.state === 'uploading' ? 'Sending' : formatBytes(a.size)}
+              {pct}
+            </Text>
+            {onCancel && <IconButton icon={X} label="Cancel" color="#fff" size={18} onPress={onCancel} />}
           </View>
         </View>
       );
@@ -187,10 +207,17 @@ export function AttachmentView({ a, onRetry }: { a: Attachment; onRetry?: () => 
         icon={failed ? TriangleAlert : ICON[a.kind]}
         warn={failed}
         name={a.name}
-        sub={failed ? (a.data ? 'Not sent · tap to try again' : 'Could not download · tap to try again') : a.state === 'uploading' ? 'Encrypting & sending…' : `Downloading ${formatBytes(a.size)}…`}
+        sub={
+          failed
+            ? a.data
+              ? 'Not sent · tap to try again'
+              : 'Could not download · tap to try again'
+            : `${a.state === 'uploading' ? 'Sending' : 'Downloading'} ${formatBytes(a.size)}${pct || '…'}`
+        }
         busy={!failed}
         onPress={failed ? onRetry : undefined}
         retry={failed && !!onRetry}
+        onCancel={failed ? undefined : onCancel}
       />
     );
   }
@@ -245,6 +272,7 @@ function Card({
   onPress,
   onActions,
   retry,
+  onCancel,
 }: {
   icon: LucideIcon;
   name: string;
@@ -256,6 +284,7 @@ function Card({
   /** Share to another chat (once the file is ready). */
   onActions?: () => void;
   retry?: boolean;
+  onCancel?: () => void;
 }) {
   const [bg, fg] = warn ? [colors.warnSoft, colors.warn] : pdf ? ['#fef3f2', '#d92d20'] : [colors.accentSoft, colors.accent];
   return (
@@ -271,6 +300,7 @@ function Card({
       </View>
       {onActions && <IconButton icon={Forward} label="Share to a chat" size={18} onPress={onActions} />}
       {retry && onPress && <IconButton icon={RotateCw} label="Try again" size={18} onPress={onPress} />}
+      {onCancel && <IconButton icon={X} label="Cancel" size={18} onPress={onCancel} />}
     </Pressable>
   );
 }

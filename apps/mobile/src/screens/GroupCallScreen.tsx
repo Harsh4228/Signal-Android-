@@ -1,8 +1,9 @@
-import { Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import { useState } from 'react';
+import { Alert, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { RTCView } from 'react-native-webrtc';
-import { ChevronDown, Lock, Mic, MicOff, Phone, PhoneOff, SwitchCamera, UsersRound, Video, VideoOff, Volume2 } from 'lucide-react-native';
+import { Hand, UserPlus, ChevronDown, Lock, Mic, MicOff, Phone, PhoneOff, SwitchCamera, UsersRound, Video, VideoOff, Volume2 } from 'lucide-react-native';
 import { groupCalls, client, setSpeaker, useGroupCall, useSpeaker } from '../messenger';
-import { Avatar, useBack } from '../ui';
+import { Avatar, Sheet, useBack } from '../ui';
 import { useDuration } from './CallScreen';
 
 const BG = '#0b141a';
@@ -28,7 +29,7 @@ function Round({ icon: Icon, label, onPress, on, color }: { icon: typeof Mic; la
 }
 
 /** A tile: the person's video, or their picture; their name and a muted mark. */
-function Tile({ name, user, streamURL, muted, mirror, width, height, waiting, sharing }: { name: string; user: string; streamURL?: string; muted?: boolean; mirror?: boolean; width: number; height: number; waiting?: boolean; sharing?: boolean }) {
+function Tile({ name, user, streamURL, muted, mirror, width, height, waiting, sharing, hand }: { name: string; user: string; streamURL?: string; muted?: boolean; mirror?: boolean; width: number; height: number; waiting?: boolean; sharing?: boolean; hand?: boolean }) {
   return (
     <View style={[styles.tile, { width, height }]}>
       {streamURL ? (
@@ -39,6 +40,7 @@ function Tile({ name, user, streamURL, muted, mirror, width, height, waiting, sh
         </View>
       )}
       <View style={styles.label}>
+        {hand && <Text style={{ fontSize: 13 }}>✋</Text>}
         {muted && <MicOff size={13} color={FG} />}
         <Text style={{ color: FG, fontSize: 13, fontWeight: '600' }} numberOfLines={1}>
           {name}{sharing ? ' · sharing screen' : ''}
@@ -51,6 +53,7 @@ function Tile({ name, user, streamURL, muted, mirror, width, height, waiting, sh
 
 /** Group call: ringing (Join / Decline), then everyone in tiles, like WhatsApp. */
 export function GroupCallScreen({ onMinimize }: { onMinimize: () => void }) {
+  const [ringing, setRinging] = useState(false);
   const s = useGroupCall();
   const speaker = useSpeaker();
   const duration = useDuration(s.startedAt);
@@ -81,7 +84,7 @@ export function GroupCallScreen({ onMinimize }: { onMinimize: () => void }) {
   const me = client.account?.username ?? '';
   const meVideo = s.video && !s.cameraOff && !!s.localStream?.getVideoTracks().length;
   const tiles = [
-    { user: me, name: 'You', streamURL: meVideo ? s.localStream.toURL() : undefined, muted: s.muted, mirror: true },
+    { user: me, name: 'You', streamURL: meVideo ? s.localStream.toURL() : undefined, muted: s.muted, mirror: true, hand: s.hand },
     ...s.participants.map((p) => ({
       user: p.username,
       name: client.displayName(p.username),
@@ -89,6 +92,7 @@ export function GroupCallScreen({ onMinimize }: { onMinimize: () => void }) {
       muted: p.muted,
       waiting: !p.connected,
       sharing: !!p.sharing,
+      hand: !!p.hand,
     })),
   ];
   // 1-2 people: stacked; 3-4: 2 x 2; more: 2 columns.
@@ -127,8 +131,21 @@ export function GroupCallScreen({ onMinimize }: { onMinimize: () => void }) {
         {s.video && <Round icon={s.cameraOff ? VideoOff : Video} label="Camera" on={!s.cameraOff} onPress={() => groupCalls.toggleCamera()} />}
         {meVideo && <Round icon={SwitchCamera} label="Flip" onPress={() => groupCalls.switchCamera()} />}
         <Round icon={s.muted ? MicOff : Mic} label={s.muted ? 'Unmute' : 'Mute'} on={s.muted} onPress={() => groupCalls.toggleMute()} />
+        <Round icon={Hand} label={s.hand ? 'Lower' : 'Hand'} on={s.hand} onPress={() => groupCalls.raiseHand(!s.hand)} />
+        {groupCalls.notInCall().length > 0 && <Round icon={UserPlus} label="Add" onPress={() => setRinging(true)} />}
         <Round icon={PhoneOff} label="Leave" color={RED} onPress={() => void groupCalls.leave()} />
       </View>
+      {ringing && (
+        <Sheet
+          title="Ring someone from the group"
+          onClose={() => setRinging(false)}
+          actions={groupCalls.notInCall().map((u) => ({
+            icon: Phone,
+            label: client.displayName(u),
+            onPress: () => void groupCalls.ring(u).catch((e) => Alert.alert('Ring', String(e?.message ?? e))),
+          }))}
+        />
+      )}
     </View>
   );
 }

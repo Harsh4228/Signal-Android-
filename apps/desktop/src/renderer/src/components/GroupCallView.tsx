@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Lock, Maximize2, Mic, MicOff, Minimize2, Monitor, MonitorOff, Phone, PhoneOff, UsersRound, Video, VideoOff } from 'lucide-react';
+import { Hand, UserPlus, Lock, Maximize2, Mic, MicOff, Minimize2, Monitor, MonitorOff, Phone, PhoneOff, UsersRound, Video, VideoOff } from 'lucide-react';
 import { canShareScreen, pickScreenTrack } from './ScreenShare';
 import { client, groupCalls, useGroupCall } from '../messenger';
 import { Avatar, errorText } from './ui';
@@ -30,6 +30,7 @@ export function GroupCallView() {
   const s = useGroupCall();
   const duration = useDuration(s.startedAt);
   const [mini, setMini] = useState(false);
+  const [ringing, setRinging] = useState(false);
   useEffect(() => {
     if (s.status === 'ringing') setMini(false);
   }, [s.status]);
@@ -89,12 +90,13 @@ export function GroupCallView() {
 
   const meVideo = s.video && !s.cameraOff && !!s.localStream?.getVideoTracks().length;
   const tiles = [
-    { user: me, name: 'You', stream: meVideo && !s.sharing ? (s.localStream as MediaStream) : null, sharing: s.sharing, muted: s.muted, self: true, waiting: false },
+    { user: me, name: 'You', stream: meVideo && !s.sharing ? (s.localStream as MediaStream) : null, sharing: s.sharing, hand: s.hand, muted: s.muted, self: true, waiting: false },
     ...s.participants.map((p) => ({
       user: p.username,
       name: client.displayName(p.username),
       stream: p.stream && !p.cameraOff && p.stream.getVideoTracks().length ? (p.stream as MediaStream) : null,
       sharing: !!p.sharing,
+      hand: !!p.hand,
       muted: p.muted,
       self: false,
       waiting: !p.connected,
@@ -117,7 +119,7 @@ export function GroupCallView() {
           <div key={t.user} className={`gc-tile${t.sharing && !t.self ? ' screen' : ''}`}>
             {t.stream ? <StreamVideo stream={t.stream} muted mirror={t.self} /> : <Avatar name={t.user} size="xl" />}
             <span className="gc-name">
-              {t.muted && <MicOff size={13} />} {t.sharing && <Monitor size={13} />} {t.name}
+              {t.hand && <span title="Hand raised">✋</span>} {t.muted && <MicOff size={13} />} {t.sharing && <Monitor size={13} />} {t.name}
               {t.sharing ? (t.self ? ' · sharing your screen' : ' · sharing screen') : ''}
               {t.waiting ? ' · connecting…' : ''}
             </span>
@@ -145,6 +147,30 @@ export function GroupCallView() {
             {s.sharing ? <MonitorOff size={22} /> : <Monitor size={22} />}
           </button>
         )}
+        <button className={`round ${s.hand ? 'on' : ''}`} onClick={() => groupCalls.raiseHand(!s.hand)} title={s.hand ? 'Lower hand' : 'Raise hand'}>
+          <Hand size={22} />
+        </button>
+        <span className="ring-wrap">
+          <button className="round" title="Ring someone from the group" disabled={!groupCalls.notInCall().length} onClick={() => setRinging((v) => !v)}>
+            <UserPlus size={22} />
+          </button>
+          {ringing && (
+            <div className="dropdown ring-menu" role="menu">
+              {groupCalls.notInCall().map((u) => (
+                <button
+                  key={u}
+                  role="menuitem"
+                  onClick={() => {
+                    setRinging(false);
+                    void groupCalls.ring(u).catch((e) => alert(errorText(e)));
+                  }}
+                >
+                  Ring {client.displayName(u)}
+                </button>
+              ))}
+            </div>
+          )}
+        </span>
         <button className={`round ${s.muted ? 'on' : ''}`} onClick={() => groupCalls.toggleMute()} title={s.muted ? 'Unmute' : 'Mute'}>
           {s.muted ? <MicOff size={22} /> : <Mic size={22} />}
         </button>

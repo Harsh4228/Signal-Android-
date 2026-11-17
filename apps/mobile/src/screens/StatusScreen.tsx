@@ -1,3 +1,4 @@
+import { VoiceRecorder, Waveform, fakeWave } from './ChatExtras';
 import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
@@ -12,8 +13,8 @@ import {
   View,
 } from 'react-native';
 import Svg, { Circle } from 'react-native-svg';
-import { Eye, Film, ImagePlus, Palette, Send, Trash2, Type, X } from 'lucide-react-native';
-import { MAX_STATUS_TEXT, MAX_STATUS_VIDEO_BYTES, STATUS_COLORS, formatBytes, toBase64, type OutgoingFile, type StatusUpdate } from '@meetme/core';
+import { Bell, BellOff, Mic, Eye, Film, ImagePlus, Palette, Send, Trash2, Type, X } from 'lucide-react-native';
+import { MAX_STATUS_TEXT, MAX_STATUS_VIDEO_BYTES, STATUS_COLORS, STATUS_REACTIONS, formatBytes, toBase64, type OutgoingFile, type StatusUpdate } from '@meetme/core';
 import { prepareMedia } from '../mediaWorker';
 import { MediaPlayer } from './VideoView';
 import { client, useClient } from '../messenger';
@@ -60,13 +61,15 @@ function Ring({ name, count, seen }: { name: string; count: number; seen: number
 }
 
 /** Status: my updates, and my contacts' updates of the last 24 hours. */
-export function StatusScreen({ navigate }: { navigate: (r: Route) => void }) {
+export function StatusScreen({ navigate, onToast = () => {} }: { navigate: (r: Route) => void; onToast?: (m: string) => void }) {
   const c = useClient();
   const me = c.account!.username;
   const mine = c.myStatuses();
   const groups = c.statusGroups();
-  const recent = groups.filter((g) => !g.allSeen);
-  const viewed = groups.filter((g) => g.allSeen);
+  const recent = groups.filter((g) => !g.allSeen && !g.muted);
+  const viewed = groups.filter((g) => g.allSeen && !g.muted);
+  const muted = groups.filter((g) => g.muted);
+  const [recordingVoice, setRecordingVoice] = useState(false);
   const offline = c.status !== 'online';
 
   const open = (user: string) => {
@@ -107,12 +110,29 @@ export function StatusScreen({ navigate }: { navigate: (r: Route) => void }) {
             </View>
             <IconButton icon={Type} label="Text status" disabled={offline} onPress={() => navigate({ name: 'status-new', mode: 'text' })} />
             <IconButton icon={ImagePlus} label="Photo or video status" disabled={offline} onPress={() => navigate({ name: 'status-new', mode: 'photo' })} />
+            <IconButton icon={Mic} label="Voice status" disabled={offline} onPress={() => setRecordingVoice(true)} />
           </Pressable>
+          {recordingVoice && (
+            <View style={{ paddingHorizontal: 8, paddingBottom: 8 }}>
+              <VoiceRecorder
+                onCancel={() => setRecordingVoice(false)}
+                onError={onToast}
+                onSend={(data, mime, wave) => {
+                  setRecordingVoice(false);
+                  client
+                    .postStatus({ photo: { name: 'voice.m4a', mime, data, wave } })
+                    .then((r) => onToast(`Voice status shared with ${r.sent} ${r.sent === 1 ? 'person' : 'people'}`), (e) => onToast(errorText(e)));
+                }}
+              />
+            </View>
+          )}
         </View>
         {recent.length > 0 && <Text style={[s.section, { marginHorizontal: 16, marginTop: 8 }]}>Recent updates</Text>}
         {recent.length > 0 && <View style={[s.card, { marginHorizontal: 12 }]}>{recent.map((g) => person(g.user, g.items))}</View>}
         {viewed.length > 0 && <Text style={[s.section, { marginHorizontal: 16 }]}>Viewed updates</Text>}
         {viewed.length > 0 && <View style={[s.card, { marginHorizontal: 12 }]}>{viewed.map((g) => person(g.user, g.items))}</View>}
+        {muted.length > 0 && <Text style={[s.section, { marginHorizontal: 16 }]}>Muted updates</Text>}
+        {muted.length > 0 && <View style={[s.card, { marginHorizontal: 12, opacity: 0.6 }]}>{muted.map((g) => person(g.user, g.items))}</View>}
         <Text style={[s.muted, { fontSize: 12, textAlign: 'center', margin: 16, lineHeight: 18 }]}>
           {groups.length ? '' : 'No updates from your contacts yet. '}Your status goes to your contacts and the people in
           your groups, end-to-end encrypted, and disappears after 24 hours.
@@ -258,7 +278,8 @@ export function StatusViewerScreen({
   const [reply, setReply] = useState('');
   const [typing, setTyping] = useState(false);
   const st = items[Math.min(index, items.length - 1)];
-  const isVideo = !!st?.photo && st.photo.mime.startsWith('video/');
+  const isVideo = !!st?.photo && (st.photo.mime.startsWith('video/') || st.photo.mime.startsWith('audio/'));
+  const isVoice = !!st?.photo && st.photo.mime.startsWith('audio/');
   const close = () => navigate({ name: 'status' });
 
   useEffect(() => {
@@ -278,7 +299,7 @@ export function StatusViewerScreen({
       .statusPhoto(st)
       .then((data) => {
         if (gone) return;
-        if (st.photo!.mime.startsWith('video/')) setVideo(data);
+        if (/^(video|audio)\//.test(st.photo!.mime)) setVideo(data);
         else setPhoto(`data:${st.photo!.mime};base64,${toBase64(data)}`);
       })
       .catch((e) => !gone && onToast(errorText(e)));
@@ -330,12 +351,34 @@ export function StatusViewerScreen({
           <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 12 }}>{ago(st.ts)}</Text>
         </View>
         {mineView && <IconButton icon={Trash2} label="Delete for everyone" color="#fff" onPress={remove} />}
+        {!mineView && (
+          <IconButton
+            icon={c.mutedStatus.includes(user) ? Bell : BellOff}
+            label={c.mutedStatus.includes(user) ? 'Unmute their status' : 'Mute their status'}
+            color="#fff"
+            onPress={() => {
+              const on = !c.mutedStatus.includes(user);
+              client.muteStatus(user, on);
+              onToast(on ? `${client.displayName(user)}'s status muted` : `${client.displayName(user)}'s status unmuted`);
+            }}
+          />
+        )}
         <IconButton icon={X} label="Close" color="#fff" onPress={close} />
       </View>
 
       <View style={{ flex: 1 }}>
         {st.photo ? (
-          video ? (
+          video && isVoice ? (
+            <View style={[s.center, { gap: 18, paddingHorizontal: 32 }]}>
+              <Mic size={40} color="#fff" />
+              <View style={{ height: 48, alignSelf: 'stretch', flexDirection: 'row' }}>
+                <Waveform wave={st.photo.wave ?? fakeWave(st.id)} progress={0} light />
+              </View>
+              <View style={{ width: 1, height: 1, overflow: 'hidden' }}>
+                <MediaPlayer a={{ name: st.photo.name, mime: st.photo.mime, size: video.length, kind: 'audio', state: 'ready', data: video }} audio onEnded={next} paused={hold} />
+              </View>
+            </View>
+          ) : video ? (
             <MediaPlayer a={{ name: st.photo.name, mime: st.photo.mime, size: video.length, kind: 'video', state: 'ready', data: video }} onEnded={next} paused={hold} />
           ) : photo ? (
             <Image source={{ uri: photo }} style={{ flex: 1 }} resizeMode="contain" />
@@ -357,6 +400,20 @@ export function StatusViewerScreen({
       </View>
 
       {!!st.photo && !!st.text && <Text style={styles.captionText}>{st.text}</Text>}
+      {!mineView && (
+        <View style={[s.row, { justifyContent: 'center', gap: 4, paddingTop: 8 }]}>
+          {STATUS_REACTIONS.map((e) => (
+            <Pressable
+              key={e}
+              accessibilityLabel={`React ${e}`}
+              style={styles.react}
+              onPress={() => void client.reactToStatus(st, e).then(() => onToast(`Sent ${e} to ${client.displayName(st.from)}`), (err) => onToast(errorText(err)))}
+            >
+              <Text style={{ fontSize: 20 }}>{e}</Text>
+            </Pressable>
+          ))}
+        </View>
+      )}
       {!mineView && (
         <View style={[s.row, { gap: 8, padding: 12 }]}>
           <TextInput
@@ -434,5 +491,6 @@ const styles = StyleSheet.create({
   bar: { flex: 1, height: 3, borderRadius: 2, backgroundColor: 'rgba(255,255,255,0.3)', overflow: 'hidden' },
   barFill: { height: '100%', backgroundColor: '#fff' },
   captionText: { color: '#fff', fontSize: 15, textAlign: 'center', padding: 12 },
+  react: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.12)' },
   seen: { gap: 6, paddingHorizontal: 14, paddingVertical: 8, borderRadius: 999, backgroundColor: 'rgba(255,255,255,0.15)' },
 });

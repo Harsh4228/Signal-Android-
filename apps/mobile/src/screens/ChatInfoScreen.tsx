@@ -1,3 +1,4 @@
+import { GroupLinks } from './GroupLinks';
 import { ChatLookSettings } from './ChatLook';
 import { useCallback, useEffect, useState } from 'react';
 import { Alert, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
@@ -115,6 +116,7 @@ function GroupInfoScreen({
         {clearing && g && <ClearHistorySheet scope="group" target={g.id} label={g.name} onClose={() => setClearing(false)} onToast={onError} />}
         <MediaSection chatKey={chatKey} navigate={navigate} onError={onError} />
         <ChatLookSettings chat={chatKey} onToast={onError} />
+        <GroupLinks chatKey={chatKey} manage={manage} onToast={onError} />
         {manage && g && (
           <View style={[s.card, { marginTop: 12, padding: 4 }]}>
             <Row icon={UserPlus} title="Add members" onPress={() => setAdding(true)} right={<ChevronRight size={18} color={colors.faint} />} />

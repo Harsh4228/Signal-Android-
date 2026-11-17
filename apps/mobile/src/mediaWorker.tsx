@@ -27,9 +27,19 @@ function draw(img, max, q) {
 function reply(m) { window.ReactNativeWebView.postMessage(JSON.stringify(m)); }
 function handle(e) {
   var m; try { m = JSON.parse(e.data); } catch (_) { return; }
-  if (!m || m.type !== 'photo') return;
+  if (!m || (m.type !== 'photo' && m.type !== 'sticker')) return;
   var img = new Image();
   img.onload = function () {
+    if (m.type === 'sticker') {
+      try {
+        var side = Math.min(img.naturalWidth, img.naturalHeight), c = document.createElement('canvas'); c.width = c.height = 512;
+        c.getContext('2d').drawImage(img, (img.naturalWidth - side) / 2, (img.naturalHeight - side) / 2, side, side, 0, 0, 512, 512);
+        var u = c.toDataURL('image/webp', 0.8), mime = 'image/webp';
+        if (u.indexOf('data:image/webp') !== 0 || u.length > 400000) { u = c.toDataURL('image/jpeg', 0.8); mime = 'image/jpeg'; }
+        reply({ type: 'done', id: m.id, data: u.slice(u.indexOf(',') + 1), mime: mime });
+      } catch (err) { reply({ type: 'done', id: m.id, error: String(err) }); }
+      return;
+    }
     try {
       var big = Math.max(img.naturalWidth, img.naturalHeight);
       var out = { type: 'done', id: m.id, thumb: draw(img, ${THUMB_SIDE}, 0.55), w: img.naturalWidth, h: img.naturalHeight };
@@ -44,7 +54,7 @@ document.addEventListener('message', handle); window.addEventListener('message',
 reply({ type: 'ready' });
 </script></body></html>`;
 
-type Pending = { resolve: (r: { data?: string; thumb?: string } | null) => void; timer: ReturnType<typeof setTimeout> };
+type Pending = { resolve: (r: { data?: string; thumb?: string; mime?: string } | null) => void; timer: ReturnType<typeof setTimeout> };
 let post: ((msg: string) => void) | null = null;
 let ready = false;
 const waiting: (() => void)[] = [];
@@ -62,7 +72,7 @@ export function MediaWorkerHost() {
     };
   }, []);
   const onMessage = (e: WebViewMessageEvent) => {
-    let m: { type: string; id?: number; data?: string; thumb?: string; error?: string };
+    let m: { type: string; id?: number; data?: string; thumb?: string; mime?: string; error?: string };
     try {
       m = JSON.parse(e.nativeEvent.data);
     } catch {
@@ -77,7 +87,7 @@ export function MediaWorkerHost() {
     if (!p) return;
     pending.delete(m.id!);
     clearTimeout(p.timer);
-    p.resolve(m.error ? null : { data: m.data, thumb: m.thumb });
+    p.resolve(m.error ? null : { data: m.data, thumb: m.thumb, mime: m.mime });
   };
   return (
     <View pointerEvents="none" style={{ position: 'absolute', width: 1, height: 1, opacity: 0, left: -10, top: -10 }}>
@@ -128,4 +138,17 @@ export async function prepareMedia(f: OutgoingFile): Promise<OutgoingFile> {
   // A HEIC photo must become JPEG (other phones and Windows can't show HEIC); otherwise only if it got smaller.
   if (!MUST_CONVERT.test(f.mime) && data.length >= f.data.length) return { ...f, thumb };
   return { name: `${f.name.replace(/\.[^.]+$/, '') || 'photo'}.jpg`, mime: 'image/jpeg', data, thumb };
+}
+
+/** A picture made into a sticker: the middle square, 512 x 512, WebP where the phone can (JPEG otherwise). */
+export async function makeSticker(f: OutgoingFile): Promise<{ mime: string; data: Uint8Array }> {
+  await whenReady();
+  const r = await new Promise<{ data?: string; mime?: string } | null>((resolve) => {
+    const id = nextId++;
+    const timer = setTimeout(() => (pending.delete(id), resolve(null)), TIMEOUT_MS);
+    pending.set(id, { resolve, timer });
+    post?.(JSON.stringify({ type: 'sticker', id, mime: f.mime, data: toBase64(f.data) }));
+  });
+  if (!r?.data || !r.mime) throw new Error('Could not make a sticker from this picture');
+  return { mime: r.mime, data: fromBase64(r.data) };
 }

@@ -14,6 +14,21 @@ const tmp = (ext: string) => `${CachesDirectoryPath}/v-${bytesToHex(randomBytes(
 const remove = (path: string) => exists(path).then((e) => (e ? unlink(path) : undefined)).catch(() => {});
 
 let recording: string | null = null;
+/** Loudness while recording (0-1), for the waveform the others see. */
+let levels: number[] = [];
+
+/** 40 loudness levels -> hex bars (0-f), scaled so the loudest bar is full height. */
+function toWave(list: number[], bars = 40): string | undefined {
+  if (list.length < 4) return undefined;
+  const out: number[] = [];
+  for (let i = 0; i < bars; i++) {
+    const from = Math.floor((i * list.length) / bars);
+    const part = list.slice(from, Math.max(Math.floor(((i + 1) * list.length) / bars), from + 1));
+    out.push(part.reduce((a, b) => a + b, 0) / part.length);
+  }
+  const max = Math.max(...out, 0.01);
+  return out.map((v) => Math.round((v / max) * 15).toString(16)).join('');
+}
 
 export async function startRecording(onSecs: (secs: number) => void): Promise<void> {
   if (Platform.OS === 'android') {
@@ -22,12 +37,17 @@ export async function startRecording(onSecs: (secs: number) => void): Promise<vo
   }
   const path = tmp('m4a');
   recording = path;
-  Sound.addRecordBackListener((e) => onSecs(Math.floor(e.currentPosition / 1000)));
-  await Sound.startRecorder(path);
+  levels = [];
+  Sound.addRecordBackListener((e) => {
+    onSecs(Math.floor(e.currentPosition / 1000));
+    // Metering is in dB (about -60 quiet ... 0 loud).
+    if (typeof e.currentMetering === 'number') levels.push(Math.max(0, Math.min(1, (e.currentMetering + 60) / 60)));
+  });
+  await Sound.startRecorder(path, undefined, true);
 }
 
 /** Stop and return the recording (in memory; the file is deleted). null if cancelled / nothing recorded. */
-export async function stopRecording(keep: boolean): Promise<{ data: Uint8Array; mime: string } | null> {
+export async function stopRecording(keep: boolean): Promise<{ data: Uint8Array; mime: string; wave?: string } | null> {
   const path = recording;
   recording = null;
   Sound.removeRecordBackListener();
@@ -42,7 +62,7 @@ export async function stopRecording(keep: boolean): Promise<{ data: Uint8Array; 
   try {
     if (!keep) return null;
     const data = fromBase64(await readFile(file, 'base64'));
-    return data.length ? { data, mime: 'audio/mp4' } : null;
+    return data.length ? { data, mime: 'audio/mp4', wave: toWave(levels) } : null;
   } finally {
     await remove(file);
     if (path && path !== file) await remove(path);

@@ -4573,3 +4573,60 @@ button.media-thumb.video { position: relative; display: flex; align-items: cente
 .wp-swatch.auto { width: auto; padding: 0 10px; border-radius: 18px; }
 .wp-swatch.active { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
 .draft-label { color: var(--ok, #079455); font-weight: 600; display: inline-flex; align-items: center; gap: 3px; }
+
+/* send preview (caption per file) and photo editor */
+.send-media-box { position: relative; width: min(860px, 100%); height: min(92vh, 860px); display: flex; flex-direction: column; background: #0b0f17; color: #fff; border-radius: 14px; overflow: hidden; }
+.send-media-box > header { display: flex; align-items: center; gap: 6px; padding: 8px 10px; }
+.send-media-box > header .grow { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: inline-flex; align-items: center; gap: 4px; }
+.send-media-main { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; padding: 8px; }
+.send-media-main img, .send-media-main video { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 6px; }
+.send-file-card { display: flex; flex-direction: column; align-items: center; gap: 8px; color: #e5e7eb; }
+.send-file-card .muted { color: #9ca3af; }
+.send-media-strip { display: flex; gap: 6px; padding: 6px 10px; overflow-x: auto; }
+.send-media-strip button { flex: 0 0 52px; height: 52px; padding: 0; border-radius: 8px; overflow: hidden; border: 2px solid transparent; background: #1f2937; color: #cbd5e1; box-shadow: none; display: flex; align-items: center; justify-content: center; }
+.send-media-strip button.active { border-color: var(--accent); }
+.send-media-strip img { width: 100%; height: 100%; object-fit: cover; }
+.editor-stage { position: fixed; inset: 0; z-index: 95; background: #05070c; color: #fff; display: flex; flex-direction: column; }
+.editor-stage > header { display: flex; align-items: center; gap: 6px; padding: 10px 12px; }
+.editor-stage .icon.light.active { background: rgba(255, 255, 255, 0.18); }
+.editor-colors { display: flex; gap: 8px; justify-content: center; padding: 4px 0 8px; }
+.editor-colors button { width: 26px; height: 26px; border-radius: 50%; padding: 0; border: 2px solid rgba(255, 255, 255, 0.4); box-shadow: none; }
+.editor-colors button.active { border-color: #fff; transform: scale(1.15); }
+.editor-text { display: flex; gap: 8px; justify-content: center; padding: 0 12px 8px; }
+.editor-text input { width: min(420px, 70vw); }
+.editor-canvas { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; }
+.editor-canvas canvas { max-width: 100%; max-height: 100%; touch-action: none; }
+.editor-canvas canvas.tool-draw, .editor-canvas canvas.tool-crop { cursor: crosshair; }
+.editor-canvas canvas.tool-text { cursor: text; }
+.editor-stage .hint { text-align: center; padding: 8px; color: #9ca3af; font-size: 12.5px; }
+
+/* voice waveform */
+.waveform { flex: 1; min-width: 120px; height: 26px; display: flex; align-items: center; gap: 2px; }
+.waveform i { flex: 1; min-width: 2px; border-radius: 2px; background: var(--line-strong); }
+.waveform i.played { background: var(--accent); }
+
+/* upload / download progress and cancel */
+.att-progress { display: block; height: 3px; border-radius: 2px; background: var(--line); margin-top: 6px; overflow: hidden; }
+.att-progress i { display: block; height: 100%; background: var(--accent); transition: width 0.2s; }
+.att-cancel { flex-shrink: 0; }
+.att-overlay .att-cancel { background: rgba(0, 0, 0, 0.5); color: #fff; border-radius: 50%; }
+
+/* stickers: no bubble */
+.bubble.sticker { background: transparent !important; box-shadow: none !important; padding: 0; }
+.sticker-wrap { position: relative; display: inline-block; }
+.sticker-img { display: block; width: 150px; height: 150px; object-fit: contain; }
+.sticker-keep { position: absolute; top: 2px; right: 2px; opacity: 0; background: var(--surface); border-radius: 50%; box-shadow: var(--shadow-md); }
+.sticker-wrap:hover .sticker-keep { opacity: 1; }
+.sticker-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; padding: 8px; max-height: 240px; overflow-y: auto; }
+.sticker-grid button, .sticker-add { aspect-ratio: 1; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-2); padding: 4px; box-shadow: none; display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 26px; color: var(--muted); }
+.sticker-grid img { width: 100%; height: 100%; object-fit: contain; }
+.sticker-grid p { grid-column: 1 / -1; margin: 4px; }
+.status-voice { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; width: min(420px, 90%); color: #fff; margin: auto; }
+.status-voice .waveform { width: 100%; height: 48px; }
+.status-voice .waveform i { background: rgba(255, 255, 255, 0.35); }
+.status-voice .waveform i.played { background: #fff; }
+.status-reactions { display: flex; justify-content: center; gap: 4px; padding: 6px 12px 0; position: relative; z-index: 3; }
+.status-reactions button { border: 0; background: rgba(255, 255, 255, 0.12); box-shadow: none; border-radius: 50%; width: 38px; height: 38px; font-size: 20px; padding: 0; }
+.status-reactions button:hover { background: rgba(255, 255, 255, 0.25); }
+.muted-list { opacity: 0.6; }
+.ring-wrap { position: relative; display: inline-flex; } .ring-menu { position: absolute; bottom: 64px; left: 50%; transform: translateX(-50%); min-width: 180px; z-index: 5; }

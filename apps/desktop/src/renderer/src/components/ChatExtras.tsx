@@ -210,6 +210,42 @@ export function ProductCardView({ p, onViewCatalog }: { p: ProductCard; onViewCa
   );
 }
 
+/** 40 loudness levels -> hex bars (0-f), scaled so the loudest bar is full height. */
+export function toWave(levels: number[], bars = 40): string | undefined {
+  if (levels.length < 4) return undefined;
+  const out: number[] = [];
+  for (let i = 0; i < bars; i++) {
+    const part = levels.slice(Math.floor((i * levels.length) / bars), Math.max(Math.floor(((i + 1) * levels.length) / bars), Math.floor((i * levels.length) / bars) + 1));
+    out.push(part.reduce((a, b) => a + b, 0) / part.length);
+  }
+  const max = Math.max(...out, 0.01);
+  return out.map((v) => Math.round((v / max) * 15).toString(16)).join('');
+}
+
+/** Bars for voice messages without a measured waveform (older ones): steady but not flat. */
+export function fakeWave(seed: string): string {
+  let h = 0;
+  for (const ch of seed) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  let out = '';
+  for (let i = 0; i < 40; i++) {
+    h = (h * 1103515245 + 12345) >>> 0;
+    out += (4 + (h % 9)).toString(16);
+  }
+  return out;
+}
+
+/** WhatsApp-style bars; the played part is coloured. */
+export function Waveform({ wave, progress }: { wave: string; progress: number }) {
+  const bars = [...wave].map((d) => parseInt(d, 16));
+  return (
+    <span className="waveform" aria-hidden>
+      {bars.map((v, i) => (
+        <i key={i} className={i / bars.length < progress ? 'played' : ''} style={{ height: `${Math.max(12, (v / 15) * 100)}%` }} />
+      ))}
+    </span>
+  );
+}
+
 /** Voice message: play / pause, progress and length. Played from memory only. */
 export function AudioView({ a }: { a: Attachment }) {
   const url = useObjectUrl(a);
@@ -252,9 +288,7 @@ export function AudioView({ a }: { a: Attachment }) {
       >
         {playing ? <Pause size={18} /> : <Play size={18} />}
       </button>
-      <span className="voice-track">
-        <i style={{ width: `${len ? (pos / len) * 100 : 0}%` }} />
-      </span>
+      <Waveform wave={a.wave ?? fakeWave(a.name + a.size)} progress={len ? pos / len : 0} />
       <span className="muted small">{fmt(playing || pos ? pos : len)}</span>
       <button
         className="voice-rate"
@@ -273,7 +307,9 @@ export function AudioView({ a }: { a: Attachment }) {
 }
 
 /** Hold-free voice recorder: tap the mic to start, then send or cancel. Audio stays in memory. */
-export function VoiceRecorder({ onSend, onCancel, onError }: { onSend: (data: Uint8Array, mime: string) => void; onCancel: () => void; onError: (e: string) => void }) {
+export function VoiceRecorder({ onSend, onCancel, onError }: { onSend: (data: Uint8Array, mime: string, wave?: string) => void; onCancel: () => void; onError: (e: string) => void }) {
+  /** Loudness measured while recording (for the waveform the others see). */
+  const levels = useRef<number[]>([]);
   const [secs, setSecs] = useState(0);
   const rec = useRef<MediaRecorder | null>(null);
   const chunks = useRef<Blob[]>([]);
@@ -282,10 +318,28 @@ export function VoiceRecorder({ onSend, onCancel, onError }: { onSend: (data: Ui
   useEffect(() => {
     let stream: MediaStream | null = null;
     let timer: ReturnType<typeof setInterval> | undefined;
+    let stopMeter = () => {};
     navigator.mediaDevices
       .getUserMedia({ audio: true })
       .then((s) => {
         stream = s;
+        try {
+          const ac = new AudioContext();
+          const an = ac.createAnalyser();
+          an.fftSize = 512;
+          ac.createMediaStreamSource(s).connect(an);
+          const buf = new Uint8Array(an.fftSize);
+          const sample = setInterval(() => {
+            an.getByteTimeDomainData(buf);
+            let sum = 0;
+            for (const v of buf) sum += ((v - 128) / 128) ** 2;
+            levels.current.push(Math.sqrt(sum / buf.length));
+          }, 100);
+          s.getTracks()[0]?.addEventListener('ended', () => (clearInterval(sample), void ac.close()));
+          stopMeter = () => (clearInterval(sample), void ac.close().catch(() => {}));
+        } catch {
+          /* no waveform */
+        }
         // MP4 / AAC where possible: iPhones can't play WebM voice messages.
         const mime = voiceMime();
         const r = new MediaRecorder(s, { mimeType: mime });
@@ -296,7 +350,8 @@ export function VoiceRecorder({ onSend, onCancel, onError }: { onSend: (data: Ui
           if (!send.current) return;
           const type = mime.split(';')[0]!;
           const blob = new Blob(chunks.current, { type });
-          onSend(new Uint8Array(await blob.arrayBuffer()), type);
+          stopMeter();
+          onSend(new Uint8Array(await blob.arrayBuffer()), type, toWave(levels.current));
         };
         r.start(250);
         timer = setInterval(() => setSecs((x) => x + 1), 1000);

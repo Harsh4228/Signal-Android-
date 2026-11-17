@@ -218,6 +218,38 @@ export function ProductCardView({ p, onViewCatalog }: { p: ProductCard; onViewCa
   );
 }
 
+/** Bars for voice messages without a measured waveform (older ones): steady but not flat. */
+export function fakeWave(seed: string): string {
+  let h = 0;
+  for (const ch of seed) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  let out = '';
+  for (let i = 0; i < 40; i++) {
+    h = (h * 1103515245 + 12345) >>> 0;
+    out += (4 + (h % 9)).toString(16);
+  }
+  return out;
+}
+
+/** WhatsApp-style bars; the played part is coloured. */
+export function Waveform({ wave, progress, light }: { wave: string; progress: number; light?: boolean }) {
+  const bars = [...wave].map((d) => parseInt(d, 16));
+  return (
+    <View style={{ flex: 1, height: 28, flexDirection: 'row', alignItems: 'center', gap: 2 }}>
+      {bars.map((v, i) => (
+        <View
+          key={i}
+          style={{
+            flex: 1,
+            borderRadius: 2,
+            height: `${Math.max(12, (v / 15) * 100)}%`,
+            backgroundColor: i / bars.length < progress ? (light ? '#fff' : colors.accent) : light ? 'rgba(255,255,255,0.35)' : colors.lineStrong,
+          }}
+        />
+      ))}
+    </View>
+  );
+}
+
 /** Voice message player (decrypted into a temporary private file only while playing). */
 export function AudioView({ a }: { a: Attachment }) {
   const [playing, setPlaying] = useState(false);
@@ -262,9 +294,7 @@ export function AudioView({ a }: { a: Attachment }) {
       <Pressable onPress={() => void toggle()} style={styles.play} accessibilityLabel={playing ? 'Stop' : 'Play'}>
         {playing ? <Pause size={18} color="#fff" /> : <Play size={18} color="#fff" />}
       </Pressable>
-      <View style={styles.track}>
-        <View style={[styles.trackFill, { width: `${len ? Math.min(100, (pos / len) * 100) : 0}%` }]} />
-      </View>
+      <Waveform wave={a.wave ?? fakeWave(a.name + a.size)} progress={len ? pos / len : 0} />
       <Text style={[s.muted, { fontSize: 12 }]}>{fmt(playing ? pos : len)}</Text>
       {!needsWebPlayer(a) && (
         <Pressable
@@ -286,7 +316,7 @@ export function AudioView({ a }: { a: Attachment }) {
 }
 
 /** Voice recorder bar (replaces the text field while recording). */
-export function VoiceRecorder({ onSend, onCancel, onError }: { onSend: (d: Uint8Array, mime: string) => void; onCancel: () => void; onError: (e: string) => void }) {
+export function VoiceRecorder({ onSend, onCancel, onError }: { onSend: (d: Uint8Array, mime: string, wave?: string) => void; onCancel: () => void; onError: (e: string) => void }) {
   const [secs, setSecs] = useState(0);
   useEffect(() => {
     startRecording(setSecs).catch((e) => {
@@ -300,7 +330,7 @@ export function VoiceRecorder({ onSend, onCancel, onError }: { onSend: (d: Uint8
   }, [secs]);
   async function finish(keep: boolean) {
     const r = await stopRecording(keep);
-    if (keep && r) onSend(r.data, r.mime);
+    if (keep && r) onSend(r.data, r.mime, r.wave);
     else onCancel();
   }
   return (

@@ -77,3 +77,16 @@ export async function setShareTargets(targets: ShareTarget[]): Promise<void> {
   if (Platform.OS !== 'ios' || !Native?.setShareTargets) return;
   await Native.setShareTargets(JSON.stringify(targets)).catch(() => {});
 }
+
+/**
+ * A CellMate call link / group invite link: copied (Android), or offered with the share menu (iPhone). The links
+ * say nothing about the group and only work inside CellMate, so this is not content leaving the app.
+ */
+export async function copyAppLink(link: string): Promise<'copied' | 'shared'> {
+  if (Native) {
+    await Native.copyText(link);
+    return 'copied';
+  }
+  await Share.share({ message: link });
+  return 'shared';
+}

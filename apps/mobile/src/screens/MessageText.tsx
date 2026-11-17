@@ -2,13 +2,16 @@ import { Alert, Image, Linking, Platform, Pressable, StyleSheet, Text, View } fr
 import { ZoomImage } from '../ZoomImage';
 import { Eye, EyeOff, Image as ImageIcon, X } from 'lucide-react-native';
 import { FONT_SIZES, formatText, mentionPattern, shortId, toBase64, type ChatMessage, type TextSpan } from '@meetme/core';
-import { client } from '../messenger';
+import { client, groupCalls } from '../messenger';
 import { colors, s } from '../theme';
 import { useBack } from '../ui';
 import { MediaPlayer } from './VideoView';
 
 /** Ask first: a link in a message could lead anywhere. */
 function openLink(url: string) {
+  // CellMate's own call / group invite links open inside the app.
+  const app = client.parseAppLink(url);
+  if (app) return void openAppLink(app.kind, app.group);
   Alert.alert('Open link?', url, [
     { text: 'Cancel', style: 'cancel' },
     { text: 'Open', onPress: () => void Linking.openURL(url) },
@@ -119,3 +122,24 @@ const styles = StyleSheet.create({
   close: { position: 'absolute', top: 12, left: 12, padding: 10 },
   hint: { position: 'absolute', bottom: 28, alignSelf: 'center', color: '#ddd', fontSize: 13 },
 });
+
+/** A call link joins (or starts) the group's call; an invite link opens the group or asks to join it. */
+function openAppLink(kind: 'call' | 'group', group: string) {
+  const fail = (e: unknown) => Alert.alert('CellMate', String((e as Error)?.message ?? e));
+  if (!client.groupOf(group)) {
+    if (kind === 'call') return Alert.alert('Call link', "You are not in this group, so you can't join its call.");
+    return Alert.alert('Join group?', 'Ask to join this group? An admin approves your request.', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Ask to join',
+        onPress: () => void client.requestToJoin(group).then(() => Alert.alert('Request sent', 'You will see the group when an admin adds you.'), fail),
+      },
+    ]);
+  }
+  if (kind === 'group') return Alert.alert('Group link', `You are already in ${client.chatTitle(group)}.`);
+  if (groupCalls.ongoingIn(group)) return void groupCalls.joinOngoing(group).catch(fail);
+  Alert.alert('Start the call?', 'Nobody is in this call yet.', [
+    { text: 'Cancel', style: 'cancel' },
+    { text: 'Start', onPress: () => void groupCalls.start(group, false).catch(fail) },
+  ]);
+}

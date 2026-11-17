@@ -1,3 +1,4 @@
+import { GroupLinks } from './GroupLinks';
 import { ChatLookSettings } from './ChatLook';
 import { useEffect, useRef, useState } from 'react';
 import { Ban, BadgeCheck, Building2, Cake, Check, Flag, ChevronRight, Eraser, IdCard, ImageMinus, ImagePlus, KeyRound, Mail, Phone, RotateCcw, Search, ShieldPlus, ShieldX, UserMinus, UserPlus, Video, X } from 'lucide-react';
@@ -111,6 +112,7 @@ function GroupDetails({ chatKey, onClose, onError }: { chatKey: string; onClose:
       )}
       <MediaSection chatKey={chatKey} onToast={onError} />
       <ChatLookSettings chat={chatKey} onToast={onError} />
+      <GroupLinks chatKey={chatKey} manage={manage} onToast={onError} />
       <div className="section-title">
         {count} member{count === 1 ? '' : 's'}
       </div>

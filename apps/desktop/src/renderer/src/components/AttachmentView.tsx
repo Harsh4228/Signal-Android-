@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Download, File, FileText, Film, Forward, Image, Loader2, Lock, Play, RotateCw, Share2, TriangleAlert, X } from 'lucide-react';
+import { Download, File, FileText, Film, Forward, Image, Loader2, Lock, Play, RotateCw, Share2, Star, TriangleAlert, X } from 'lucide-react';
 import { ZoomImage } from './ZoomImage';
 import { formatBytes, type Attachment, type ChatMessage } from '@meetme/core';
 import { client, useClient } from '../messenger';
@@ -122,10 +122,43 @@ export function VideoPlayer({ url, poster, autoPlay, className }: { url: string;
 
 const thumbUrl = (a: Attachment) => (a.thumb ? `data:image/jpeg;base64,${a.thumb}` : undefined);
 
-export function AttachmentView({ a, onToast, onRetry }: { a: Attachment; onToast: (m: string) => void; onRetry?: () => void }) {
+export function AttachmentView({
+  a,
+  onToast,
+  onRetry,
+  onCancel,
+  sticker,
+}: {
+  a: Attachment;
+  onToast: (m: string) => void;
+  onRetry?: () => void;
+  /** Uploading / downloading now: stop it. */
+  onCancel?: () => void;
+  sticker?: boolean;
+}) {
   const [open, setOpen] = useState(false);
   const url = useObjectUrl(a);
   const preview = thumbUrl(a);
+  const pct = a.progress !== undefined ? `${Math.round(a.progress * 100)}%` : null;
+  const cancel = onCancel && (
+    <button className="icon att-cancel" title="Cancel" onClick={(e) => (e.stopPropagation(), onCancel())}>
+      <X size={16} />
+    </button>
+  );
+  if (sticker && url && a.state === 'ready') {
+    return (
+      <span className="sticker-wrap">
+        <img className="sticker-img" src={url} alt="Sticker" draggable={false} />
+        <button
+          className="icon sticker-keep"
+          title="Add to my stickers"
+          onClick={() => void client.addSticker({ mime: a.mime, data: a.data! }).then(() => onToast('Added to your stickers'), (e) => onToast(errorText(e)))}
+        >
+          <Star size={14} />
+        </button>
+      </span>
+    );
+  }
 
   if (a.state === 'downloading' || a.state === 'uploading') {
     // Photos / videos: the small preview (blurred) with a spinner, like WhatsApp.
@@ -135,7 +168,11 @@ export function AttachmentView({ a, onToast, onRetry }: { a: Attachment; onToast
           <img className="att-image blur" src={preview} alt="" draggable={false} />
           <span className="att-overlay">
             <Loader2 size={26} className="spin" />
-            <small>{a.state === 'uploading' ? 'Sending' : formatBytes(a.size)}</small>
+            <small>
+              {a.state === 'uploading' ? 'Sending' : formatBytes(a.size)}
+              {pct ? ` · ${pct}` : ''}
+            </small>
+            {cancel}
           </span>
         </span>
       );
@@ -147,8 +184,17 @@ export function AttachmentView({ a, onToast, onRetry }: { a: Attachment; onToast
         </span>
         <div className="grow">
           <div className="att-name">{a.name}</div>
-          <div className="muted small">{a.state === 'uploading' ? 'Encrypting and sending…' : `Downloading ${formatBytes(a.size)}…`}</div>
+          <div className="muted small">
+            {a.state === 'uploading' ? 'Sending' : 'Downloading'} {formatBytes(a.size)}
+            {pct ? ` · ${pct}` : '…'}
+          </div>
+          {a.progress !== undefined && (
+            <span className="att-progress">
+              <i style={{ width: pct! }} />
+            </span>
+          )}
         </div>
+        {cancel}
       </div>
     );
   }

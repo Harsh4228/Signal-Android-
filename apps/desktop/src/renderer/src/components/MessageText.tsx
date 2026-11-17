@@ -1,10 +1,13 @@
 import { useEffect } from 'react';
 import { Eye, EyeOff, X } from 'lucide-react';
 import { formatText, mentionPattern, shortId, type ChatMessage, type TextSpan } from '@meetme/core';
-import { client } from '../messenger';
+import { client, groupCalls } from '../messenger';
 import { useObjectUrl, VideoPlayer } from './AttachmentView';
 
 export function openLink(url: string) {
+  // CellMate's own call / group invite links open inside the app.
+  const app = client.parseAppLink(url);
+  if (app) return void openAppLink(app.kind, app.group);
   if (!confirm(`Open this link in your browser?\n\n${url}`)) return;
   if (window.meetme.openLink) void window.meetme.openLink(url);
   else window.open(url, '_blank', 'noopener,noreferrer');
@@ -93,4 +96,22 @@ export function ViewOnceViewer({ m, onClose }: { m: ChatMessage; onClose: () => 
       <div className="hint">View once: it is gone when you close it</div>
     </div>
   );
+}
+/** A call link joins (or starts) the group's call; an invite link opens the group or asks to join it. */
+async function openAppLink(kind: 'call' | 'group', group: string) {
+  try {
+    if (!client.groupOf(group)) {
+      if (kind === 'call') return alert("You are not in this group, so you can't join its call.");
+      if (!confirm('Ask to join this group? An admin approves your request.')) return;
+      await client.requestToJoin(group);
+      return alert('Request sent. You will see the group when an admin adds you.');
+    }
+    client.setActiveChat(group);
+    if (kind === 'call') {
+      if (groupCalls.ongoingIn(group)) await groupCalls.joinOngoing(group);
+      else if (confirm('Nobody is in this call yet. Start it?')) await groupCalls.start(group, false);
+    }
+  } catch (e) {
+    alert(String((e as Error)?.message ?? e));
+  }
 }

@@ -1,6 +1,7 @@
+import { VoiceRecorder, Waveform, fakeWave } from './ChatExtras';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronLeft, ChevronRight, CircleDashed, Eye, ImagePlus, Loader2, Palette, Send, Trash2, Type, X } from 'lucide-react';
-import { MAX_STATUS_TEXT, MAX_STATUS_VIDEO_BYTES, STATUS_COLORS, type OutgoingFile, type StatusUpdate } from '@meetme/core';
+import { Bell, BellOff, Mic, ChevronLeft, ChevronRight, CircleDashed, Eye, ImagePlus, Loader2, Palette, Send, Trash2, Type, X } from 'lucide-react';
+import { MAX_STATUS_TEXT, MAX_STATUS_VIDEO_BYTES, STATUS_COLORS, STATUS_REACTIONS, type OutgoingFile, type StatusUpdate } from '@meetme/core';
 import { prepareMedia } from '../media';
 import { client, useClient } from '../messenger';
 import { Avatar, errorText, shortTime } from './ui';
@@ -49,12 +50,14 @@ function Ring({ name, count, seen }: { name: string; count: number; seen: number
 export function StatusPanel({ onClose, onToast }: { onClose: () => void; onToast: (m: string) => void }) {
   const c = useClient();
   const [composing, setComposing] = useState<'text' | 'photo' | null>(null);
+  const [recordingVoice, setRecordingVoice] = useState(false);
   const [viewing, setViewing] = useState<{ user: string; start: number } | null>(null);
   const me = c.account!.username;
   const mine = c.myStatuses();
   const groups = c.statusGroups();
-  const recent = groups.filter((g) => !g.allSeen);
-  const viewed = groups.filter((g) => g.allSeen);
+  const recent = groups.filter((g) => !g.allSeen && !g.muted);
+  const viewed = groups.filter((g) => g.allSeen && !g.muted);
+  const muted = groups.filter((g) => g.muted);
   const offline = c.status !== 'online';
 
   const open = (user: string) => {
@@ -95,9 +98,26 @@ export function StatusPanel({ onClose, onToast }: { onClose: () => void; onToast
               <button className="icon" title="Photo or video status" disabled={offline} onClick={() => setComposing('photo')}>
                 <ImagePlus size={18} />
               </button>
+              <button className="icon" title="Voice status" disabled={offline} onClick={() => setRecordingVoice(true)}>
+                <Mic size={18} />
+              </button>
             </span>
           </li>
         </ul>
+        {recordingVoice && (
+          <div className="composer">
+            <VoiceRecorder
+              onCancel={() => setRecordingVoice(false)}
+              onError={onToast}
+              onSend={(data, mime, wave) => {
+                setRecordingVoice(false);
+                client
+                  .postStatus({ photo: { name: `voice.${mime.includes('mp4') ? 'm4a' : 'webm'}`, mime, data, wave } })
+                  .then((r) => onToast(`Voice status shared with ${r.sent} ${r.sent === 1 ? 'person' : 'people'}`), (e) => onToast(errorText(e)));
+              }}
+            />
+          </div>
+        )}
 
         {recent.length > 0 && <div className="section-title">Recent updates</div>}
         <ul className="status-list">
@@ -108,6 +128,12 @@ export function StatusPanel({ onClose, onToast }: { onClose: () => void; onToast
         {viewed.length > 0 && <div className="section-title">Viewed updates</div>}
         <ul className="status-list">
           {viewed.map((g) => (
+            <PersonRow key={g.user} user={g.user} items={g.items} onOpen={() => open(g.user)} />
+          ))}
+        </ul>
+        {muted.length > 0 && <div className="section-title">Muted updates</div>}
+        <ul className="status-list muted-list">
+          {muted.map((g) => (
             <PersonRow key={g.user} user={g.user} items={g.items} onOpen={() => open(g.user)} />
           ))}
         </ul>
@@ -289,16 +315,19 @@ export function StatusViewer({ user, start, onClose, onToast }: { user: string; 
   }, [s?.id]);
 
   const isVideo = !!s?.photo && s.photo.mime.startsWith('video/');
+  const isVoice = !!s?.photo && s.photo.mime.startsWith('audio/');
+  const [voicePos, setVoicePos] = useState(0);
   /** How long this update shows: 5 s, or a video's own length (at most a minute). */
   const [showMs, setShowMs] = useState(SHOW_MS);
   useEffect(() => setShowMs(SHOW_MS), [s?.id]);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const audioRef = useRef<HTMLAudioElement>(null);
   const [reply, setReply] = useState('');
   const [typing, setTyping] = useState(false);
   const loading = !!s?.photo && !photo;
   const hold = paused || showViewers || loading || typing;
   useEffect(() => {
-    const v = videoRef.current;
+    const v = videoRef.current ?? audioRef.current;
     if (!v) return;
     if (hold) v.pause();
     else void v.play().catch(() => {});
@@ -374,6 +403,19 @@ export function StatusViewer({ user, start, onClose, onToast }: { user: string; 
             <div className="name">{mineView ? 'My status' : client.displayName(user)}</div>
             <div className="small">{ago(s.ts)}</div>
           </div>
+          {!mineView && (
+            <button
+              className="icon light"
+              title={c.mutedStatus.includes(user) ? 'Unmute their status' : 'Mute their status'}
+              onClick={() => {
+                const on = !c.mutedStatus.includes(user);
+                client.muteStatus(user, on);
+                onToast(on ? `${client.displayName(user)}'s status muted` : `${client.displayName(user)}'s status unmuted`);
+              }}
+            >
+              {c.mutedStatus.includes(user) ? <Bell size={18} /> : <BellOff size={18} />}
+            </button>
+          )}
           {mineView && (
             <button className="icon light" title="Delete for everyone" onClick={() => void remove()}>
               <Trash2 size={18} />
@@ -386,7 +428,22 @@ export function StatusViewer({ user, start, onClose, onToast }: { user: string; 
 
         {s.photo ? (
           <div className="status-card photo">
-            {photo && isVideo ? (
+            {photo && isVoice ? (
+              <div className="status-voice">
+                <Mic size={34} />
+                <Waveform wave={s.photo!.wave ?? fakeWave(s.id)} progress={voicePos} />
+                <audio
+                  ref={audioRef}
+                  src={photo}
+                  autoPlay
+                  onTimeUpdate={(e) => setVoicePos(e.currentTarget.duration ? e.currentTarget.currentTime / e.currentTarget.duration : 0)}
+                  onLoadedMetadata={(e) => {
+                    const d = e.currentTarget.duration;
+                    if (Number.isFinite(d) && d > 0) setShowMs(Math.min(60_000, Math.ceil(d * 1000)));
+                  }}
+                />
+              </div>
+            ) : photo && isVideo ? (
               <video
                 ref={videoRef}
                 src={photo}
@@ -420,6 +477,19 @@ export function StatusViewer({ user, start, onClose, onToast }: { user: string; 
           <ChevronRight size={22} />
         </button>
 
+        {!mineView && (
+          <div className="status-reactions" onMouseDown={(e) => e.stopPropagation()}>
+            {STATUS_REACTIONS.map((e) => (
+              <button
+                key={e}
+                title={`React ${e}`}
+                onClick={() => void client.reactToStatus(s, e).then(() => onToast(`Sent ${e} to ${client.displayName(s.from)}`), (err) => onToast(errorText(err)))}
+              >
+                {e}
+              </button>
+            ))}
+          </div>
+        )}
         {!mineView && (
           <form
             className="status-reply"

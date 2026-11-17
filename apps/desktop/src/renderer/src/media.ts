@@ -114,3 +114,22 @@ export function voiceMime(): string {
   }
   return 'audio/webm';
 }
+
+/** Turn a picture into a sticker: the middle square, 512 x 512, WebP (small, keeps transparency). */
+export async function makeSticker(f: OutgoingFile): Promise<{ mime: string; data: Uint8Array }> {
+  const bmp = await createImageBitmap(new Blob([f.data as BlobPart], { type: f.mime }), { imageOrientation: 'from-image' });
+  try {
+    const side = Math.min(bmp.width, bmp.height);
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = 512;
+    const ctx = canvas.getContext('2d')!;
+    ctx.drawImage(bmp, (bmp.width - side) / 2, (bmp.height - side) / 2, side, side, 0, 0, 512, 512);
+    for (const q of [0.85, 0.7, 0.5]) {
+      const blob = await new Promise<Blob | null>((r) => canvas.toBlob(r, 'image/webp', q));
+      if (blob && blob.size <= 300 * 1024) return { mime: blob.type || 'image/webp', data: new Uint8Array(await blob.arrayBuffer()) };
+    }
+    throw new Error('Could not make a small enough sticker');
+  } finally {
+    bmp.close();
+  }
+}

@@ -1,3 +1,5 @@
+import { SendMediaScreen, type Prepared } from './SendMedia';
+import { StickerSheet } from './Stickers';
 import { wallpaperColor } from './ChatLook';
 import { useEffect, useRef, useState } from 'react';
 import { Alert, FlatList, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
@@ -40,13 +42,14 @@ import {
   Video,
   X,
   Flag,
+  Smile,
   Pin,
   PinOff,
   RotateCw,
   Share2,
   Camera as CameraIcon,
 } from 'lucide-react-native';
-import { MAX_ATTACHMENT_BYTES, MAX_FILES_AT_ONCE, MessengerClient, callDetail, callMissed, callTitle, formatLastSeen, isGroupKey, type CallLog, type ChatMessage } from '@meetme/core';
+import { type OutgoingFile, MAX_ATTACHMENT_BYTES, MAX_FILES_AT_ONCE, MessengerClient, callDetail, callMissed, callTitle, formatLastSeen, isGroupKey, type CallLog, type ChatMessage } from '@meetme/core';
 import {
   AudioView,
   CatalogScreen,
@@ -160,32 +163,46 @@ export function ChatScreen({
 
   async function sendPicked(kind: PickKind, viewOnce = false) {
     try {
-      // View once: a single photo. Otherwise up to 10 at once, each its own message (caption on the first).
-      const picked = viewOnce ? await pickFile(kind).then((f) => ({ files: f ? [f] : [], tooBig: [] as string[], extra: 0 })) : await pickFiles(kind);
+      // View once: a single photo or video. Otherwise up to 30 at once, each its own message with its own caption.
+      const picked = viewOnce ? await pickFile('media').then((f) => ({ files: f ? [f] : [], tooBig: [] as string[], extra: 0 })) : await pickFiles(kind);
       const { files, tooBig, extra } = picked;
       if (tooBig.length) onError(`Too large (max ${MAX_ATTACHMENT_BYTES / 1024 / 1024} MB), not sent: ${tooBig.join(', ')}`);
       if (extra) onError(`Only ${MAX_FILES_AT_ONCE} at a time: the first ${MAX_FILES_AT_ONCE} were sent`);
       if (!files.length) return;
-      const caption = text;
-      setText('');
-      const r = replyTo;
-      setReplyTo(null);
-      for (let i = 0; i < files.length; i++) {
-        // Photos are made smaller and get a preview (like WhatsApp); PDFs and "Other files" go untouched.
-        const file = kind === 'photo' ? await prepareMedia(files[i]!) : files[i]!;
-        await client.sendFile(peer, file, i === 0 ? caption : '', { replyTo: i === 0 ? (r ?? undefined) : undefined, viewOnce });
-      }
+      // Look at them first, with a caption for each and photo editing, like WhatsApp.
+      setPreparing({ files, asMedia: kind === 'photo' || viewOnce, viewOnce });
     } catch (e) {
       onError(errorText(e));
     }
   }
 
-  async function sendVoice(data: Uint8Array, mime: string) {
+  const [preparing, setPreparing] = useState<{ files: OutgoingFile[]; asMedia: boolean; viewOnce: boolean } | null>(null);
+  async function sendPrepared(items: Prepared[]) {
+    const p = preparing;
+    setPreparing(null);
+    if (!p) return;
+    setText('');
+    const r = replyTo;
+    setReplyTo(null);
+    try {
+      for (let i = 0; i < items.length; i++) {
+        const { file: raw, caption } = items[i]!;
+        // Photos are made smaller and get a preview (like WhatsApp); PDFs and "Other files" go untouched.
+        const file = p.asMedia ? await prepareMedia(raw) : raw;
+        await client.sendFile(peer, file, caption, { replyTo: i === 0 ? (r ?? undefined) : undefined, viewOnce: p.viewOnce });
+      }
+    } catch (e) {
+      onError(errorText(e));
+    }
+  }
+  const [stickersOpen, setStickersOpen] = useState(false);
+
+  async function sendVoice(data: Uint8Array, mime: string, wave?: string) {
     setRecording(false);
     const r = replyTo;
     setReplyTo(null);
     try {
-      await client.sendFile(peer, { name: `voice-${Date.now()}.m4a`, mime, data }, '', { replyTo: r ?? undefined });
+      await client.sendFile(peer, { name: `voice-${Date.now()}.m4a`, mime, data, wave }, '', { replyTo: r ?? undefined });
     } catch (e) {
       onError(errorText(e));
     }
@@ -231,6 +248,14 @@ export function ChatScreen({
       list.push({ icon: Share2, label: 'Share to another app', onPress: () => void shareOut(m, peer).catch((e) => onError(errorText(e))) });
     }
     list.push({ icon: Star, label: m.starred ? 'Unstar' : 'Star', onPress: () => client.toggleStar(m) });
+    if (m.sticker && m.attachment?.data) {
+      const a = m.attachment;
+      list.push({
+        icon: Smile,
+        label: 'Add to my stickers',
+        onPress: () => void client.addSticker({ mime: a.mime, data: a.data! }).then(() => onError('Added to your stickers'), (e) => onError(errorText(e))),
+      });
+    }
     if (online && !gone && c.canSendTo(peer) && !m.call) {
       list.push({ icon: m.pinnedAt ? PinOff : Pin, label: m.pinnedAt ? 'Unpin' : 'Pin for everyone', onPress: () => void togglePin(m) });
     }
@@ -440,6 +465,7 @@ export function ChatScreen({
                 m.outgoing ? styles.out : styles.in,
                 m.broadcast && !m.deleted && styles.announce,
                 m.deleted && styles.deleted,
+                m.sticker && !m.deleted && styles.sticker,
               ]}
             >
               {group && !m.outgoing && !!m.from && (
@@ -477,6 +503,8 @@ export function ChatScreen({
                     ) : (
                       <AttachmentView
                         a={m.attachment}
+                        sticker={m.sticker}
+                        onCancel={c.isTransferring(m.id) ? () => client.cancelTransfer(m.id) : undefined}
                         onRetry={() =>
                           void (m.outgoing && m.status === 'failed' ? client.retrySend(peer, m.id) : client.retryDownload(peer, m.id)).catch((e) =>
                             onError(errorText(e)),
@@ -534,7 +562,7 @@ export function ChatScreen({
         </View>
       ) : recording ? (
         <View style={styles.composer}>
-          <VoiceRecorder onSend={(d, mime) => void sendVoice(d, mime)} onCancel={() => setRecording(false)} onError={onError} />
+          <VoiceRecorder onSend={(d, mime, wave) => void sendVoice(d, mime, wave)} onCancel={() => setRecording(false)} onError={onError} />
         </View>
       ) : (
         <View>
@@ -634,7 +662,8 @@ export function ChatScreen({
               ? [
                   { icon: CameraIcon, label: 'Camera', onPress: () => setShooting(true) },
                   { icon: Image, label: 'Photos & videos', onPress: () => void sendPicked('photo') },
-                  { icon: Eye, label: 'Photo, view once', onPress: () => void sendPicked('photo', true) },
+                  { icon: Eye, label: 'Photo or video, view once', onPress: () => void sendPicked('photo', true) },
+                  { icon: Smile, label: 'Sticker', onPress: () => setStickersOpen(true) },
                   { icon: FileText, label: 'PDF documents', onPress: () => void sendPicked('pdf') },
                   { icon: File, label: 'Other files', onPress: () => void sendPicked('file') },
                 ]
@@ -672,6 +701,26 @@ export function ChatScreen({
       {forwarding && <ForwardPicker m={forwarding} onClose={() => setForwarding(null)} onToast={onError} />}
       {reporting && <ReportSheet user={reporting} chat={peer} onClose={() => setReporting(null)} onToast={onError} />}
       {viewOnce && <ViewOnceViewer m={viewOnce} onClose={() => setViewOnce(null)} />}
+      {preparing && (
+        <SendMediaScreen
+          files={preparing.files}
+          firstCaption={text}
+          viewOnce={preparing.viewOnce}
+          onClose={() => setPreparing(null)}
+          onSend={(items) => void sendPrepared(items)}
+          onToast={onError}
+        />
+      )}
+      {stickersOpen && (
+        <StickerSheet
+          onClose={() => setStickersOpen(false)}
+          onToast={onError}
+          onPick={(st) => {
+            setStickersOpen(false);
+            void client.sendSticker(peer, st).catch((e) => onError(errorText(e)));
+          }}
+        />
+      )}
       {selected && <Sheet title="Message" onClose={() => setSelected(null)} actions={actionsFor(selected)} />}
       {selected && (
         // Quick reactions float above the long-press menu, like WhatsApp.
@@ -693,6 +742,7 @@ function CallIcon({ c }: { c: CallLog }) {
 }
 
 const styles = StyleSheet.create({
+  sticker: { backgroundColor: 'transparent', borderWidth: 0, elevation: 0, shadowOpacity: 0, paddingHorizontal: 0 },
   pinnedBar: {
     flexDirection: 'row',
     alignItems: 'center',
