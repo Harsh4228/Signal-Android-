@@ -39,6 +39,10 @@ export interface CallState {
   /** What the other person did with their microphone / camera. */
   peerMuted: boolean;
   peerCameraOff: boolean;
+  /** I am sharing my screen instead of my camera. */
+  sharing: boolean;
+  /** They are sharing their screen. */
+  peerSharing: boolean;
 }
 
 const RING_TIMEOUT_MS = 45_000;
@@ -60,6 +64,8 @@ const idle = (endReason: string | null = null): CallState => ({
   reconnecting: false,
   peerMuted: false,
   peerCameraOff: false,
+  sharing: false,
+  peerSharing: false,
 });
 
 export class CallManager extends Emitter<{ change: [CallState] }> {
@@ -169,8 +175,55 @@ export class CallManager extends Emitter<{ change: [CallState] }> {
 
   private sendMediaState() {
     if (this.state.status !== 'connecting' && this.state.status !== 'connected') return;
-    const cameraOff = this.state.cameraOff || !this.state.localStream?.getVideoTracks().length;
-    this.send({ action: 'media', muted: this.state.muted, cameraOff }).catch(() => {});
+    const sharing = this.state.sharing;
+    const cameraOff = !sharing && (this.state.cameraOff || !this.state.localStream?.getVideoTracks().length);
+    this.send({ action: 'media', muted: this.state.muted, cameraOff, screen: sharing || undefined }).catch(() => {});
+  }
+
+  /** The screen track being shared, and the camera track it replaced (null: there was no camera). */
+  private screen: { track: any; camera: any | null; sender: any } | null = null;
+
+  /**
+   * Share my screen (desktop / web) in place of my camera, like WhatsApp. `track` comes from getDisplayMedia.
+   * Follows the admin's video call right. In a voice call the screen is added as video.
+   */
+  async startScreenShare(track: any): Promise<void> {
+    const pc = this.pc;
+    if (!pc || this.state.status !== 'connected') throw new Error('Screen sharing works once the call is connected');
+    if (this.state.peer && !this.client.can('videoCall', this.state.peer)) throw new Error('Your admin has turned off video calls');
+    if (this.screen) await this.stopScreenShare();
+    let sender = pc.getSenders().find((x: any) => x.track?.kind === 'video');
+    let camera: any | null = sender?.track ?? null;
+    if (sender) {
+      await sender.replaceTrack(track);
+    } else {
+      // Voice call: no video yet. Add the screen as video (and renegotiate), like turning the camera on.
+      sender = pc.addTrack(track, this.state.localStream ?? undefined);
+      camera = null;
+      this.set({ video: true });
+      await this.renegotiate();
+    }
+    this.screen = { track, camera, sender };
+    track.onended = () => void this.stopScreenShare();
+    this.set({ sharing: true });
+    this.sendMediaState();
+  }
+
+  async stopScreenShare(): Promise<void> {
+    const sc = this.screen;
+    if (!sc) return;
+    this.screen = null;
+    sc.track.onended = null;
+    try {
+      // Back to the camera (it keeps its on / off state), or no video if there was none.
+      await sc.sender.replaceTrack(sc.camera && sc.camera.readyState !== 'ended' ? sc.camera : null);
+    } catch {
+      /* the call is ending */
+    }
+    sc.track.stop?.();
+    if (this.state.status === 'idle') return;
+    this.set({ sharing: false, cameraOff: sc.camera ? this.state.cameraOff : true });
+    this.sendMediaState();
   }
 
   /** Voice call -> video call: add a camera track and renegotiate. */
@@ -246,7 +299,7 @@ export class CallManager extends Emitter<{ change: [CallState] }> {
         await this.pc.setRemoteDescription({ type: 'answer', sdp: s.sdp });
         break;
       case 'media':
-        if (sameCall) this.set({ peerMuted: !!s.muted, peerCameraOff: !!s.cameraOff });
+        if (sameCall) this.set({ peerMuted: !!s.muted, peerCameraOff: !!s.cameraOff, peerSharing: s.screen === true });
         break;
       case 'answer':
         if (!sameCall || this.state.status !== 'outgoing' || typeof s.sdp !== 'string') return;
@@ -370,6 +423,11 @@ export class CallManager extends Emitter<{ change: [CallState] }> {
     this.clearReconnect();
     this.makingOffer = false;
     this.state.localStream?.getTracks().forEach((t: any) => t.stop());
+    if (this.screen) {
+      this.screen.track.onended = null;
+      this.screen.track.stop?.();
+      this.screen = null;
+    }
     try {
       this.pc?.close();
     } catch {

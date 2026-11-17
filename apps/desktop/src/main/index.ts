@@ -1,6 +1,7 @@
 import {
   app,
   BrowserWindow,
+  desktopCapturer,
   dialog,
   ipcMain,
   Menu,
@@ -59,6 +60,18 @@ function assertEncryption() {
     throw new Error('OS encryption (keychain) is not available - refusing to store keys unencrypted');
   }
 }
+
+/** The screen / window picked for the next screen share (used once by the display media handler). */
+let chosenScreen: string | null = null;
+ipcMain.handle('screens:list', async (e) => {
+  assertTrusted(e);
+  const sources = await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 320, height: 180 }, fetchWindowIcons: false });
+  return sources.map((x) => ({ id: x.id, name: x.name, thumb: x.thumbnail.toDataURL() }));
+});
+ipcMain.handle('screens:choose', (e, id: unknown) => {
+  assertTrusted(e);
+  chosenScreen = typeof id === 'string' && /^(screen|window):[\w:-]+$/.test(id) ? id : null;
+});
 
 ipcMain.handle('store:get', async (e, key: string) => {
   assertTrusted(e);
@@ -315,7 +328,20 @@ function hardenSession() {
   ses.setPermissionCheckHandler(
     (_wc, permission) => permission === 'media' || permission === 'clipboard-sanitized-write' || permission === 'geolocation',
   );
-  ses.setDisplayMediaRequestHandler((_req, callback) => callback({})); // deny screen sharing
+  // Screen sharing in calls: only the screen / window the person just picked in CellMate's own picker
+  // (screens:choose), once. Anything else - including pages asking on their own - is refused.
+  ses.setDisplayMediaRequestHandler((_req, callback) => {
+    const id = chosenScreen;
+    chosenScreen = null;
+    if (!id) return callback({});
+    desktopCapturer
+      .getSources({ types: ['screen', 'window'], thumbnailSize: { width: 0, height: 0 } })
+      .then((sources) => {
+        const src = sources.find((x) => x.id === id);
+        callback(src ? { video: src } : {});
+      })
+      .catch(() => callback({}));
+  });
 
   // Strip referrer, never send cookies.
   ses.webRequest.onBeforeSendHeaders((details, callback) => {

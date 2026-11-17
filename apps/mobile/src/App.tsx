@@ -1,3 +1,4 @@
+import { useLiveLocationWatcher } from './screens/ChatExtras';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, AppState, BackHandler, KeyboardAvoidingView, Platform, StatusBar, Text, View } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
@@ -60,6 +61,7 @@ export type Route =
   | { name: 'company' };
 
 export default function App() {
+  useLiveLocationWatcher();
   const c = useClient();
   const call = useCall();
   const lock = useLock();

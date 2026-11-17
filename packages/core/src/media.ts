@@ -83,6 +83,11 @@ export class MediaStore {
     return this.key;
   }
 
+  /** Every saved file, all chats. */
+  all(): MediaItem[] {
+    return [...this.items];
+  }
+
   /** Newest first. */
   list(chat: string): MediaItem[] {
     return this.items.filter((m) => m.chat === chat).sort((a, b) => b.ts - a.ts);

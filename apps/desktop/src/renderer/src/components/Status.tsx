@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronLeft, ChevronRight, CircleDashed, Eye, ImagePlus, Loader2, Palette, Send, Trash2, Type, X } from 'lucide-react';
-import { MAX_STATUS_TEXT, STATUS_COLORS, type OutgoingFile, type StatusUpdate } from '@meetme/core';
+import { MAX_STATUS_TEXT, MAX_STATUS_VIDEO_BYTES, STATUS_COLORS, type OutgoingFile, type StatusUpdate } from '@meetme/core';
+import { prepareMedia } from '../media';
 import { client, useClient } from '../messenger';
 import { Avatar, errorText, shortTime } from './ui';
 
@@ -84,14 +85,14 @@ export function StatusPanel({ onClose, onToast }: { onClose: () => void; onToast
             <div className="grow">
               <div className="name">My status</div>
               <div className="muted small">
-                {mine.length ? `${mine.length} update${mine.length === 1 ? '' : 's'} · ${ago(mine[mine.length - 1]!.ts)}` : 'Share a text or photo for 24 hours'}
+                {mine.length ? `${mine.length} update${mine.length === 1 ? '' : 's'} · ${ago(mine[mine.length - 1]!.ts)}` : 'Share a text, photo or video for 24 hours'}
               </div>
             </div>
             <span className="row" onClick={(e) => e.stopPropagation()}>
               <button className="icon" title="Text status" disabled={offline} onClick={() => setComposing('text')}>
                 <Type size={18} />
               </button>
-              <button className="icon" title="Photo status" disabled={offline} onClick={() => setComposing('photo')}>
+              <button className="icon" title="Photo or video status" disabled={offline} onClick={() => setComposing('photo')}>
                 <ImagePlus size={18} />
               </button>
             </span>
@@ -174,8 +175,12 @@ function StatusComposer({
 
   async function pick(f: File | undefined) {
     if (!f) return;
-    if (!f.type.startsWith('image/')) return onToast('Pick a photo');
-    setPhoto({ name: f.name, mime: f.type, data: new Uint8Array(await f.arrayBuffer()) });
+    if (!/^(image|video)\//.test(f.type)) return onToast('Pick a photo or a video');
+    if (f.type.startsWith('video/') && f.size > MAX_STATUS_VIDEO_BYTES) {
+      return onToast(`Status videos can be up to ${MAX_STATUS_VIDEO_BYTES / 1024 / 1024} MB (about a minute)`);
+    }
+    // Photos are made smaller and videos get a preview, like in chats.
+    setPhoto(await prepareMedia({ name: f.name, mime: f.type, data: new Uint8Array(await f.arrayBuffer()) }));
   }
 
   async function send() {
@@ -220,13 +225,15 @@ function StatusComposer({
           </div>
         ) : (
           <div className="status-card photo">
-            {url ? (
+            {url && photo?.mime.startsWith('video/') ? (
+              <video src={url} controls autoPlay muted playsInline controlsList="nodownload" disablePictureInPicture />
+            ) : url ? (
               <img src={url} alt="" draggable={false} />
             ) : (
               <label className="status-pick">
                 <ImagePlus size={32} />
-                <span>Choose a photo</span>
-                <input type="file" accept="image/*" hidden onChange={(e) => void pick(e.target.files?.[0])} />
+                <span>Choose a photo or video</span>
+                <input type="file" accept="image/*,video/*" hidden onChange={(e) => void pick(e.target.files?.[0])} />
               </label>
             )}
           </div>
@@ -281,8 +288,32 @@ export function StatusViewer({ user, start, onClose, onToast }: { user: string; 
     setElapsed(0);
   }, [s?.id]);
 
+  const isVideo = !!s?.photo && s.photo.mime.startsWith('video/');
+  /** How long this update shows: 5 s, or a video's own length (at most a minute). */
+  const [showMs, setShowMs] = useState(SHOW_MS);
+  useEffect(() => setShowMs(SHOW_MS), [s?.id]);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const [reply, setReply] = useState('');
+  const [typing, setTyping] = useState(false);
   const loading = !!s?.photo && !photo;
-  const hold = paused || showViewers || loading;
+  const hold = paused || showViewers || loading || typing;
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v) return;
+    if (hold) v.pause();
+    else void v.play().catch(() => {});
+  }, [hold, photo]);
+  async function sendReply() {
+    const t = reply.trim();
+    if (!t || !s) return;
+    setReply('');
+    try {
+      await client.replyToStatus(s, t);
+      onToast(`Reply sent to ${client.displayName(s.from)}`);
+    } catch (e) {
+      onToast(errorText(e));
+    }
+  }
   useEffect(() => {
     if (hold || !s) return;
     const t = setInterval(() => setElapsed((e) => e + 100), 100);
@@ -292,7 +323,7 @@ export function StatusViewer({ user, start, onClose, onToast }: { user: string; 
   const next = () => (index + 1 < items.length ? setIndex(index + 1) : onClose());
   const prev = () => setIndex(Math.max(0, index - 1));
   useEffect(() => {
-    if (elapsed >= SHOW_MS) next();
+    if (elapsed >= showMs) next();
   }, [elapsed]);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -333,7 +364,7 @@ export function StatusViewer({ user, start, onClose, onToast }: { user: string; 
         <div className="status-bars">
           {items.map((x, i) => (
             <span key={x.id}>
-              <i style={{ width: `${i < index ? 100 : i === index ? Math.min(100, (elapsed / SHOW_MS) * 100) : 0}%` }} />
+              <i style={{ width: `${i < index ? 100 : i === index ? Math.min(100, (elapsed / showMs) * 100) : 0}%` }} />
             </span>
           ))}
         </div>
@@ -355,7 +386,25 @@ export function StatusViewer({ user, start, onClose, onToast }: { user: string; 
 
         {s.photo ? (
           <div className="status-card photo">
-            {photo ? <img src={photo} alt="" draggable={false} /> : <Loader2 size={28} className="spin" />}
+            {photo && isVideo ? (
+              <video
+                ref={videoRef}
+                src={photo}
+                autoPlay
+                playsInline
+                disablePictureInPicture
+                controlsList="nodownload"
+                onContextMenu={(e) => e.preventDefault()}
+                onLoadedMetadata={(e) => {
+                  const d = e.currentTarget.duration;
+                  if (Number.isFinite(d) && d > 0) setShowMs(Math.min(60_000, Math.ceil(d * 1000)));
+                }}
+              />
+            ) : photo ? (
+              <img src={photo} alt="" draggable={false} />
+            ) : (
+              <Loader2 size={28} className="spin" />
+            )}
           </div>
         ) : (
           <div className="status-card text" style={{ background: s.bg ?? STATUS_COLORS[0] }}>
@@ -371,6 +420,29 @@ export function StatusViewer({ user, start, onClose, onToast }: { user: string; 
           <ChevronRight size={22} />
         </button>
 
+        {!mineView && (
+          <form
+            className="status-reply"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void sendReply();
+            }}
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <input
+              value={reply}
+              onChange={(e) => setReply(e.target.value)}
+              onFocus={() => setTyping(true)}
+              onBlur={() => setTyping(false)}
+              onKeyDown={(e) => e.stopPropagation()}
+              placeholder={`Reply to ${client.displayName(user).split(' ')[0]}…`}
+              maxLength={2000}
+            />
+            <button className="primary" disabled={!reply.trim()} title="Send reply">
+              <Send size={16} />
+            </button>
+          </form>
+        )}
         {mineView && (
           <div className="status-viewers">
             <button className="light-btn" onClick={() => setShowViewers(!showViewers)}>

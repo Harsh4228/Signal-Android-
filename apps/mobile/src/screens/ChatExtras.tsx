@@ -25,6 +25,7 @@ import {
   AVATAR_MIMES,
   MAX_AVATAR_BYTES,
   MAX_PLACE_NAME,
+  LIVE_LOCATION_MINUTES,
   MAX_PRODUCT_DESC,
   MAX_PRODUCT_NAME,
   MAX_PRODUCT_PRICE,
@@ -42,7 +43,7 @@ import {
 import { client, useClient } from '../messenger';
 import { SendPicker } from './SendPicker';
 import { colors, s } from '../theme';
-import { Avatar, Button, ChatAvatar, IconButton, errorText, shortTime } from '../ui';
+import { Avatar, Button, ChatAvatar, IconButton, clock, errorText, shortTime } from '../ui';
 import { needsWebPlayer, play, setSpeed, startRecording, stopPlaying, stopRecording } from '../voice';
 import { openInPlayer } from './AttachmentView';
 import { pickFile } from '../files';
@@ -130,26 +131,68 @@ export function ContactCardView({ username, navigate }: { username: string; navi
   );
 }
 
-export function LocationCardView({ l }: { l: SharedLocation }) {
+/** Shown on a live location: "Live until 14:30 · updated 2 min ago", or that it ended. */
+function liveLine(l: SharedLocation): string | null {
+  if (!l.liveUntil) return null;
+  if (l.stopped || l.liveUntil <= Date.now()) return 'Live location ended';
+  const until = clock(l.liveUntil);
+  const ago = l.updatedAt ? Math.floor((Date.now() - l.updatedAt) / 60_000) : 0;
+  return `Live until ${until} · updated ${ago < 1 ? 'just now' : `${ago} min ago`}`;
+}
+
+export function LocationCardView({ l, msgId }: { l: SharedLocation; /** My live location message: offers Stop sharing. */ msgId?: string }) {
+  const c = useClient();
+  const live = liveLine(l);
+  const active = !!l.liveUntil && !l.stopped && l.liveUntil > Date.now();
+  const [, tick] = useState(0);
+  useEffect(() => {
+    if (!active) return;
+    const t = setInterval(() => tick((n) => n + 1), 30_000);
+    return () => clearInterval(t);
+  }, [active]);
   return (
     <View style={{ minWidth: 220, gap: 8 }}>
       <View style={[s.row, { gap: 10 }]}>
-        <View style={[styles.pin, { backgroundColor: colors.dangerSoft }]}>
-          <MapPin size={20} color={colors.danger} />
+        <View style={[styles.pin, { backgroundColor: active ? colors.okSoft : colors.dangerSoft }]}>
+          <MapPin size={20} color={active ? colors.ok : colors.danger} />
         </View>
         <View style={{ flexShrink: 1 }}>
-          <Text style={s.textStrong}>{l.name || 'Shared location'}</Text>
+          <Text style={s.textStrong}>{l.name || (l.liveUntil ? 'Live location' : 'Shared location')}</Text>
           <Text style={[s.muted, { fontSize: 12 }]}>
             {l.lat.toFixed(5)}, {l.lng.toFixed(5)}
           </Text>
+          {!!live && <Text style={{ color: active ? colors.ok : colors.muted, fontSize: 12, fontWeight: '600' }}>{live}</Text>}
         </View>
       </View>
       <Pressable style={styles.cardAction} onPress={() => void Linking.openURL(mapsUrl(l))}>
         <ExternalLink size={15} color={colors.accent} />
         <Text style={styles.cardActionText}>Open in Google Maps</Text>
       </Pressable>
+      {!!msgId && c.isMyLiveShare(msgId) && (
+        <Pressable style={styles.cardAction} onPress={() => void client.stopLiveLocation(msgId)}>
+          <Text style={[styles.cardActionText, { color: colors.danger }]}>Stop sharing</Text>
+        </Pressable>
+      )}
     </View>
   );
+}
+
+/**
+ * While I share a live location, follow the phone's position and pass it on (the core sends at most one update
+ * every 30 s per chat). Only while CellMate is open, like the rest of the app. Mounted once at the app root.
+ */
+export function useLiveLocationWatcher() {
+  const c = useClient();
+  const sharing = c.sharingLiveLocation;
+  useEffect(() => {
+    if (!sharing) return;
+    const id = Geolocation.watchPosition(
+      (p) => void client.updateLiveLocation(p.coords.latitude, p.coords.longitude),
+      () => {},
+      { enableHighAccuracy: true, distanceFilter: 20, maximumAge: 15_000 },
+    );
+    return () => Geolocation.clearWatch(id);
+  }, [sharing]);
 }
 
 export function ProductCardView({ p, onViewCatalog }: { p: ProductCard; onViewCatalog?: (owner: string) => void }) {
@@ -299,6 +342,9 @@ export function LocationPicker({ chat, onClose, onError }: { chat: string; onClo
   const [name, setName] = useState('');
   const [locating, setLocating] = useState(false);
   const [busy, setBusy] = useState(false);
+  /** Live sharing needs this phone's own position (not typed coordinates). */
+  const [fromDevice, setFromDevice] = useState(false);
+  const [liveMinutes, setLiveMinutes] = useState<number>(LIVE_LOCATION_MINUTES[1]);
   const parsed = (() => {
     const m = coords.match(/(-?\d{1,2}(?:\.\d+)?)\s*,\s*(-?\d{1,3}(?:\.\d+)?)/);
     if (!m) return null;
@@ -315,6 +361,7 @@ export function LocationPicker({ chat, onClose, onError }: { chat: string; onClo
     Geolocation.getCurrentPosition(
       (p) => {
         setCoords(`${p.coords.latitude.toFixed(6)}, ${p.coords.longitude.toFixed(6)}`);
+        setFromDevice(true);
         setLocating(false);
       },
       () => {
@@ -325,11 +372,13 @@ export function LocationPicker({ chat, onClose, onError }: { chat: string; onClo
     );
   }
 
-  async function send() {
+  async function send(live = false) {
     if (!parsed) return;
     setBusy(true);
     try {
-      await client.sendLocation(chat, { ...parsed, name: name.trim() || undefined });
+      const loc = { ...parsed, name: name.trim() || undefined };
+      if (live) await client.startLiveLocation(chat, loc, liveMinutes);
+      else await client.sendLocation(chat, loc);
       onClose();
     } catch (e) {
       onError(errorText(e));
@@ -345,11 +394,29 @@ export function LocationPicker({ chat, onClose, onError }: { chat: string; onClo
         </Text>
         <Button icon={Crosshair} title={locating ? 'Finding you…' : 'Use my current location'} busy={locating} onPress={() => void locate()} />
         <Text style={s.label}>Coordinates or Google Maps link</Text>
-        <TextInput style={s.input} value={coords} onChangeText={setCoords} placeholder="19.0760, 72.8777" placeholderTextColor={colors.faint} autoCapitalize="none" />
+        <TextInput style={s.input} value={coords} onChangeText={(t) => (setCoords(t), setFromDevice(false))} placeholder="19.0760, 72.8777" placeholderTextColor={colors.faint} autoCapitalize="none" />
         {!!coords && !parsed && <Text style={{ color: colors.danger }}>Enter latitude, longitude like 19.0760, 72.8777.</Text>}
         <Text style={s.label}>Place name (optional)</Text>
         <TextInput style={s.input} value={name} maxLength={MAX_PLACE_NAME} onChangeText={setName} placeholder="e.g. Head office, Gate 2" placeholderTextColor={colors.faint} />
-        <Button variant="primary" icon={Send} title="Send location" busy={busy} disabled={!parsed} onPress={send} />
+        <Button variant="primary" icon={Send} title="Send location" busy={busy} disabled={!parsed} onPress={() => void send()} />
+        <View style={{ borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.lineStrong, paddingTop: 12, gap: 10 }}>
+          <Text style={s.textStrong}>Live location</Text>
+          <Text style={[s.muted, { fontSize: 13 }]}>Keeps moving while CellMate is open, then stops by itself. Use my current location first.</Text>
+          <View style={[s.row, { gap: 8 }]}>
+            {LIVE_LOCATION_MINUTES.map((m) => (
+              <Pressable
+                key={m}
+                onPress={() => setLiveMinutes(m)}
+                style={[styles.liveChip, liveMinutes === m && { backgroundColor: colors.accentSoft, borderColor: colors.accent }]}
+              >
+                <Text style={{ color: liveMinutes === m ? colors.accentText : colors.text, fontWeight: '600' }}>
+                  {m < 60 ? `${m} min` : m === 60 ? '1 hour' : `${m / 60} hours`}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+          <Button icon={Crosshair} title="Share live location" busy={busy} disabled={!parsed || !fromDevice} onPress={() => void send(true)} />
+        </View>
       </ScrollView>
     </Overlay>
   );
@@ -669,6 +736,7 @@ function ProductThumb({ p }: { p: Product }) {
 }
 
 const styles = StyleSheet.create({
+  liveChip: { borderWidth: 1, borderColor: colors.line, borderRadius: 999, paddingHorizontal: 12, paddingVertical: 7 },
   rate: { borderWidth: 1, borderColor: colors.line, borderRadius: 10, paddingHorizontal: 6, paddingVertical: 1, minWidth: 34, alignItems: 'center' },
   quote: {
     borderLeftWidth: 3,

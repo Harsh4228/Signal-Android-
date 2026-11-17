@@ -18,6 +18,7 @@ import {
   MAX_POLL_OPTIONS,
   MAX_POLL_QUESTION,
   MAX_PLACE_NAME,
+  LIVE_LOCATION_MINUTES,
   MAX_PRODUCT_DESC,
   MAX_PRODUCT_NAME,
   MAX_PRODUCT_PRICE,
@@ -260,7 +261,21 @@ function cleanLocation(l: unknown): SharedLocation | undefined {
   const ok = (n: unknown, max: number) => typeof n === 'number' && Number.isFinite(n) && Math.abs(n) <= max;
   if (!ok(r.lat, 90) || !ok(r.lng, 180)) return undefined;
   const name = typeof r.name === 'string' ? r.name.trim().slice(0, MAX_PLACE_NAME) : '';
-  return { lat: r.lat, lng: r.lng, name: name || undefined };
+  const out: SharedLocation = { lat: r.lat, lng: r.lng, name: name || undefined };
+  // Live: at most 8 hours (plus a little clock difference) from now.
+  if (typeof r.liveUntil === 'number' && Number.isFinite(r.liveUntil) && r.liveUntil <= Date.now() + 8 * 3600_000 + 5 * 60_000) {
+    out.liveUntil = r.liveUntil;
+    out.updatedAt = Date.now();
+  }
+  return out;
+}
+
+/** Distance in metres between two points (good enough for "has it moved"). */
+function metres(a: { lat: number; lng: number }, b: { lat: number; lng: number }): number {
+  const k = Math.PI / 180;
+  const x = (b.lng - a.lng) * k * Math.cos(((a.lat + b.lat) / 2) * k);
+  const y = (b.lat - a.lat) * k;
+  return Math.sqrt(x * x + y * y) * 6_371_000;
 }
 
 function cleanProduct(p: unknown): ProductCard | undefined {
@@ -519,7 +534,10 @@ export interface StatusGroup {
   latest: number;
 }
 
+/** A text status, or a photo / video (`photo` is either) with a caption. */
 export type NewStatus = { text: string; bg?: string } | { photo: OutgoingFile; caption?: string };
+/** Status videos: everyone who looks downloads them, so they are kept short. */
+export const MAX_STATUS_VIDEO_BYTES = 16 * 1024 * 1024;
 
 /**
  * Usernames a notice goes to: people who have logged in at least once, aren't banned and aren't me, and are
@@ -1902,6 +1920,24 @@ export class MessengerClient extends Emitter<Events> {
         this.applyPin(key, m, p.on ? ts || Date.now() : undefined);
         break;
       }
+      case 'loc': {
+        if (typeof p.id !== 'string') return;
+        const key = await this.chatKeyFor(from, p.g);
+        if (!key) return;
+        // Only the person sharing can move their own live location, and only until it runs out.
+        const m = this.chats.get(key)?.find((x) => x.id === p.id && !x.outgoing && (x.from ?? x.peer) === from);
+        const l = m?.location;
+        if (!m || m.deleted || !l?.liveUntil || l.stopped) return;
+        if (p.stop === true) {
+          m.location = { ...l, stopped: true };
+        } else {
+          const moved = cleanLocation({ lat: p.lat, lng: p.lng });
+          if (!moved || Date.now() > l.liveUntil + 60_000) return;
+          m.location = { ...l, lat: moved.lat, lng: moved.lng, updatedAt: Date.now() };
+        }
+        this.emit('change');
+        break;
+      }
       case 'del': {
         if (typeof p.id !== 'string' || !this.mayEditDelete(from)) return;
         const key = await this.chatKeyFor(from, p.g);
@@ -1995,7 +2031,11 @@ export class MessengerClient extends Emitter<Events> {
         if (!this.knows(from) && Date.now() - this.lastGroupReload > 3000) await this.loadGroups().catch(() => {});
         if (!this.knows(from) || typeof p.id !== 'string' || !/^[0-9a-f]{32}$/.test(p.id)) return;
         if (typeof p.text !== 'string' || p.text.length > MAX_STATUS_TEXT) return;
-        const photo = p.photo && validPointer(p.photo) && attachmentKind(p.photo.mime, p.photo.name) === 'image' ? p.photo : undefined;
+        const statusKind = p.photo && validPointer(p.photo) ? attachmentKind(p.photo.mime, p.photo.name) : null;
+        const photo =
+          p.photo && (statusKind === 'image' || (statusKind === 'video' && p.photo.size <= MAX_STATUS_VIDEO_BYTES))
+            ? { ...p.photo, thumb: validThumb(p.photo.thumb) ? p.photo.thumb : undefined }
+            : undefined;
         if (p.photo && !photo) return;
         const text = p.text.trim();
         if (!photo && !text) return;
@@ -2228,6 +2268,76 @@ export class MessengerClient extends Emitter<Events> {
     await this.sendMessage(peer, '', { location: loc });
   }
 
+  /** My live locations being shared now: message id -> chat. Not kept over a restart (sharing stops). */
+  private liveShares = new Map<string, { chat: string; last?: { lat: number; lng: number; at: number } }>();
+
+  /**
+   * Share my live location for 15 min, 1 hour or 8 hours, like WhatsApp. The app sends new positions with
+   * updateLiveLocation while it is open; at most one small message every 30 s per chat (and only when I moved).
+   */
+  async startLiveLocation(peer: string, location: SharedLocation, minutes: number): Promise<void> {
+    if (!(LIVE_LOCATION_MINUTES as readonly number[]).includes(minutes)) throw new Error('Choose 15 minutes, 1 hour or 8 hours');
+    const loc = cleanLocation({ ...location, liveUntil: Date.now() + minutes * 60_000 });
+    if (!loc?.liveUntil) throw new Error('Invalid location');
+    const id = await this.sendMessage(peer, '', { location: loc });
+    if (id) this.liveShares.set(id, { chat: peer, last: { lat: loc.lat, lng: loc.lng, at: Date.now() } });
+    this.emit('change');
+  }
+
+  /** True while I share my live location somewhere (the app then watches the position). */
+  get sharingLiveLocation(): boolean {
+    this.dropEndedLiveShares();
+    return this.liveShares.size > 0;
+  }
+
+  /** Is this live location message mine and still being shared from this device? */
+  isMyLiveShare(msgId: string): boolean {
+    this.dropEndedLiveShares();
+    return this.liveShares.has(msgId);
+  }
+
+  private dropEndedLiveShares() {
+    for (const [id, s] of this.liveShares) {
+      const m = this.chats.get(s.chat)?.find((x) => x.id === id);
+      if (!m?.location?.liveUntil || m.location.liveUntil <= Date.now() || m.location.stopped || m.deleted) this.liveShares.delete(id);
+    }
+  }
+
+  /** A new position from the device: passed on to every chat I share my live location with. */
+  async updateLiveLocation(lat: number, lng: number): Promise<void> {
+    this.dropEndedLiveShares();
+    const now = Date.now();
+    const sends: Promise<unknown>[] = [];
+    for (const [id, s] of this.liveShares) {
+      const last = s.last;
+      // Small server load: at most every 30 s, and only after moving 25 m (or a keep-alive every 5 minutes).
+      if (last && now - last.at < 30_000) continue;
+      if (last && metres(last, { lat, lng }) < 25 && now - last.at < 5 * 60_000) continue;
+      s.last = { lat, lng, at: now };
+      const m = this.chats.get(s.chat)?.find((x) => x.id === id);
+      if (m?.location) m.location = { ...m.location, lat, lng, updatedAt: now };
+      sends.push(this.sendToChat(s.chat, { k: 'loc', id, lat, lng }).catch((e) => console.warn('live location update failed', e)));
+    }
+    if (sends.length) this.emit('change');
+    await Promise.all(sends);
+  }
+
+  /** Stop sharing my live location (one message, or everywhere). */
+  async stopLiveLocation(msgId?: string): Promise<void> {
+    const ids = msgId ? [msgId] : [...this.liveShares.keys()];
+    await Promise.all(
+      ids.map(async (id) => {
+        const s = this.liveShares.get(id);
+        if (!s) return;
+        this.liveShares.delete(id);
+        const m = this.chats.get(s.chat)?.find((x) => x.id === id);
+        if (m?.location) m.location = { ...m.location, stopped: true };
+        await this.sendToChat(s.chat, { k: 'loc', id, stop: true }).catch(() => {});
+      }),
+    );
+    this.emit('change');
+  }
+
   /** Share a catalog product into a chat (as a card with name, price and description). */
   async sendProduct(peer: string, product: ProductCard, caption = ''): Promise<void> {
     const card = cleanProduct(product);
@@ -2375,7 +2485,7 @@ export class MessengerClient extends Emitter<Events> {
       mentions?: string[];
       viewOnce?: boolean;
     },
-  ): Promise<void> {
+  ): Promise<string | undefined> {
     text = text.trim();
     if (!text && !opts.file && !opts.contact && !opts.location && !opts.product) return;
     if (text.length > MAX_TEXT_LENGTH) throw new Error('Message too long');
@@ -2460,6 +2570,7 @@ export class MessengerClient extends Emitter<Events> {
       this.emit('change');
       throw e;
     }
+    return msg.id;
   }
 
   /** Send a poll to a chat. `multi` = people may pick more than one option. */
@@ -2754,7 +2865,12 @@ export class MessengerClient extends Emitter<Events> {
     if (!('photo' in s) && !text) throw new Error('Status is empty');
     if ('photo' in s) {
       checkFile(s.photo);
-      if (attachmentKind(s.photo.mime, s.photo.name) !== 'image') throw new Error('A status photo must be an image');
+      const kind = attachmentKind(s.photo.mime, s.photo.name);
+      if (kind !== 'image' && kind !== 'video') throw new Error('A status must be a photo or a video');
+      // Status videos are downloaded by everyone who looks: keep them short (like WhatsApp's 1 minute).
+      if (kind === 'video' && s.photo.data.length > MAX_STATUS_VIDEO_BYTES) {
+        throw new Error(`Status videos can be up to ${MAX_STATUS_VIDEO_BYTES / 1024 / 1024} MB (about a minute)`);
+      }
     }
     const bg = 'photo' in s ? undefined : STATUS_COLORS.includes(s.bg ?? '') ? s.bg : STATUS_COLORS[0];
     const to = this.statusAudience();
@@ -2777,6 +2893,19 @@ export class MessengerClient extends Emitter<Events> {
     await this.saveStatuses();
     this.emit('change');
     return { sent: status.audience.length, failed };
+  }
+
+  /**
+   * Reply to someone's status, like WhatsApp: a private message in our chat that quotes the status. Follows the
+   * same rules as any message to them (blocked, admin rights...).
+   */
+  async replyToStatus(s: StatusUpdate, text: string): Promise<void> {
+    if (s.outgoing) throw new Error('This is your own status');
+    if (!text.trim()) return;
+    const what = s.photo ? (attachmentKind(s.photo.mime, s.photo.name) === 'video' ? '🎥 Video' : '📷 Photo') : '';
+    const label = [what, s.text].filter(Boolean).join(': ');
+    if (!this.contacts.includes(s.from)) this.addContactLocal(s.from);
+    await this.sendMessage(s.from, text, { replyTo: { id: `status-${s.id}`, from: s.from, text: `◌ Status · ${label}`.slice(0, MAX_QUOTE) } });
   }
 
   /** Delete one of my statuses, here and on everyone's phone. */
@@ -3424,6 +3553,30 @@ export class MessengerClient extends Emitter<Events> {
   getMedia(chat: string): MediaItem[] {
     // Videos saved by older versions were stored as plain files.
     return this.media.list(chat).map((m) => (m.kind === 'file' && attachmentKind(m.mime, m.name) === 'video' ? { ...m, kind: 'video' } : m));
+  }
+
+  /**
+   * "Manage storage", like WhatsApp: how much this device keeps for each chat, and the biggest files. A file shared
+   * into several chats is stored once, so `total` counts it once.
+   */
+  storageUsage(): { total: number; chats: { chat: string; bytes: number; count: number }[]; largest: MediaItem[] } {
+    const all = this.media.all();
+    const byChat = new Map<string, { chat: string; bytes: number; count: number }>();
+    const blobs = new Map<string, number>();
+    for (const m of all) {
+      const e = byChat.get(m.chat) ?? { chat: m.chat, bytes: 0, count: 0 };
+      e.bytes += m.size;
+      e.count++;
+      byChat.set(m.chat, e);
+      blobs.set(m.blob, m.size);
+    }
+    const total = [...blobs.values()].reduce((a, b) => a + b, 0);
+    const largest = all
+      .filter((m) => m.size >= 1024 * 1024)
+      .sort((a, b) => b.size - a.size)
+      .slice(0, 50)
+      .map((m) => (m.kind === 'file' && attachmentKind(m.mime, m.name) === 'video' ? { ...m, kind: 'video' as const } : m));
+    return { total, chats: [...byChat.values()].sort((a, b) => b.bytes - a.bytes), largest };
   }
 
   /** Decrypt a saved file into memory, as an Attachment the apps' viewers can show. */

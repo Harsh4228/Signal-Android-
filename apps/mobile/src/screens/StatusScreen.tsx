@@ -12,8 +12,10 @@ import {
   View,
 } from 'react-native';
 import Svg, { Circle } from 'react-native-svg';
-import { Eye, ImagePlus, Palette, Send, Trash2, Type, X } from 'lucide-react-native';
-import { MAX_STATUS_TEXT, STATUS_COLORS, toBase64, type OutgoingFile, type StatusUpdate } from '@meetme/core';
+import { Eye, Film, ImagePlus, Palette, Send, Trash2, Type, X } from 'lucide-react-native';
+import { MAX_STATUS_TEXT, MAX_STATUS_VIDEO_BYTES, STATUS_COLORS, formatBytes, toBase64, type OutgoingFile, type StatusUpdate } from '@meetme/core';
+import { prepareMedia } from '../mediaWorker';
+import { MediaPlayer } from './VideoView';
 import { client, useClient } from '../messenger';
 import { pickFile } from '../files';
 import { colors, s } from '../theme';
@@ -100,11 +102,11 @@ export function StatusScreen({ navigate }: { navigate: (r: Route) => void }) {
             <View style={{ flex: 1 }}>
               <Text style={s.textStrong}>My status</Text>
               <Text style={s.muted}>
-                {mine.length ? `${mine.length} update${mine.length === 1 ? '' : 's'} · ${ago(mine[mine.length - 1]!.ts)}` : 'Share a text or photo for 24 hours'}
+                {mine.length ? `${mine.length} update${mine.length === 1 ? '' : 's'} · ${ago(mine[mine.length - 1]!.ts)}` : 'Share a text, photo or video for 24 hours'}
               </Text>
             </View>
             <IconButton icon={Type} label="Text status" disabled={offline} onPress={() => navigate({ name: 'status-new', mode: 'text' })} />
-            <IconButton icon={ImagePlus} label="Photo status" disabled={offline} onPress={() => navigate({ name: 'status-new', mode: 'photo' })} />
+            <IconButton icon={ImagePlus} label="Photo or video status" disabled={offline} onPress={() => navigate({ name: 'status-new', mode: 'photo' })} />
           </Pressable>
         </View>
         {recent.length > 0 && <Text style={[s.section, { marginHorizontal: 16, marginTop: 8 }]}>Recent updates</Text>}
@@ -137,8 +139,14 @@ export function StatusComposeScreen({
 
   async function choose() {
     try {
-      const f = await pickFile('photo');
-      if (f) setPhoto(f);
+      const f = await pickFile('media');
+      if (f && f.mime.startsWith('video/') && f.data.length > MAX_STATUS_VIDEO_BYTES) {
+        onToast(`Status videos can be up to ${MAX_STATUS_VIDEO_BYTES / 1024 / 1024} MB (about a minute)`);
+        if (!photo) back();
+        return;
+      }
+      // Photos are made smaller (like in chats); videos go as they are.
+      if (f) setPhoto(await prepareMedia(f));
       else if (!photo) back();
     } catch (e) {
       onToast(errorText(e));
@@ -190,7 +198,14 @@ export function StatusComposeScreen({
         </View>
       ) : (
         <Pressable style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }} onPress={() => !photo && void choose()}>
-          {photo ? (
+          {photo && photo.mime.startsWith('video/') ? (
+            <View style={{ alignItems: 'center', gap: 8 }}>
+              <Film size={40} color="#fff" />
+              <Text style={{ color: '#fff' }} numberOfLines={1}>
+                {photo.name} · {formatBytes(photo.data.length)}
+              </Text>
+            </View>
+          ) : photo ? (
             <Image source={{ uri: `data:${photo.mime};base64,${toBase64(photo.data)}` }} style={{ width: '100%', height: '100%' }} resizeMode="contain" />
           ) : (
             <ImagePlus size={36} color="rgba(255,255,255,0.7)" />
@@ -238,7 +253,12 @@ export function StatusViewerScreen({
   const [paused, setPaused] = useState(false);
   const [showViewers, setShowViewers] = useState(false);
   const [photo, setPhoto] = useState<string | null>(null);
+  /** Status video, decrypted into memory (played from a private temporary file). */
+  const [video, setVideo] = useState<Uint8Array | null>(null);
+  const [reply, setReply] = useState('');
+  const [typing, setTyping] = useState(false);
   const st = items[Math.min(index, items.length - 1)];
+  const isVideo = !!st?.photo && st.photo.mime.startsWith('video/');
   const close = () => navigate({ name: 'status' });
 
   useEffect(() => {
@@ -248,6 +268,7 @@ export function StatusViewerScreen({
 
   useEffect(() => {
     setPhoto(null);
+    setVideo(null);
     setElapsed(0);
     if (!st) return;
     if (!st.outgoing) client.markStatusSeen(st.id, st.from);
@@ -255,16 +276,21 @@ export function StatusViewerScreen({
     let gone = false;
     client
       .statusPhoto(st)
-      .then((data) => !gone && setPhoto(`data:${st.photo!.mime};base64,${toBase64(data)}`))
+      .then((data) => {
+        if (gone) return;
+        if (st.photo!.mime.startsWith('video/')) setVideo(data);
+        else setPhoto(`data:${st.photo!.mime};base64,${toBase64(data)}`);
+      })
       .catch((e) => !gone && onToast(errorText(e)));
     return () => {
       gone = true;
     };
   }, [st?.id]);
 
-  const hold = paused || showViewers || (!!st?.photo && !photo);
+  const hold = paused || showViewers || typing || (!!st?.photo && !photo && !video);
   useEffect(() => {
-    if (hold || !st) return;
+    // A video plays to its end (the player tells us); photos and text show for 5 seconds.
+    if (hold || !st || isVideo) return;
     const t = setInterval(() => setElapsed((e) => e + 100), 100);
     return () => clearInterval(t);
   }, [hold, st?.id]);
@@ -309,7 +335,9 @@ export function StatusViewerScreen({
 
       <View style={{ flex: 1 }}>
         {st.photo ? (
-          photo ? (
+          video ? (
+            <MediaPlayer a={{ name: st.photo.name, mime: st.photo.mime, size: video.length, kind: 'video', state: 'ready', data: video }} onEnded={next} paused={hold} />
+          ) : photo ? (
             <Image source={{ uri: photo }} style={{ flex: 1 }} resizeMode="contain" />
           ) : (
             <View style={s.center}>
@@ -329,6 +357,35 @@ export function StatusViewerScreen({
       </View>
 
       {!!st.photo && !!st.text && <Text style={styles.captionText}>{st.text}</Text>}
+      {!mineView && (
+        <View style={[s.row, { gap: 8, padding: 12 }]}>
+          <TextInput
+            value={reply}
+            onChangeText={setReply}
+            onFocus={() => setTyping(true)}
+            onBlur={() => setTyping(false)}
+            placeholder={`Reply to ${client.displayName(user).split(' ')[0]}…`}
+            placeholderTextColor="rgba(255,255,255,0.6)"
+            maxLength={2000}
+            style={styles.caption}
+          />
+          <Pressable
+            disabled={!reply.trim()}
+            style={[styles.send, !reply.trim() && { opacity: 0.45 }]}
+            accessibilityLabel="Send reply"
+            onPress={() => {
+              const t = reply.trim();
+              setReply('');
+              client.replyToStatus(st, t).then(
+                () => onToast(`Reply sent to ${client.displayName(st.from)}`),
+                (e) => onToast(errorText(e)),
+              );
+            }}
+          >
+            <Send size={20} color="#fff" />
+          </Pressable>
+        </View>
+      )}
       {mineView && (
         <View style={{ padding: 12, alignItems: 'center' }}>
           <Pressable onPress={() => setShowViewers(!showViewers)} style={[s.row, styles.seen]}>

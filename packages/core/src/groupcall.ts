@@ -24,6 +24,8 @@ export interface Participant {
   connected: boolean;
   muted: boolean;
   cameraOff: boolean;
+  /** Sharing their screen (shown whole, not cropped). */
+  sharing?: boolean;
 }
 
 export interface GroupCallState {
@@ -37,6 +39,8 @@ export interface GroupCallState {
   localStream: any | null;
   muted: boolean;
   cameraOff: boolean;
+  /** I am sharing my screen instead of my camera (video calls). */
+  sharing: boolean;
   participants: Participant[];
   startedAt: number | null;
   endReason: string | null;
@@ -53,6 +57,7 @@ const idle = (endReason: string | null = null): GroupCallState => ({
   localStream: null,
   muted: false,
   cameraOff: false,
+  sharing: false,
   participants: [],
   startedAt: null,
   endReason,
@@ -169,7 +174,46 @@ export class GroupCallManager extends Emitter<{ change: [GroupCallState] }> {
   }
 
   private sendMedia() {
-    for (const u of this.inCall()) void this.send(u, { action: 'media', muted: this.state.muted, cameraOff: this.state.cameraOff });
+    const sharing = this.state.sharing;
+    for (const u of this.inCall()) {
+      void this.send(u, { action: 'media', muted: this.state.muted, cameraOff: sharing ? false : this.state.cameraOff, screen: sharing || undefined });
+    }
+  }
+
+  /** The screen track shown to everyone instead of my camera. */
+  private screenTrack: any | null = null;
+
+  /** Share my screen (desktop / web) in a group video call: everyone sees it instead of my camera. */
+  async startScreenShare(track: any): Promise<void> {
+    if (this.state.status !== 'active') throw new Error('Join the call first');
+    if (!this.state.localStream?.getVideoTracks().length) throw new Error('Screen sharing needs a video call');
+    if (this.state.group && !this.client.can('videoCall', this.state.group)) throw new Error('Your admin has turned off video calls');
+    if (this.screenTrack) await this.stopScreenShare();
+    this.screenTrack = track;
+    track.onended = () => void this.stopScreenShare();
+    await Promise.all([...this.peers.values()].map((p) => this.useTrack(p.pc, track)));
+    this.set({ sharing: true });
+    this.sendMedia();
+  }
+
+  async stopScreenShare(): Promise<void> {
+    const track = this.screenTrack;
+    if (!track) return;
+    this.screenTrack = null;
+    track.onended = null;
+    track.stop?.();
+    const camera = this.state.localStream?.getVideoTracks()[0] ?? null;
+    await Promise.all([...this.peers.values()].map((p) => this.useTrack(p.pc, camera)));
+    if (this.state.status === 'idle') return;
+    this.set({ sharing: false });
+    this.sendMedia();
+  }
+
+  private async useTrack(pc: any, track: any) {
+    const sender = pc.getSenders?.().find((x: any) => x.track?.kind === 'video' || (x.track === null && x._video));
+    if (!sender) return;
+    sender._video = true;
+    await sender.replaceTrack(track).catch(() => {});
   }
 
   private async openMedia(video: boolean) {
@@ -201,6 +245,8 @@ export class GroupCallManager extends Emitter<{ change: [GroupCallState] }> {
     const peer: Peer = { pc, remoteSet: false, pending: [] };
     this.peers.set(user, peer);
     this.state.localStream?.getTracks().forEach((t: any) => pc.addTrack(t, this.state.localStream));
+    // Someone joins while I share my screen: they see the screen too.
+    if (this.screenTrack) void this.useTrack(pc, this.screenTrack);
     pc.addEventListener('icecandidate', (e: any) => {
       if (!e.candidate) return;
       const c = e.candidate;
@@ -299,7 +345,7 @@ export class GroupCallManager extends Emitter<{ change: [GroupCallState] }> {
         return;
       }
       case 'media':
-        if (same) this.upsert(from, { muted: !!s.muted, cameraOff: !!s.cameraOff });
+        if (same) this.upsert(from, { muted: !!s.muted, cameraOff: !!s.cameraOff, sharing: s.screen === true });
         return;
       case 'leave':
         this.leftOngoing(key, s.callId, from);
@@ -373,6 +419,11 @@ export class GroupCallManager extends Emitter<{ change: [GroupCallState] }> {
     }
     this.peers.clear();
     this.state.localStream?.getTracks().forEach((t: any) => t.stop());
+    if (this.screenTrack) {
+      this.screenTrack.onended = null;
+      this.screenTrack.stop?.();
+      this.screenTrack = null;
+    }
     this.invitedWith = [];
     this.state = idle(reason);
     this.emit('change', this.state);

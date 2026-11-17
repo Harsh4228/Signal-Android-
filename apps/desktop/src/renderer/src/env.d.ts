@@ -21,6 +21,9 @@ declare global {
       openSuper?: (serverUrl: string) => Promise<void>;
       /** Desktop app only: open an http(s) link in the system browser. */
       openLink?: (url: string) => Promise<void>;
+      /** Desktop app only: screens / windows for screen sharing, and the picked one. */
+      listScreens?: () => Promise<{ id: string; name: string; thumb: string }[]>;
+      chooseScreen?: (id: string) => Promise<void>;
       /** Desktop app only: screenshot protection off (true) / on (false). */
       setCapture?: (allow: boolean) => Promise<void>;
       /** Desktop app only: save a file with the system save dialog; the path, or null if cancelled. */

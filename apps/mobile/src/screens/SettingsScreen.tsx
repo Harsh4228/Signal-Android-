@@ -1,6 +1,7 @@
+import { StorageScreen } from './Storage';
 import { useEffect, useState } from 'react';
 import { Alert, Linking, Pressable, ScrollView, Switch, Text, View } from 'react-native';
-import { Ban, Building2, Camera, ChevronRight, CircleAlert, CircleCheck, CloudUpload, FileText, Lock, LogOut, ShieldCheck, Trash2 } from 'lucide-react-native';
+import { Ban, Building2, Camera, ChevronRight, CircleAlert, CircleCheck, CloudUpload, FileText, Lock, LogOut, ShieldCheck, Trash2, HardDrive } from 'lucide-react-native';
 import { birthdayText, MAX_ABOUT, MAX_EMAIL, MAX_PHONE, MIN_PASSWORD_LENGTH, shortId } from '@meetme/core';
 import { pickProfilePhoto } from '../photos';
 import { appLock, client, useClient, useLock } from '../messenger';
@@ -163,6 +164,7 @@ export function SettingsScreen({ navigate }: { navigate: (r: Route) => void }) {
   const [newPw2, setNewPw2] = useState('');
   const [pwMsg, setPwMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [showBlocked, setShowBlocked] = useState(false);
+  const [showStorage, setShowStorage] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   useEffect(() => {
     if (!toast) return;
@@ -292,6 +294,13 @@ export function SettingsScreen({ navigate }: { navigate: (r: Route) => void }) {
             onPress={() => setShowBlocked(true)}
             right={<ChevronRight size={18} color={colors.faint} />}
           />
+          <Row
+            icon={HardDrive}
+            title="Storage"
+            subtitle="Photos, videos and files on this phone"
+            onPress={() => setShowStorage(true)}
+            right={<ChevronRight size={18} color={colors.faint} />}
+          />
         </View>
         <PrivacySettings />
 
@@ -363,6 +372,7 @@ export function SettingsScreen({ navigate }: { navigate: (r: Route) => void }) {
         </View>
       )}
       {showBlocked && <BlockedScreen onClose={() => setShowBlocked(false)} onToast={setToast} />}
+      {showStorage && <StorageScreen onClose={() => setShowStorage(false)} onToast={setToast} />}
     </View>
   );
 }

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties, type DOMAttributes, type PointerEvent as ReactPointerEvent } from 'react';
-import { Lock, Maximize2, MessageSquareText, Mic, MicOff, Minimize2, Phone, PhoneOff, Video, VideoOff } from 'lucide-react';
+import { Lock, Maximize2, MessageSquareText, Mic, MicOff, Minimize2, Monitor, MonitorOff, Phone, PhoneOff, Video, VideoOff } from 'lucide-react';
+import { canShareScreen, pickScreenTrack } from './ScreenShare';
 import { calls, client, useCall } from '../messenger';
 import { Avatar, errorText } from './ui';
 
@@ -170,7 +171,11 @@ export function CallView() {
       onClick={wake}
     >
       {remoteVideo ? (
-        <VideoEl stream={bigLocal ? call.localStream : call.remoteStream} muted={bigLocal} className={`remote ${bigLocal ? 'mirror' : ''}`} />
+        <VideoEl
+          stream={bigLocal ? call.localStream : call.remoteStream}
+          muted={bigLocal}
+          className={`remote ${bigLocal ? 'mirror' : ''}${!bigLocal && call.peerSharing ? ' screen' : ''}`}
+        />
       ) : (
         <Avatar name={call.peer ?? '?'} size="xl" />
       )}
@@ -202,6 +207,16 @@ export function CallView() {
       <div className="call-info">
         <div className="name">{name}</div>
         <div className={`sub ${call.reconnecting ? 'warn' : ''}`}>{label}</div>
+        {call.sharing && (
+          <div className="chip">
+            <Monitor size={13} /> You are sharing your screen
+          </div>
+        )}
+        {call.peerSharing && call.status === 'connected' && (
+          <div className="chip">
+            <Monitor size={13} /> {name.split(' ')[0]} is sharing their screen
+          </div>
+        )}
         {call.peerMuted && call.status === 'connected' && (
           <div className="chip">
             <MicOff size={13} /> {name.split(' ')[0]} muted
@@ -243,6 +258,21 @@ export function CallView() {
             >
               {localVideo ? <Video size={22} /> : <VideoOff size={22} />}
             </button>
+            {call.status === 'connected' && canShareScreen() && client.can('videoCall', call.peer) && (
+              <button
+                className={`round ${call.sharing ? 'on' : ''}`}
+                title={call.sharing ? 'Stop sharing' : 'Share screen'}
+                onClick={() =>
+                  void (async () => {
+                    if (call.sharing) return calls.stopScreenShare();
+                    const track = await pickScreenTrack();
+                    if (track) await calls.startScreenShare(track).catch((e) => (track.stop(), alert(errorText(e))));
+                  })()
+                }
+              >
+                {call.sharing ? <MonitorOff size={22} /> : <Monitor size={22} />}
+              </button>
+            )}
             <button className={`round ${call.muted ? 'on' : ''}`} onClick={() => calls.toggleMute()} title={call.muted ? 'Unmute' : 'Mute'}>
               {call.muted ? <MicOff size={22} /> : <Mic size={22} />}
             </button>

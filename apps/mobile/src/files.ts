@@ -1,7 +1,8 @@
 import { errorCodes, isErrorWithCode, pick, types } from '@react-native-documents/picker';
 import { fromBase64, MAX_ATTACHMENT_BYTES, MAX_FILES_AT_ONCE, type OutgoingFile } from '@meetme/core';
 
-export type PickKind = 'photo' | 'pdf' | 'file';
+/** photo = photos and videos when picking several; one photo for pickFile. media = one photo or video. */
+export type PickKind = 'photo' | 'media' | 'pdf' | 'file';
 
 /**
  * Choose up to MAX_FILES_AT_ONCE photos and videos / PDFs / files at once (like WhatsApp) and read them into memory.
@@ -12,7 +13,7 @@ export async function pickFiles(kind: PickKind): Promise<{ files: OutgoingFile[]
   try {
     res = await pick({
       allowMultiSelection: true,
-      type: kind === 'photo' ? [types.images, types.video] : kind === 'pdf' ? [types.pdf] : [types.allFiles],
+      type: kind === 'photo' || kind === 'media' ? [types.images, types.video] : kind === 'pdf' ? [types.pdf] : [types.allFiles],
     });
   } catch (e) {
     if (isErrorWithCode(e) && e.code === errorCodes.OPERATION_CANCELED) return { files: [], tooBig: [], extra: 0 };
@@ -41,7 +42,7 @@ export async function pickFile(kind: PickKind): Promise<OutgoingFile | null> {
   let res;
   try {
     [res] = await pick({
-      type: kind === 'photo' ? [types.images] : kind === 'pdf' ? [types.pdf] : [types.allFiles],
+      type: kind === 'photo' ? [types.images] : kind === 'media' ? [types.images, types.video] : kind === 'pdf' ? [types.pdf] : [types.allFiles],
     });
   } catch (e) {
     if (isErrorWithCode(e) && e.code === errorCodes.OPERATION_CANCELED) return null;

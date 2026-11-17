@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Platform, Text, View } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { CachesDirectoryPath, exists, mkdir, unlink, writeFile } from '@dr.pogodin/react-native-fs';
@@ -14,7 +14,12 @@ const extOf = (mime: string, name: string) =>
  * web player. Like voice messages, the file is decrypted into the app's private cache folder only while it is
  * shown, and deleted when the player closes. No download / picture-in-picture buttons; nothing loads from the web.
  */
-export function MediaPlayer({ a, audio }: { a: Attachment; audio?: boolean }) {
+export function MediaPlayer({ a, audio, onEnded, paused }: { a: Attachment; audio?: boolean; onEnded?: () => void; paused?: boolean }) {
+  const view = useRef<WebView<{}>>(null);
+  // Status videos: pause while the person holds or types, go on when the video ends.
+  useEffect(() => {
+    if (onEnded) view.current?.injectJavaScript(`(function(){var v=document.querySelector('video');if(v){${paused ? 'v.pause()' : 'v.play()'}}})();true;`);
+  }, [paused]);
   const [dir, setDir] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -25,10 +30,11 @@ export function MediaPlayer({ a, audio }: { a: Attachment; audio?: boolean }) {
     const ext = extOf(a.mime, a.name);
     const tag = audio ? 'audio' : 'video';
     const page = `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; media-src 'self' file:; style-src 'unsafe-inline'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; media-src 'self' file:; style-src 'unsafe-inline'${onEnded ? "; script-src 'unsafe-inline'" : ''}">
 <style>html,body{margin:0;height:100%;background:#000;display:flex;align-items:center;justify-content:center}
 ${tag}{max-width:100%;max-height:100%;${audio ? 'width:90%' : 'width:100%'}}</style></head><body>
-<${tag} src="m.${ext}" controls autoplay playsinline disablepictureinpicture controlslist="nodownload noremoteplayback" oncontextmenu="return false"></${tag}>
+<${tag} src="m.${ext}" ${onEnded ? '' : 'controls'} autoplay playsinline disablepictureinpicture controlslist="nodownload noremoteplayback" oncontextmenu="return false"></${tag}>
+${onEnded ? `<script>document.querySelector('${tag}').addEventListener('ended',function(){window.ReactNativeWebView.postMessage('ended')})</script>` : ''}
 </body></html>`;
     (async () => {
       await mkdir(folder);
@@ -42,7 +48,7 @@ ${tag}{max-width:100%;max-height:100%;${audio ? 'width:90%' : 'width:100%'}}</st
         .then((e) => (e ? unlink(folder) : undefined))
         .catch(() => {});
     };
-  }, [a.data, a.mime, a.name, audio]);
+  }, [a.data, a.mime, a.name, audio, !!onEnded]);
 
   if (error) return <Text style={{ color: colors.danger, padding: 16 }}>Could not play: {error}</Text>;
   if (!dir) {
@@ -55,8 +61,10 @@ ${tag}{max-width:100%;max-height:100%;${audio ? 'width:90%' : 'width:100%'}}</st
   const base = `file://${dir}`;
   return (
     <WebView
+      ref={view}
       style={{ flex: 1, backgroundColor: '#000' }}
       source={{ uri: `${base}/index.html` }}
+      onMessage={(e) => e.nativeEvent.data === 'ended' && onEnded?.()}
       originWhitelist={['file://*']}
       // Only our own player page in this folder; links, other files and the web are never opened.
       onShouldStartLoadWithRequest={(r) => r.url.startsWith(base)}
@@ -70,7 +78,7 @@ ${tag}{max-width:100%;max-height:100%;${audio ? 'width:90%' : 'width:100%'}}</st
       cacheEnabled={false}
       incognito
       setSupportMultipleWindows={false}
-      javaScriptEnabled={false}
+      javaScriptEnabled={!!onEnded}
     />
   );
 }

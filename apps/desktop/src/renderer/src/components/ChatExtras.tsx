@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import {
   MAX_PLACE_NAME,
+  LIVE_LOCATION_MINUTES,
   REACTIONS,
   mapsUrl,
   type Attachment,
@@ -118,25 +119,73 @@ export function openMaps(l: SharedLocation) {
   else window.open(url, '_blank', 'noopener'); // browser dev build
 }
 
-export function LocationCardView({ l }: { l: SharedLocation }) {
+/** Shown on a live location: "Live until 14:30 · updated 2 min ago", or that it ended. */
+function liveLine(l: SharedLocation): string | null {
+  if (!l.liveUntil) return null;
+  if (l.stopped || l.liveUntil <= Date.now()) return 'Live location ended';
+  const until = new Date(l.liveUntil).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const ago = l.updatedAt ? Math.floor((Date.now() - l.updatedAt) / 60_000) : 0;
+  return `Live until ${until} · updated ${ago < 1 ? 'just now' : `${ago} min ago`}`;
+}
+
+export function LocationCardView({ l, msgId }: { l: SharedLocation; /** My live location message: offers Stop sharing. */ msgId?: string }) {
+  const c = useClient();
+  const live = liveLine(l);
+  const mineLive = !!msgId && c.isMyLiveShare(msgId);
+  // Live locations: redraw every 30 s so "updated … ago" stays right.
+  const [, tick] = useState(0);
+  useEffect(() => {
+    if (!l.liveUntil || l.stopped) return;
+    const t = setInterval(() => tick((n) => n + 1), 30_000);
+    return () => clearInterval(t);
+  }, [l.liveUntil, l.stopped]);
   return (
     <div className="card-msg">
       <div className="row">
-        <span className="loc-pin">
+        <span className={`loc-pin${live && !l.stopped && l.liveUntil! > Date.now() ? ' live' : ''}`}>
           <MapPin size={20} />
         </span>
         <div className="grow">
-          <div className="card-title">{l.name || 'Shared location'}</div>
+          <div className="card-title">{l.name || (l.liveUntil ? 'Live location' : 'Shared location')}</div>
           <div className="muted small">
             {l.lat.toFixed(5)}, {l.lng.toFixed(5)}
           </div>
+          {live && <div className="small live-line">{live}</div>}
         </div>
       </div>
       <button className="card-action" onClick={() => openMaps(l)}>
         <ExternalLink size={15} /> Open in Google Maps
       </button>
+      {mineLive && (
+        <button className="card-action danger-text" onClick={() => void client.stopLiveLocation(msgId)}>
+          Stop sharing
+        </button>
+      )}
     </div>
   );
+}
+
+/**
+ * While I share a live location, follow this computer's position and pass it on (the core sends at most one
+ * update every 30 s per chat). Mounted once at the app root.
+ */
+export function useLiveLocationWatcher() {
+  const c = useClient();
+  const sharing = c.sharingLiveLocation;
+  useEffect(() => {
+    if (!sharing || !navigator.geolocation) return;
+    const id = navigator.geolocation.watchPosition(
+      (p) => void client.updateLiveLocation(p.coords.latitude, p.coords.longitude),
+      () => {},
+      { enableHighAccuracy: true, maximumAge: 15_000 },
+    );
+    // Also check now and then: the time may run out while standing still.
+    const t = setInterval(() => void client.sharingLiveLocation, 60_000);
+    return () => {
+      navigator.geolocation.clearWatch(id);
+      clearInterval(t);
+    };
+  }, [sharing]);
 }
 
 export function ProductCardView({ p, onViewCatalog }: { p: ProductCard; onViewCatalog?: (owner: string) => void }) {
@@ -314,6 +363,9 @@ export function LocationPicker({ chat, onClose, onError }: { chat: string; onClo
   const [coords, setCoords] = useState('');
   const [locating, setLocating] = useState(false);
   const [busy, setBusy] = useState(false);
+  /** Live sharing needs this device's own position (not typed coordinates). */
+  const [fromDevice, setFromDevice] = useState(false);
+  const [liveMinutes, setLiveMinutes] = useState<number>(LIVE_LOCATION_MINUTES[1]);
 
   // "19.0760, 72.8777", or a maps link containing "@19.07,72.87" / "query=19.07,72.87" / "q=19.07,72.87"
   const parsed = (() => {
@@ -328,6 +380,7 @@ export function LocationPicker({ chat, onClose, onError }: { chat: string; onClo
     navigator.geolocation.getCurrentPosition(
       (p) => {
         setCoords(`${p.coords.latitude.toFixed(6)}, ${p.coords.longitude.toFixed(6)}`);
+        setFromDevice(true);
         setLocating(false);
       },
       () => {
@@ -338,11 +391,13 @@ export function LocationPicker({ chat, onClose, onError }: { chat: string; onClo
     );
   }
 
-  async function send() {
+  async function send(live = false) {
     if (!parsed) return;
     setBusy(true);
     try {
-      await client.sendLocation(chat, { ...parsed, name: name.trim() || undefined });
+      const loc = { ...parsed, name: name.trim() || undefined };
+      if (live) await client.startLiveLocation(chat, loc, liveMinutes);
+      else await client.sendLocation(chat, loc);
       onClose();
     } catch (e) {
       onError(errorText(e));
@@ -359,7 +414,7 @@ export function LocationPicker({ chat, onClose, onError }: { chat: string; onClo
         </button>
         <label className="field-label">
           Coordinates or Google Maps link
-          <input value={coords} onChange={(e) => setCoords(e.target.value)} placeholder="19.0760, 72.8777" />
+          <input value={coords} onChange={(e) => (setCoords(e.target.value), setFromDevice(false))} placeholder="19.0760, 72.8777" />
         </label>
         {coords && !parsed && <div className="error">Enter latitude, longitude like 19.0760, 72.8777 (or paste a Google Maps link).</div>}
         <label className="field-label">
@@ -369,9 +424,26 @@ export function LocationPicker({ chat, onClose, onError }: { chat: string; onClo
       </div>
       <div className="row-end">
         <button onClick={onClose}>Cancel</button>
-        <button className="primary" disabled={!parsed || busy} onClick={send}>
+        <button className="primary" disabled={!parsed || busy} onClick={() => void send()}>
           <Send size={16} /> Send location
         </button>
+      </div>
+      <div className="live-share">
+        <div className="small">
+          <strong>Live location</strong> · keeps moving while CellMate is open, then stops by itself
+        </div>
+        <div className="row-end">
+          <select value={liveMinutes} onChange={(e) => setLiveMinutes(Number(e.target.value))} disabled={!fromDevice}>
+            {LIVE_LOCATION_MINUTES.map((m) => (
+              <option key={m} value={m}>
+                {m < 60 ? `${m} minutes` : m === 60 ? '1 hour' : `${m / 60} hours`}
+              </option>
+            ))}
+          </select>
+          <button disabled={!parsed || !fromDevice || busy} onClick={() => void send(true)} title={fromDevice ? '' : 'Use my current location first'}>
+            <Crosshair size={16} /> Share live location
+          </button>
+        </div>
       </div>
     </Modal>
   );

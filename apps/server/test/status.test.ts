@@ -79,7 +79,7 @@ test('status reaches contacts and group members, shows who viewed it, can be del
   const photo = bina!.statusGroups()[0]!.items[1]!;
   assert.equal(photo.text, 'nice view');
   assert.deepEqual(await bina!.statusPhoto(photo), jpg);
-  await assert.rejects(asha!.postStatus({ photo: { name: 'a.pdf', mime: 'application/pdf', data: jpg } }), /must be an image/);
+  await assert.rejects(asha!.postStatus({ photo: { name: 'a.pdf', mime: 'application/pdf', data: jpg } }), /must be a photo or a video/);
 
   // Viewing: the poster sees who viewed it.
   bina!.markStatusSeen(got.items[0]!.id, 'asha');

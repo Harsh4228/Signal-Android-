@@ -1,3 +1,4 @@
+import { useLiveLocationWatcher } from './components/ChatExtras';
 import { useEffect, useState } from 'react';
 import { Hourglass, Info, LockKeyhole } from 'lucide-react';
 import { appLock, client, useCall, useClient, useGroupCall, useLock } from './messenger';
@@ -74,6 +75,7 @@ function useAutoLock() {
 
 export function App() {
   const c = useClient();
+  useLiveLocationWatcher();
   const call = useCall();
   const groupCall = useGroupCall();
   const lock = useLock();

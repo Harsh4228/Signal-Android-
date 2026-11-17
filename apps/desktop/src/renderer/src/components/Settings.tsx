@@ -1,3 +1,4 @@
+import { StorageSettings } from './Storage';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Camera, CircleCheck, CloudUpload, LogOut, Settings as SettingsIcon, Trash2, X } from 'lucide-react';
 import { birthdayText, MAX_ABOUT, MAX_EMAIL, MAX_PHONE, MIN_PASSWORD_LENGTH, shortId } from '@meetme/core';
@@ -316,6 +317,9 @@ export function Settings({ onClose, onToast }: { onClose: () => void; onToast: (
 
         <div className="section-title">Chat backup</div>
         <BackupSettings />
+
+        <div className="section-title">Storage</div>
+        <StorageSettings onToast={onToast} />
 
         <div className="section-title">Change password</div>
         <form onSubmit={changePassword} className="stack">

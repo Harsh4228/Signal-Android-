@@ -476,7 +476,7 @@ export function ChatScreen({
                   {m.poll && <PollView chat={peer} m={m} onError={onError} />}
                   {m.event && <EventView chat={peer} m={m} onError={onError} />}
                   {m.contact && <ContactCardView username={m.contact} navigate={navigate} />}
-                  {m.location && <LocationCardView l={m.location} />}
+                  {m.location && <LocationCardView l={m.location} msgId={m.outgoing ? m.id : undefined} />}
                   {m.product && <ProductCardView p={m.product} onViewCatalog={setViewingCatalog} />}
                   {/* Copying is a right the admin gives (Copy in the long-press menu); the text itself isn't selectable. */}
                   {!!m.text && <MessageText m={m} />}

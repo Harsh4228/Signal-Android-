@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import { Lock, Maximize2, Mic, MicOff, Minimize2, Phone, PhoneOff, UsersRound, Video, VideoOff } from 'lucide-react';
+import { Lock, Maximize2, Mic, MicOff, Minimize2, Monitor, MonitorOff, Phone, PhoneOff, UsersRound, Video, VideoOff } from 'lucide-react';
+import { canShareScreen, pickScreenTrack } from './ScreenShare';
 import { client, groupCalls, useGroupCall } from '../messenger';
-import { Avatar } from './ui';
+import { Avatar, errorText } from './ui';
 
 function StreamVideo({ stream, muted, mirror }: { stream: MediaStream; muted?: boolean; mirror?: boolean }) {
   const ref = useRef<HTMLVideoElement>(null);
@@ -88,11 +89,12 @@ export function GroupCallView() {
 
   const meVideo = s.video && !s.cameraOff && !!s.localStream?.getVideoTracks().length;
   const tiles = [
-    { user: me, name: 'You', stream: meVideo ? (s.localStream as MediaStream) : null, muted: s.muted, self: true, waiting: false },
+    { user: me, name: 'You', stream: meVideo && !s.sharing ? (s.localStream as MediaStream) : null, sharing: s.sharing, muted: s.muted, self: true, waiting: false },
     ...s.participants.map((p) => ({
       user: p.username,
       name: client.displayName(p.username),
       stream: p.stream && !p.cameraOff && p.stream.getVideoTracks().length ? (p.stream as MediaStream) : null,
+      sharing: !!p.sharing,
       muted: p.muted,
       self: false,
       waiting: !p.connected,
@@ -112,10 +114,11 @@ export function GroupCallView() {
       </div>
       <div className="gc-grid" style={{ gridTemplateColumns: `repeat(${cols}, 1fr)` }}>
         {tiles.map((t) => (
-          <div key={t.user} className="gc-tile">
+          <div key={t.user} className={`gc-tile${t.sharing && !t.self ? ' screen' : ''}`}>
             {t.stream ? <StreamVideo stream={t.stream} muted mirror={t.self} /> : <Avatar name={t.user} size="xl" />}
             <span className="gc-name">
-              {t.muted && <MicOff size={13} />} {t.name}
+              {t.muted && <MicOff size={13} />} {t.sharing && <Monitor size={13} />} {t.name}
+              {t.sharing ? (t.self ? ' · sharing your screen' : ' · sharing screen') : ''}
               {t.waiting ? ' · connecting…' : ''}
             </span>
           </div>
@@ -125,6 +128,21 @@ export function GroupCallView() {
         {s.video && (
           <button className={`round ${s.cameraOff ? '' : 'on'}`} onClick={() => groupCalls.toggleCamera()} title={s.cameraOff ? 'Turn camera on' : 'Turn camera off'}>
             {s.cameraOff ? <VideoOff size={22} /> : <Video size={22} />}
+          </button>
+        )}
+        {s.video && canShareScreen() && (
+          <button
+            className={`round ${s.sharing ? 'on' : ''}`}
+            title={s.sharing ? 'Stop sharing' : 'Share screen'}
+            onClick={() =>
+              void (async () => {
+                if (s.sharing) return groupCalls.stopScreenShare();
+                const track = await pickScreenTrack();
+                if (track) await groupCalls.startScreenShare(track).catch((e) => (track.stop(), alert(errorText(e))));
+              })()
+            }
+          >
+            {s.sharing ? <MonitorOff size={22} /> : <Monitor size={22} />}
           </button>
         )}
         <button className={`round ${s.muted ? 'on' : ''}`} onClick={() => groupCalls.toggleMute()} title={s.muted ? 'Unmute' : 'Mute'}>

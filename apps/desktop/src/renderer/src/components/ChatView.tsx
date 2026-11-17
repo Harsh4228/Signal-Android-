@@ -649,7 +649,7 @@ export function ChatView({ peer, onError }: { peer: string; onError: (m: string)
                     {m.poll && <PollView chat={peer} m={m} onError={onError} />}
                     {m.event && <EventView chat={peer} m={m} onError={onError} />}
                     {m.contact && <ContactCardView username={m.contact} />}
-                    {m.location && <LocationCardView l={m.location} />}
+                    {m.location && <LocationCardView l={m.location} msgId={m.outgoing ? m.id : undefined} />}
                     {m.product && <ProductCardView p={m.product} onViewCatalog={setViewingCatalog} />}
                     {m.text && <MessageText m={m} />}
                   </>

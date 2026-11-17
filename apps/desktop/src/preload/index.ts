@@ -18,6 +18,9 @@ contextBridge.exposeInMainWorld('meetme', {
   openSuper: (serverUrl: string): Promise<void> => ipcRenderer.invoke('super:open', serverUrl),
   /** Open a link from a message in the system browser (after the person confirmed it). */
   openLink: (url: string): Promise<void> => ipcRenderer.invoke('link:open', url),
+  /** Screen sharing in calls: the screens / windows to pick from, and the one picked (used once). */
+  listScreens: (): Promise<{ id: string; name: string; thumb: string }[]> => ipcRenderer.invoke('screens:list'),
+  chooseScreen: (id: string): Promise<void> => ipcRenderer.invoke('screens:choose', id),
   /** Screenshot protection off only when the admin allows screenshots (the UI checks the rights). */
   setCapture: (allow: boolean): Promise<void> => ipcRenderer.invoke('capture:set', allow),
   /** "Save to PC" with the normal save dialog (only offered with the download right). Resolves with the path, or null. */

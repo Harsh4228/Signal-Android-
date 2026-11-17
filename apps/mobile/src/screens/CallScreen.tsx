@@ -176,7 +176,8 @@ export function CallScreen({ onMinimize }: { onMinimize: () => void }) {
     <View style={[StyleSheet.absoluteFill, { backgroundColor: BG }]}>
       {big ? (
         <Pressable style={StyleSheet.absoluteFill} onPress={() => setControls((v) => !v)}>
-          <RTCView streamURL={big.toURL()} style={StyleSheet.absoluteFill} objectFit="cover" mirror={bigLocal} />
+          {/* A shared screen is shown whole, not cropped. */}
+          <RTCView streamURL={big.toURL()} style={StyleSheet.absoluteFill} objectFit={call.peerSharing && !bigLocal ? 'contain' : 'cover'} mirror={bigLocal} />
         </Pressable>
       ) : (
         <View style={styles.center}>
@@ -204,6 +205,11 @@ export function CallScreen({ onMinimize }: { onMinimize: () => void }) {
             {name}
           </Text>
           <Text style={[styles.status, call.reconnecting && { color: '#ffd279' }]}>{label}</Text>
+          {call.peerSharing && call.status === 'connected' && (
+            <View style={styles.chip}>
+              <Text style={{ color: FG, fontSize: 12 }}>{name.split(' ')[0]} is sharing their screen</Text>
+            </View>
+          )}
           {call.peerMuted && call.status === 'connected' && (
             <View style={styles.chip}>
               <MicOff size={13} color={FG} />

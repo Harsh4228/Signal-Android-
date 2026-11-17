@@ -28,11 +28,11 @@ function Round({ icon: Icon, label, onPress, on, color }: { icon: typeof Mic; la
 }
 
 /** A tile: the person's video, or their picture; their name and a muted mark. */
-function Tile({ name, user, streamURL, muted, mirror, width, height, waiting }: { name: string; user: string; streamURL?: string; muted?: boolean; mirror?: boolean; width: number; height: number; waiting?: boolean }) {
+function Tile({ name, user, streamURL, muted, mirror, width, height, waiting, sharing }: { name: string; user: string; streamURL?: string; muted?: boolean; mirror?: boolean; width: number; height: number; waiting?: boolean; sharing?: boolean }) {
   return (
     <View style={[styles.tile, { width, height }]}>
       {streamURL ? (
-        <RTCView streamURL={streamURL} style={StyleSheet.absoluteFill} objectFit="cover" mirror={mirror} />
+        <RTCView streamURL={streamURL} style={StyleSheet.absoluteFill} objectFit={sharing ? 'contain' : 'cover'} mirror={mirror} />
       ) : (
         <View style={styles.center}>
           <Avatar name={user} size={Math.min(84, width / 2.4)} />
@@ -41,7 +41,7 @@ function Tile({ name, user, streamURL, muted, mirror, width, height, waiting }: 
       <View style={styles.label}>
         {muted && <MicOff size={13} color={FG} />}
         <Text style={{ color: FG, fontSize: 13, fontWeight: '600' }} numberOfLines={1}>
-          {name}
+          {name}{sharing ? ' · sharing screen' : ''}
           {waiting ? ' · connecting…' : ''}
         </Text>
       </View>
@@ -88,6 +88,7 @@ export function GroupCallScreen({ onMinimize }: { onMinimize: () => void }) {
       streamURL: p.stream && !p.cameraOff && p.stream.getVideoTracks().length ? p.stream.toURL() : undefined,
       muted: p.muted,
       waiting: !p.connected,
+      sharing: !!p.sharing,
     })),
   ];
   // 1-2 people: stacked; 3-4: 2 x 2; more: 2 columns.

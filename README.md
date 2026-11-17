@@ -230,6 +230,7 @@ All of these are end-to-end encrypted like normal messages. Desktop: hover a mes
 | **Polls** | 📎 → Poll: question, 2–12 options, optionally several answers. Votes update live for everyone; *View votes* shows who picked what |
 | **Events** | 📎 → Event: name, description, start / end, place. Everyone can answer Going / Maybe / Not going |
 | **Location** | 📎 → Location: your current position or typed / pasted coordinates, plus a place name. The card has *Open in Google Maps*; no map service is contacted unless someone taps it |
+| **Live location** | 📎 → Location → *Share live location* for 15 min, 1 hour or 8 hours. It moves while CellMate is open (at most one small update every 30 s, only after moving), only the sender can move it, and *Stop sharing* ends it early |
 | **Contact** | 📎 → Contact: share a colleague; the card has a *Message* button |
 | **Catalog** | 📎 → Catalog: send a product card into the chat |
 
@@ -239,10 +240,11 @@ All of these are end-to-end encrypted like normal messages. Desktop: hover a mes
 
 ## Status
 
-Like WhatsApp: click **◌ Status** (next to 🔔), then **T** for a text status on a colour or the photo button for a photo with a caption. It is shown to your contacts and the people in your groups for **24 hours**, then disappears everywhere.
+Like WhatsApp: click **◌ Status** (next to 🔔), then **T** for a text status on a colour or the photo button for a photo or video with a caption. It is shown to your contacts and the people in your groups for **24 hours**, then disappears everywhere.
 
 - Contacts' updates show with a green ring (grey once viewed); **Recent updates** first, then **Viewed updates**. A green dot on the Status button means something new.
-- The player shows each update for 5 seconds; click / tap left or right to go back or on, hold to pause.
+- **Video statuses** (up to 16 MB, about a minute) play to their end; photos and text show for 5 seconds. Click / tap left or right to go back or on, hold to pause.
+- **Reply** to someone's status: it arrives as a private message in your chat, quoting the status.
 - On your own status, **Seen by X of Y** lists who viewed it and when; the bin deletes it for everyone.
 - End-to-end encrypted per viewer. A photo is uploaded once, encrypted; its key only travels inside those encrypted copies. Statuses are kept (encrypted) until they expire, so they survive a restart; photos are downloaded into memory when viewed.
 - Statuses are only accepted from people you know (a contact, someone in your groups, or an admin).
@@ -254,6 +256,14 @@ Admins open **🔔 Notices → New notice**, write a title and text, and pick wh
 Everyone has a **🔔 Notices** list with every past notice. Admins see **Read by X of Y** on each notice they sent, and can tap it to see who clicked OK (and when) and who hasn't yet.
 
 Notices are end-to-end encrypted per person like announcements, so the server can't read them. Unlike chat messages they are kept (text only, no files) in the device's encrypted store, so the list survives restarts. A notice reaches people who have logged in at least once; anyone offline gets it the next time they open the app.
+
+## Calls: screen sharing
+
+In a call on Windows / Mac / a desktop browser, **Share screen** shows the other person (or everyone in a group video call) a whole screen or one window instead of your camera. The desktop app has its own picker; nothing is shared until you pick. CellMate's own window shows black (screenshot protection). Phones see the shared screen whole, not cropped. It follows the admin's video call right.
+
+## Storage
+
+Settings → **Storage** shows how much each chat keeps on this device and the files over 1 MB. Deleting a file there follows the admin's rule for clearing history.
 
 ## Roadmap ideas
 - Encrypted view-once images (in memory, never saved)
